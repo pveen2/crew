@@ -1,0 +1,20 @@
+{
+  "name": "@crew/sdk",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Define a Crew team (eve-style folders): defineAgent, defineTool, defineConnection, defineCrew, evals and the team loader.",
+  "exports": {
+    ".": "./src/define.ts",
+    "./define": "./src/define.ts",
+    "./evals": "./src/evals.ts",
+    "./load": "./src/load.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@crew/protocol": "workspace:*",
+    "zod": "^3.25.76"
+  }
+}

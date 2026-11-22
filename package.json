@@ -1,0 +1,29 @@
+{
+  "name": "crew",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.28.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "tsc -p . && turbo run typecheck",
+    "conductor": "node --env-file-if-exists=.env.local apps/conductor/src/main.ts",
+    "app": "pnpm --filter @crew/mac dev",
+    "crew": "node --env-file-if-exists=.env.local scripts/crew.ts",
+    "install-app": "zsh apps/mac/scripts/install-app.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "turbo": "^2.6.0",
+    "typescript": "^5.9.3",
+    "marked": "^17.0.0",
+    "@crew/conductor": "workspace:*",
+    "@crew/sdk": "workspace:*",
+    "@crew/protocol": "workspace:*",
+    "ws": "^8.18.3",
+    "@types/ws": "^8.18.1"
+  }
+}

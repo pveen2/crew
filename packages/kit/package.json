@@ -1,0 +1,21 @@
+{
+  "name": "@crew/kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ready-made connections and tools for Crew teams: Shopify, a headless browser, X search.",
+  "exports": {
+    "./shopify": "./src/shopify/index.ts",
+    "./browser": "./src/browser/connection.ts",
+    "./x": "./src/x/search.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@crew/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "graphql": "^16.15.0",
+    "zod": "^3.25.76"
+  }
+}

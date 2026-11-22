@@ -1,0 +1,4 @@
+/* Entry point: font, tokens, components. Import once at the app root. */
+@import '@fontsource-variable/inter/wght.css';
+@import './tokens.css';
+@import './components.css';

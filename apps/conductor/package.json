@@ -1,0 +1,26 @@
+{
+  "name": "@crew/conductor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./engines": "./src/engines/index.ts",
+    "./translate": "./src/translate.ts",
+    "./config": "./src/config.ts"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=../../.env.local --watch-path=src src/main.ts",
+    "start": "node --env-file-if-exists=../../.env.local src/main.ts",
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@crew/sdk": "workspace:*",
+    "@crew/protocol": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.24.0",
+    "ws": "^8.18.3",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
+  }
+}

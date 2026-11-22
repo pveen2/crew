@@ -1,0 +1,123 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { DEFAULT_PORT } from '@crew/protocol';
+import { TEAM_ROOT } from '@crew/sdk/load';
+
+export const CONDUCTOR_SRC = dirname(fileURLToPath(import.meta.url));
+export const REPO_ROOT = resolve(CONDUCTOR_SRC, '../../..');
+
+export const CREW_HOME = process.env.CREW_HOME ?? join(homedir(), '.crew');
+
+export const paths = {
+  home: CREW_HOME,
+  db: join(CREW_HOME, 'crew.db'),
+  info: join(CREW_HOME, 'conductor.json'),
+  /** One working folder per session. The agent only works in here. */
+  sessions: join(CREW_HOME, 'sessions'),
+  /** Conductor-owned files per session (MCP config, settings). Agents do not get these as context. */
+  run: join(CREW_HOME, 'run'),
+  try: join(CREW_HOME, 'try'),
+  /** Images the owner attached, per thread. Agents get copies in their own attachments/ folder. */
+  attachments: join(CREW_HOME, 'attachments'),
+  /** Separate engine configuration folders, signed in once with `pnpm crew login`. */
+  engines: {
+    claude: join(CREW_HOME, 'engines', 'claude'),
+    codex: join(CREW_HOME, 'engines', 'codex'),
+    /** Codex reads ~/.agents/skills whatever CODEX_HOME says; its Crew sessions get their own HOME. */
+    codexHome: join(CREW_HOME, 'engines', 'codex', 'home'),
+    grok: join(CREW_HOME, 'engines', 'grok'),
+    /** Grok also reads ~/.claude, ~/.cursor and ~/.agents; its Crew sessions get their own HOME. */
+    grokHome: join(CREW_HOME, 'engines', 'grok', 'home'),
+    /** HOME for Antigravity (agy keeps settings in ~/.gemini; its sign-in is in the OS keyring). */
+    antigravityHome: join(CREW_HOME, 'engines', 'antigravity', 'home'),
+  },
+  bridge: join(CONDUCTOR_SRC, 'mcp-bridge.ts'),
+};
+
+export const port = Number(process.env.CREW_PORT ?? DEFAULT_PORT);
+
+/**
+ * DEV ONLY. Use the owner's personal ~/.claude and ~/.codex sign-in instead of
+ * Crew's own engine folders. Agents may then see personal skills and settings.
+ */
+export const sharedEngineHome = process.env.CREW_SHARED_ENGINE_HOME === '1';
+/** CREW_STEERING=off: never write owner messages into a running turn; they always wait for it to end. */
+export const steeringEnabled = process.env.CREW_STEERING !== 'off';
+
+export function ensureDirs(): void {
+  for (const dir of [
+    paths.home,
+    paths.sessions,
+    paths.run,
+    paths.try,
+    paths.attachments,
+    paths.engines.claude,
+    paths.engines.codex,
+    paths.engines.codexHome,
+    paths.engines.grok,
+    paths.engines.grokHome,
+    paths.engines.antigravityHome,
+  ]) {
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+  }
+  writeGrokConfig();
+}
+
+/**
+ * Crew's own Grok config. Grok reads Claude Code and Cursor setup for
+ * compatibility; switch all of that off, and give it a [permission] section so
+ * it never falls back to ~/.claude/settings*.json.
+ */
+function writeGrokConfig(): void {
+  const lines = ['# Written by Crew on every start. Do not edit.'];
+  for (const vendor of ['claude', 'cursor']) {
+    lines.push('', `[compat.${vendor}]`);
+    for (const cell of ['skills', 'rules', 'agents', 'mcps', 'hooks', 'sessions']) lines.push(`${cell} = false`);
+  }
+  lines.push('', '[compat.codex]', 'sessions = false', '', '[permission]', 'allow = []', 'deny = []', '');
+  writeFileSync(join(paths.engines.grok, 'config.toml'), lines.join('\n'), { mode: 0o600 });
+}
+
+/**
+ * Environment variables an agent process may inherit. Everything else in the
+ * conductor's environment (including .env.local) stays out.
+ */
+export const AGENT_ENV_ALLOW = /^(PATH|HOME|USER|LOGNAME|SHELL|TERM|TERM_PROGRAM|COLORTERM|TMPDIR|TZ|LANG|LC_[A-Z]+|__CF_USER_TEXT_ENCODING|SSL_CERT_FILE|SSL_CERT_DIR|NODE_EXTRA_CA_CERTS|HTTPS?_PROXY|https?_proxy|NO_PROXY|no_proxy|ALL_PROXY|all_proxy)$/;
+
+/** The owner's real home folder, for MCP servers that need it (the Shopify CLI keeps its login there). */
+export const REAL_HOME = homedir();
+
+/**
+ * Files and folders no agent may read or write. Claude Code and Grok enforce
+ * these as permission rules; Codex's sandbox blocks writes and network, not reads.
+ */
+export function denyPaths(): string[] {
+  const h = REAL_HOME;
+  return [
+    REPO_ROOT,
+    // The team definition (instructions, tools, evals) may sit in another repo.
+    TEAM_ROOT,
+    paths.engines.claude,
+    paths.engines.codex,
+    paths.engines.grok,
+    join(paths.home, 'engines', 'antigravity'),
+    paths.run,
+    paths.attachments,
+    paths.info,
+    paths.db,
+    `${paths.db}-wal`,
+    `${paths.db}-shm`,
+    join(h, '.ssh'),
+    join(h, '.claude'),
+    join(h, '.claude.json'),
+    join(h, '.codex'),
+    join(h, '.grok'),
+    join(h, '.gemini'),
+    join(h, '.cursor'),
+    join(h, '.agents'),
+    join(h, '.config'),
+    join(h, 'Library'),
+  ];
+}

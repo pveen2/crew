@@ -1,0 +1,238 @@
+/*
+ * Crew design tokens.
+ * Layer 1, primitives (--cr-gray-*, --cr-red-* …): raw values read from the v5 designs.
+ * Layer 2, semantic (--cr-color-*, --cr-space-*, …): what components use.
+ * Components must only reference layer 2.
+ */
+
+:root {
+  /* ---------------------------------------------------------------- primitives */
+  --cr-gray-0: #ffffff;
+  --cr-gray-25: #fafafa;
+  --cr-gray-50: #f7f7f7;
+  --cr-gray-75: #f4f4f4;
+  --cr-gray-100: #f2f2f2;
+  --cr-gray-150: #f0f0f0;
+  --cr-gray-175: #efefef;
+  --cr-gray-200: #ededed;
+  --cr-gray-250: #e8e8e8;
+  --cr-gray-275: #e6e6e6;
+  --cr-gray-300: #e2e2e2;
+  --cr-gray-400: #cfcfcf;
+  --cr-gray-500: #8f8f8f;
+  --cr-gray-550: #737373; /* 4.7:1 on white: the lightest gray allowed for text on panels */
+  --cr-gray-600: #6e6e6e;
+  --cr-gray-700: #3a3a3a;
+  --cr-gray-800: #2a2a2a;
+  --cr-gray-850: #232323;
+  --cr-gray-875: #1c1c1c;
+  --cr-gray-900: #1f1f1f;
+  --cr-gray-950: #111111;
+  --cr-black-alpha-05: rgba(0, 0, 0, 0.05);
+  --cr-black-alpha-06: rgba(0, 0, 0, 0.06);
+  --cr-white-alpha-04: rgba(255, 255, 255, 0.04);
+
+  --cr-red-50: #feeceb;
+  --cr-red-500: #e5484d;
+  --cr-red-700: #b42318;
+  --cr-amber-50: #fff4e0;
+  --cr-amber-700: #8a4b00;
+  --cr-blue-50: #eaf2fd;
+  --cr-blue-600: #005bd3;
+  --cr-blue-300: #7cb1ff; /* focus ring on the dark sidebar: 7:1 on #232323 */
+  --cr-green-50: #e6f4ec;
+  --cr-green-600: #29845a;
+
+  /* Agent faces, bold colour (v5 option B) */
+  --cr-face-gm: #1f1f1f;
+  --cr-face-store-manager: #1f9d57;
+  --cr-face-creative-strategist: #d6336c;
+  --cr-face-paid-media: #6e4be0;
+  --cr-face-data-analyst: #e8682a;
+  --cr-face-seo: #0e9f8f;
+  --cr-face-customer-care: #2477e3;
+  --cr-face-neutral: #8f8f8f;
+  --cr-face-eyes: #ffffff;
+
+  /* ---------------------------------------------------------------- semantic: light panel surface */
+  --cr-color-bg-app: var(--cr-gray-950);
+  --cr-color-bg-surface: var(--cr-gray-0);
+  --cr-color-bg-surface-secondary: var(--cr-gray-25);
+  --cr-color-bg-surface-tertiary: var(--cr-gray-50);
+  --cr-color-bg-fill: var(--cr-gray-150);
+  --cr-color-bg-fill-hover: var(--cr-gray-50);
+  --cr-color-bg-fill-active: var(--cr-gray-200);
+  --cr-color-bg-fill-selected: var(--cr-gray-100);
+  --cr-color-bg-fill-brand: var(--cr-gray-900);
+  --cr-color-bg-fill-brand-hover: var(--cr-gray-700);
+  --cr-color-bg-fill-brand-active: var(--cr-gray-950);
+  --cr-color-bg-skeleton: var(--cr-gray-75);
+  --cr-color-bg-info: var(--cr-blue-50);
+  --cr-color-bg-success: var(--cr-green-50);
+  --cr-color-bg-caution: var(--cr-amber-50);
+  --cr-color-bg-critical: var(--cr-red-50);
+
+  --cr-color-text: var(--cr-gray-900);
+  --cr-color-text-secondary: var(--cr-gray-600);
+  --cr-color-text-tertiary: var(--cr-gray-550);
+  --cr-color-text-emphasis: var(--cr-gray-700);
+  --cr-color-text-on-fill: var(--cr-gray-0);
+  --cr-color-text-link: var(--cr-blue-600);
+  --cr-color-text-info: var(--cr-blue-600);
+  --cr-color-text-success: var(--cr-green-600);
+  --cr-color-text-caution: var(--cr-amber-700);
+  --cr-color-text-critical: var(--cr-red-700);
+
+  --cr-color-border: var(--cr-gray-300);
+  --cr-color-border-subtle: var(--cr-gray-200);
+  --cr-color-border-faint: var(--cr-gray-175);
+  --cr-color-border-control: var(--cr-gray-250);
+  --cr-color-border-elevated: var(--cr-gray-275);
+  --cr-color-border-focus: var(--cr-blue-600);
+  --cr-color-border-focus-on-dark: var(--cr-blue-300);
+
+  --cr-color-dot-unread: var(--cr-gray-900);
+  --cr-color-dot-notification: var(--cr-red-500);
+  --cr-color-spinner: var(--cr-gray-500);
+  --cr-color-spinner-info: var(--cr-blue-600);
+
+  /* ---------------------------------------------------------------- semantic: dark sidebar surface */
+  --cr-color-bg-sidebar: var(--cr-gray-950);
+  --cr-color-bg-sidebar-raised: var(--cr-gray-875);
+  --cr-color-bg-sidebar-hover: var(--cr-gray-875);
+  --cr-color-bg-sidebar-selected: var(--cr-gray-850);
+  --cr-color-border-sidebar: var(--cr-gray-800);
+  --cr-color-border-sidebar-divider: var(--cr-gray-900);
+  --cr-color-text-sidebar: var(--cr-gray-200);
+  --cr-color-text-sidebar-strong: var(--cr-gray-0);
+  --cr-color-text-sidebar-muted: var(--cr-gray-400);
+  --cr-color-text-sidebar-secondary: var(--cr-gray-500);
+  --cr-color-dot-unread-sidebar: var(--cr-gray-0);
+  --cr-color-brand-tile: var(--cr-gray-0);
+  --cr-color-brand-tile-text: var(--cr-gray-950);
+
+  /* ---------------------------------------------------------------- space */
+  --cr-space-0: 0;
+  --cr-space-025: 1px;
+  --cr-space-050: 2px;
+  --cr-space-075: 3px;
+  --cr-space-100: 4px;
+  --cr-space-150: 6px;
+  --cr-space-175: 7px;
+  --cr-space-200: 8px;
+  --cr-space-225: 9px;
+  --cr-space-250: 10px;
+  --cr-space-300: 12px;
+  --cr-space-350: 14px;
+  --cr-space-400: 16px;
+  --cr-space-450: 18px;
+  --cr-space-500: 20px;
+  --cr-space-600: 24px;
+  --cr-space-700: 28px;
+  --cr-space-800: 32px;
+  --cr-space-1000: 40px;
+
+  /* ---------------------------------------------------------------- radius */
+  --cr-radius-100: 4px;
+  --cr-radius-150: 5px;
+  --cr-radius-200: 6px;
+  --cr-radius-250: 7px;
+  --cr-radius-300: 8px;
+  --cr-radius-350: 9px;
+  --cr-radius-400: 10px;
+  --cr-radius-500: 12px;
+  --cr-radius-600: 14px;
+  --cr-radius-700: 16px;
+  --cr-radius-full: 999px;
+
+  /* ---------------------------------------------------------------- type */
+  --cr-font-family: 'Inter Variable', Inter, -apple-system, 'SF Pro Text', system-ui, sans-serif;
+  --cr-font-family-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+  --cr-font-size-275: 11px;
+  --cr-font-size-288: 11.5px;
+  --cr-font-size-300: 12px;
+  --cr-font-size-313: 12.5px;
+  --cr-font-size-325: 13px;
+  --cr-font-size-338: 13.5px;
+  --cr-font-size-350: 14px;
+  --cr-font-size-375: 15px;
+  --cr-font-size-400: 16px;
+  --cr-font-size-500: 20px;
+  --cr-font-weight-regular: 400;
+  --cr-font-weight-medium: 500;
+  --cr-font-weight-semibold: 600;
+  --cr-font-weight-bold: 700;
+  --cr-line-height-tight: 1.25;
+  --cr-line-height-snug: 1.35;
+  --cr-line-height-normal: 1.5;
+  --cr-line-height-reading: 1.65;
+  --cr-letter-spacing-caps: 0.02em;
+
+  /* ---------------------------------------------------------------- sizes */
+  --cr-height-control-xs: 26px;
+  --cr-height-control-sm: 28px;
+  --cr-height-control-md: 30px;
+  --cr-height-nav: 32px;
+  --cr-height-control-lg: 34px;
+  --cr-height-control-xl: 36px;
+  --cr-height-header: 44px;
+  --cr-height-header-lg: 56px;
+  --cr-size-icon-sm: 12px;
+  --cr-size-icon-md: 15px;
+  --cr-size-dot: 6px;
+  --cr-size-dot-notification: 7px;
+  --cr-size-brand-tile: 22px;
+  --cr-size-face-xs: 18px;
+  --cr-size-face-sm: 20px;
+  --cr-size-face-md: 24px;
+  --cr-size-face-lg: 26px;
+  --cr-size-face-xl: 32px;
+  --cr-size-face-2xl: 36px;
+
+  /* ---------------------------------------------------------------- elevation */
+  --cr-shadow-border: 0 0 0 1px var(--cr-color-border);
+  --cr-shadow-border-subtle: 0 0 0 1px var(--cr-color-border-subtle);
+  --cr-shadow-border-control: 0 0 0 1px var(--cr-color-border-control);
+  --cr-shadow-card-elevated: 0 0 0 1px var(--cr-color-border-elevated), 0 6px 20px var(--cr-black-alpha-05);
+  --cr-shadow-composer: 0 0 0 1px var(--cr-color-border-elevated), 0 8px 24px var(--cr-black-alpha-06);
+  --cr-shadow-panel: 0 0 0 1px var(--cr-white-alpha-04);
+  --cr-shadow-sidebar-raised: inset 0 0 0 1px var(--cr-color-border-sidebar);
+  --cr-focus-ring: 0 0 0 2px var(--cr-color-border-focus);
+  --cr-focus-ring-offset: 1px;
+
+  /* ---------------------------------------------------------------- layout */
+  --cr-width-sidebar: 268px;
+  --cr-width-sidebar-rail: 40px;
+  --cr-width-inbox-list: 380px;
+  --cr-width-inbox-list-min: 300px;
+  --cr-width-pane-main: 460px;
+  --cr-width-pane-preview: 520px;
+  --cr-width-card-min: 260px;
+  --cr-width-search: 240px;
+  --cr-width-time: 36px;
+  --cr-height-doc-min: 480px;
+  --cr-width-content: 680px;
+  --cr-width-composer: 720px;
+  --cr-width-reading: 620px;
+  --cr-width-page: 920px;
+  --cr-width-bubble: 420px;
+  --cr-width-phone: 390px;
+  --cr-width-tab-max: 220px;
+  --cr-width-label: 84px;
+  --cr-gap-window: 8px;
+  /* Space the traffic lights take at the left of the title bar, from the window edge. */
+  --cr-traffic-lights: 76px;
+  --cr-height-titlebar: 40px;
+
+  --cr-duration-fast: 120ms;
+  --cr-duration-medium: 220ms;
+  --cr-easing: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Dark surfaces (the sidebar) get a brighter focus ring. The ring token is
+   redefined here because custom properties resolve where they are declared. */
+.sidebar,
+[data-surface='dark'] {
+  --cr-color-border-focus: var(--cr-color-border-focus-on-dark);
+  --cr-focus-ring: 0 0 0 2px var(--cr-color-border-focus-on-dark);
+}
