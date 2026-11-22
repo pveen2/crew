@@ -11,12 +11,16 @@ directories:
 # so no node_modules go into the app.
 files:
   - dist/**
-  - build/**
+  - build/main.cjs
+  - build/preload.cjs
   - electron/assets/**
   - package.json
 extraMetadata:
   main: build/main.cjs
   crewRepo: pveen2/crew
+# The built-in conductor, its packages and the example team go into
+# Resources/runtime through scripts/after-pack.cjs (extraResources drops node_modules).
+afterPack: scripts/after-pack.cjs
 npmRebuild: false
 mac:
   category: public.app-category.productivity

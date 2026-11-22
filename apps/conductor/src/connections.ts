@@ -83,7 +83,7 @@ const defs: Def[] = [
   {
     id: 'claude',
     label: 'Claude Code',
-    install: 'npm install -g @anthropic-ai/claude-code',
+    install: 'curl -fsSL https://claude.ai/install.sh | bash',
     signIn: engineSignIn('claude-code'),
     async check() {
       const r = await run('claude', ['auth', 'status'], { CLAUDE_CONFIG_DIR: paths.engines.claude });

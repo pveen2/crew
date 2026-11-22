@@ -85,23 +85,34 @@ logs are in `~/.crew/logs/`. Run `pnpm install-app` again after moving the repo.
 When that checkout is on a clean `main` and GitHub has newer commits, the
 sidebar shows **Update Crew**: it pulls `main` and restarts Crew.
 
-**Installed app (DMG):** download `Crew-<version>-arm64.dmg` (Apple silicon)
-or `Crew-<version>.dmg` (Intel) from
-[Releases](https://github.com/pveen2/crew/releases) and drag Crew to
-Applications. It is only the app: run a conductor yourself (`pnpm conductor`
-from a checkout) or point it at one elsewhere with `~/.crew/app.json`:
+**Installed app (DMG).** Everything in one app, nothing else to install
+first:
+
+1. Download `Crew-<version>-arm64.dmg` (Apple silicon) or `Crew-<version>.dmg`
+   (Intel) from [Releases](https://github.com/pveen2/crew/releases), open it
+   and drag Crew to Applications.
+2. Open Crew. Until releases are signed by Apple, macOS asks once: System
+   Settings → Privacy & Security → **Open Anyway**.
+3. In the sidebar, install and sign in to the engines your agents use
+   (Claude Code at least). Each opens Terminal with the right command.
+
+The app brings its own conductor and runs it on its built-in Node; it starts
+and stops with the app. It runs the example team until you point it at your
+own in `~/.crew/app.json`:
 
 ```json
-{ "conductorUrl": "https://crew.example.com", "token": "…" }
+{ "teamDir": "/path/to/your-repo/crew", "env": { "SHOPIFY_STORE": "your-store.myshopify.com" } }
 ```
 
-It checks GitHub Releases at start and every four hours. A signed build
-downloads the update and the sidebar shows **Update Crew**: click it to restart
-into the new version (agents keep running; the conductor is separate). An
-unsigned build only says a new version is out and opens its download page.
-Build a DMG locally with `pnpm --filter @crew/mac dist` (unsigned). A release
-is a version tag: `git tag v0.2.0 && git push origin v0.2.0` runs
-`.github/workflows/release-mac.yml`, which signs and notarizes when the Apple
+or at a conductor elsewhere with `{ "conductorUrl": "https://…", "token": "…" }`.
+A conductor that is already running (`pnpm conductor`) is used as it is.
+
+Updates come from GitHub Releases, checked at start and every four hours. A
+signed build downloads them and the sidebar shows **Update Crew**: click to
+restart into the new version. Until then the button opens the download page.
+Build a DMG locally with `pnpm --filter @crew/mac dist`. A release is a version
+tag (`git tag v0.2.0 && git push origin v0.2.0`), which runs
+`.github/workflows/release-mac.yml`; it signs and notarizes once the Apple
 secrets listed there are set.
 
 From the terminal (no app needed):
