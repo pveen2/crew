@@ -18,7 +18,7 @@ export function App() {
         e.preventDefault();
         navigate({ name: 'new' });
       }
-      if (e.metaKey && e.key === '\\') {
+      if (e.metaKey && e.key.toLowerCase() === 'b') {
         e.preventDefault();
         toggleSidebar();
       }
@@ -39,7 +39,7 @@ export function App() {
           size="md"
           icon="sidebar"
           label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={`${collapsed ? 'Expand' : 'Collapse'} sidebar  ⌘\\`}
+          title={`${collapsed ? 'Expand' : 'Collapse'} sidebar  ⌘B`}
           onClick={() => toggleSidebar()}
         />
       </header>
