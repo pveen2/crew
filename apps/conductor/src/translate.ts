@@ -11,7 +11,7 @@
 // conductor adds attachments/ (the thread's images, read-only) before each turn.
 
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import type { Engine } from '@crew/protocol';
 import { subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
 
@@ -151,8 +151,15 @@ export function translateAgent(opts: TranslateOptions): string[] {
 
   const brandDest = join(workdir, 'context', 'brand');
   resetDir(brandDest);
-  if (existsSync(crew.brandDir) && statSync(crew.brandDir).isDirectory()) {
-    cpSync(crew.brandDir, brandDest, { recursive: true });
+  let copied = false;
+  for (const { from, to } of crew.brand) {
+    if (!existsSync(from)) continue;
+    const dest = join(brandDest, to);
+    mkdirSync(statSync(from).isDirectory() ? dest : dirname(dest), { recursive: true });
+    cpSync(from, dest, { recursive: true });
+    copied = true;
+  }
+  if (copied) {
     makeReadOnly(brandDest);
     written.push(brandDest + '/');
   }

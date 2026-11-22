@@ -138,6 +138,19 @@ body,
   gap: var(--cr-space-225);
   height: var(--cr-height-control-lg);
   padding: 0 var(--cr-space-200);
+  /* A button (opens the Team screen) that looks like the brand mark. */
+  border: 0;
+  border-radius: var(--cr-radius-250);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.sidebar-brand:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+.team-form {
+  padding: var(--cr-space-400);
 }
 .brand-tile {
   width: var(--cr-size-brand-tile);
