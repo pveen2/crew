@@ -7,13 +7,14 @@
 // - Installed from the DMG (app.isPackaged): updates come from GitHub Releases
 //   through electron-updater, see releaseUpdates below.
 
-const { app, BrowserWindow, dialog, ipcMain, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, shell, nativeTheme } = require('electron');
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
+const { installRelease } = require('./self-update.cjs');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
 const APP_FILE = join(__dirname, '..', 'dist', 'index.html');
@@ -297,16 +298,15 @@ const updateFromGit = {
 };
 
 // Installed from the DMG: GitHub Releases of this repo (electron-builder's
-// publish setting writes the feed into the app). A signed build downloads the
-// update in the background and installs it on restart. macOS only installs
-// updates into a signed app, so an unsigned build only says a new version is
-// out and opens its download page. Restarting the app does not stop agents:
-// the conductor is a separate process.
+// publish setting writes the feed into the app). Clicking Update Crew installs
+// the new version and restarts into it, like any Mac app. A build signed with
+// a Developer ID uses Apple's updater (downloaded in the background, installed
+// on restart); an unsigned build installs it itself (self-update.cjs). The
+// built-in conductor stops for the restart, so running agents stop too.
 const releaseUpdates = (() => {
   let updater = null;
-  let available = null; // version on GitHub, newer than this one
-  let ready = null; // version downloaded and ready to install
-  let pageUrl = null;
+  let available = null; // electron-updater's UpdateInfo for a newer version
+  let ready = null; // version downloaded by Apple's updater (signed builds)
   const pkg = (() => {
     try {
       return JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf8'));
@@ -314,17 +314,17 @@ const releaseUpdates = (() => {
       return {};
     }
   })();
-  const canInstall = pkg.crewSigned === true;
+  const signed = pkg.crewSigned === true;
+  const repo = pkg.crewRepo || 'pveen2/crew';
 
   function start() {
     ({ autoUpdater: updater } = require('electron-updater'));
-    updater.autoDownload = canInstall;
-    updater.autoInstallOnAppQuit = canInstall;
+    updater.autoDownload = signed;
+    updater.autoInstallOnAppQuit = signed;
     // Errors are logged once, by the 'error' handler below.
     updater.logger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
     updater.on('update-available', (info) => {
-      available = info.version;
-      pageUrl = `https://github.com/${pkg.crewRepo || 'pveen2/crew'}/releases/tag/v${info.version}`;
+      available = info;
     });
     updater.on('update-downloaded', (info) => {
       ready = info.version;
@@ -338,20 +338,34 @@ const releaseUpdates = (() => {
   return {
     start,
     async check() {
-      if (ready) return { badge: ready, title: `Crew ${ready} is ready. Click to restart into it.`, stopsAgents: false };
-      if (available && !canInstall) return { badge: available, title: `Crew ${available} is out. Click to download it.`, stopsAgents: false };
-      return null;
+      const version = signed ? ready : available?.version;
+      if (!version) return null;
+      return { badge: version, title: `Crew ${version} is ready. Click to install it and restart.`, stopsAgents: ownsConductor() };
     },
     async apply() {
-      if (ready) {
-        setImmediate(() => updater.quitAndInstall());
+      try {
+        if (signed && ready) {
+          await stopConductor();
+          setImmediate(() => updater.quitAndInstall());
+          return null;
+        }
+        if (!available) return 'No update is waiting.';
+        const info = available;
+        await installRelease({
+          info,
+          repo,
+          fetchImpl: (url) => net.fetch(url),
+          logDir: join(CREW_HOME, 'logs'),
+          quit: () => {
+            // Stop the conductor first, so the new version starts its own on a free port.
+            void stopConductor().then(() => app.quit());
+          },
+        });
         return null;
+      } catch (err) {
+        const page = available ? `https://github.com/${repo}/releases/tag/v${available.version}` : `https://github.com/${repo}/releases`;
+        return `${err.message || err}\n\nYou can also download it from ${page}`;
       }
-      if (pageUrl) {
-        await shell.openExternal(pageUrl);
-        return null;
-      }
-      return 'No update is waiting.';
     },
   };
 })();
