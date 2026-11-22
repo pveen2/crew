@@ -35,6 +35,9 @@ async function stop(signal: string) {
   if (stopping) process.exit(1);
   stopping = true;
   console.log(`\n${signal}: stopping running turns…`);
+  // Never outlive whoever stopped us (the Mac app quits right after): turns get
+  // 8 seconds in shutdown(), and anything that hangs after that is cut off.
+  setTimeout(() => process.exit(0), 12_000).unref();
   await runtime.shutdown();
   server.close();
   rmSync(paths.info, { force: true });

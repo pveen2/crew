@@ -24,7 +24,7 @@ import type {
   TurnStatus,
 } from '@crew/protocol';
 import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
-import { REAL_HOME, denyPaths, paths, port, steeringEnabled } from './config.ts';
+import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
 import type { SessionRow, Store } from './db.ts';
 import { engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
@@ -576,6 +576,7 @@ export class Runtime {
         command: process.execPath,
         args: [paths.bridge],
         env: {
+          ...nodeChildEnv,
           CREW_URL: `http://127.0.0.1:${port}`,
           CREW_SESSION_ID: session.id,
           CREW_THREAD_ID: session.threadId,

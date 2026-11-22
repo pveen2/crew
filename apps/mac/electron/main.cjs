@@ -8,8 +8,8 @@
 //   through electron-updater, see releaseUpdates below.
 
 const { app, BrowserWindow, ipcMain, shell, nativeTheme } = require('electron');
-const { execFile } = require('node:child_process');
-const { existsSync, readFileSync } = require('node:fs');
+const { execFile, execFileSync, spawn } = require('node:child_process');
+const { existsSync, mkdirSync, openSync, readFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -21,7 +21,12 @@ const APP_FILE = join(__dirname, '..', 'dist', 'index.html');
 // The path works from electron/ (a checkout) and build/ (the bundled main in the DMG).
 const ICON = join(__dirname, '..', 'electron', 'assets', 'icon.png');
 const PRELOAD = join(__dirname, 'preload.cjs');
-/** Optional settings: { "conductorUrl": "https://…", "token": "…" } for a conductor elsewhere. */
+/**
+ * Optional settings in ~/.crew/app.json:
+ *   teamDir       the team folder the built-in conductor runs (default: the example team)
+ *   env           extra environment for the built-in conductor, e.g. { "SHOPIFY_STORE": "…" }
+ *   conductorUrl  + token: use a conductor elsewhere (a server) instead
+ */
 const SETTINGS_FILE = join(CREW_HOME, 'app.json');
 
 /** True only for the app's own document (the built file or the dev server), never any other page. */
@@ -61,6 +66,67 @@ function conductorInfo() {
     return null;
   }
 }
+
+// The installed app brings its own conductor (Resources/runtime, built by
+// scripts/build-runtime.mjs) and runs it on Electron's built-in Node, so
+// nothing but the app is needed. It starts with the app, unless a conductor is
+// already running (pnpm conductor, Crew.app from a checkout) or the settings
+// point at one elsewhere, and it stops when the app quits.
+let conductorChild = null;
+
+function conductorRunning() {
+  try {
+    const { pid } = JSON.parse(readFileSync(join(CREW_HOME, 'conductor.json'), 'utf8'));
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** PATH as a login shell sees it: Finder starts apps with a bare PATH, and the agent CLIs live in the owner's. */
+function loginPath() {
+  try {
+    const out = execFileSync(process.env.SHELL || '/bin/zsh', ['-lc', 'printf %s "$PATH"'], { encoding: 'utf8', timeout: 10_000 });
+    return out.split('\n').at(-1) || process.env.PATH;
+  } catch {
+    return process.env.PATH;
+  }
+}
+
+function startConductor() {
+  if (!app.isPackaged || process.env.CREW_CONDUCTOR_URL) return;
+  const settings = readSettings();
+  if (settings.conductorUrl || conductorRunning()) return;
+  const runtime = join(process.resourcesPath, 'runtime');
+  const logs = join(CREW_HOME, 'logs');
+  mkdirSync(logs, { recursive: true });
+  const log = openSync(join(logs, 'conductor.log'), 'a');
+  conductorChild = spawn(
+    process.execPath,
+    ['--disable-warning=ExperimentalWarning', join(runtime, 'apps', 'conductor', 'src', 'main.ts')],
+    {
+      cwd: runtime,
+      env: {
+        ...process.env,
+        ...(settings.env && typeof settings.env === 'object' ? settings.env : {}),
+        ELECTRON_RUN_AS_NODE: '1',
+        PATH: loginPath(),
+        CREW_TEAM_DIR: settings.teamDir || process.env.CREW_TEAM_DIR || join(runtime, 'crew'),
+      },
+      stdio: ['ignore', log, log],
+    },
+  );
+  conductorChild.on('exit', (code) => {
+    console.error(`[crew] conductor exited (${code}); see ${join(logs, 'conductor.log')}`);
+    conductorChild = null;
+  });
+}
+
+app.on('before-quit', () => {
+  // The conductor stops its running turns on SIGTERM; they can be resumed later.
+  conductorChild?.kill('SIGTERM');
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -229,7 +295,10 @@ ipcMain.handle('crew:info', (event) => {
 
 app.whenReady().then(() => {
   nativeTheme.themeSource = 'system';
-  if (app.isPackaged) releaseUpdates.start();
+  if (app.isPackaged) {
+    startConductor();
+    releaseUpdates.start();
+  }
   if (process.platform === 'darwin') app.dock?.setIcon(ICON);
   createWindow();
   app.on('activate', () => {

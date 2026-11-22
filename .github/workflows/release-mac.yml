@@ -3,9 +3,9 @@
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
-# Without Apple secrets the build is unsigned: it installs (after a Gatekeeper
-# warning) and says when a new version is out, but macOS will not let it
-# install updates itself. With these repository secrets it is signed and
+# Without Apple secrets the build is ad-hoc signed: it opens after the owner
+# allows it once (System Settings → Privacy & Security → Open Anyway) and says
+# when a new version is out, but macOS will not let it install updates itself. With these repository secrets it is signed and
 # notarized, and updates download and install on restart:
 #
 #   MAC_CERT_P12            base64 of the "Developer ID Application" certificate (.p12)
@@ -53,7 +53,7 @@ jobs:
 
       - name: Build the renderer and the main process
         working-directory: apps/mac
-        run: pnpm build && pnpm bundle:main
+        run: pnpm build && pnpm bundle:main && pnpm build:runtime
 
       - name: Signing and notarization keys
         if: env.SIGNED == 'true'
@@ -75,10 +75,12 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: pnpm exec electron-builder --mac --publish always -c.mac.notarize=true -c.extraMetadata.crewSigned=true
 
-      - name: Build and publish (unsigned)
+      # Ad-hoc signed: a modified Electron app with no signature at all reads as
+      # "damaged" on Apple silicon. Hardened runtime only matters for notarization.
+      - name: Build and publish (ad-hoc signed)
         if: env.SIGNED != 'true'
         working-directory: apps/mac
         env:
           GH_TOKEN: ${{ github.token }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: pnpm exec electron-builder --mac --publish always
+        run: pnpm exec electron-builder --mac --publish always -c.mac.identity=- -c.mac.hardenedRuntime=false
