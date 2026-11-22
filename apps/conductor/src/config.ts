@@ -36,6 +36,13 @@ export const paths = {
   bridge: join(CONDUCTOR_SRC, 'mcp-bridge.ts'),
 };
 
+/**
+ * Env for a child that runs a script with process.execPath. In the installed
+ * Mac app that is the Crew binary (Electron), which runs scripts as Node only
+ * with ELECTRON_RUN_AS_NODE; elsewhere it is plain Node and needs nothing.
+ */
+export const nodeChildEnv: Record<string, string> = process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {};
+
 export const port = Number(process.env.CREW_PORT ?? DEFAULT_PORT);
 
 /**

@@ -12,7 +12,8 @@
     "web": "vite",
     "typecheck": "tsc -p .",
     "bundle:main": "esbuild electron/main.cjs --bundle --platform=node --format=cjs --target=node22 --external:electron --outfile=build/main.cjs --log-level=warning && cp electron/preload.cjs build/preload.cjs",
-    "dist": "vite build && pnpm bundle:main && electron-builder --mac --publish never"
+    "dist": "vite build && pnpm bundle:main && pnpm build:runtime && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --publish never -c.mac.identity=- -c.mac.hardenedRuntime=false",
+    "build:runtime": "node scripts/build-runtime.mjs"
   },
   "devDependencies": {
     "@crew/protocol": "workspace:*",

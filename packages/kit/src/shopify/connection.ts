@@ -10,6 +10,8 @@ export const shopifyConnection = (opts: { store: string; name?: string }) =>
     command: process.execPath,
     args: [fileURLToPath(new URL('./mcp-server.ts', import.meta.url))],
     env: {
+      // In the installed Mac app process.execPath is the Crew binary (Electron).
+      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       SHOPIFY_STORE: process.env.SHOPIFY_STORE?.trim() || opts.store,
       SHOPIFY_STORE_NAME: opts.name ?? opts.store,
     },
