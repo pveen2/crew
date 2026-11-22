@@ -1,5 +1,7 @@
-# Builds the Mac app from a version tag and publishes it to GitHub Releases,
-# where installed copies find their updates:
+# Builds the Mac app and publishes it to GitHub Releases, where installed
+# copies find their updates. Every merge to main is released as the next patch
+# version (v0.1.1 → v0.1.2); changes to docs alone are skipped. For a bigger
+# jump, push a tag yourself:
 #
 #   git tag v0.2.0 && git push origin v0.2.0
 #
@@ -17,13 +19,17 @@ name: Release Mac app
 
 on:
   push:
+    branches: [main]
     tags: ['v*']
+    paths-ignore: ['**.md', '.env.example', 'LICENSE']
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+# One release at a time, so two quick merges get two different versions.
 concurrency:
-  group: release-mac-${{ github.ref }}
+  group: release-mac
   cancel-in-progress: false
 
 jobs:
@@ -34,6 +40,23 @@ jobs:
       SIGNED: ${{ secrets.MAC_CERT_P12 != '' && secrets.APPLE_API_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # A tag push releases that tag. A merge to main becomes the next patch
+      # version after the highest v* tag.
+      - name: Pick the version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            latest=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1)
+            latest="${latest:-v0.0.0}"
+            IFS=. read -r major minor patch <<< "${latest#v}"
+            version="$major.$minor.$((patch + 1))"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - uses: pnpm/action-setup@v4
 
@@ -47,13 +70,32 @@ jobs:
       - name: Check
         run: pnpm typecheck
 
-      - name: Set the app version from the tag
+      - name: Set the app version
         working-directory: apps/mac
-        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+        run: npm pkg set version="${{ steps.version.outputs.version }}"
 
       - name: Build the renderer and the main process
         working-directory: apps/mac
         run: pnpm build && pnpm bundle:main && pnpm build:runtime
+
+      # Tagged only once the build works, so a failed build leaves no tag behind.
+      # Tags pushed with GITHUB_TOKEN don't start another run.
+      - name: Tag the release
+        if: github.ref_type != 'tag'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}" "$GITHUB_SHA"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      # electron-builder builds arm64 and x64 side by side, and each would
+      # create its own release for the tag if none exists, splitting the files
+      # over two. So the release is made here, as a draft that installed apps
+      # don't see, and published once every file is on it.
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${{ steps.version.outputs.version }}"
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --draft --verify-tag --title "${{ steps.version.outputs.version }}" --generate-notes
 
       - name: Signing and notarization keys
         if: env.SIGNED == 'true'
@@ -73,7 +115,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: pnpm exec electron-builder --mac --publish always -c.mac.notarize=true -c.extraMetadata.crewSigned=true
+        run: pnpm exec electron-builder --mac --publish always -c.publish.releaseType=draft -c.mac.notarize=true -c.extraMetadata.crewSigned=true
 
       # Ad-hoc signed: a modified Electron app with no signature at all reads as
       # "damaged" on Apple silicon. Hardened runtime only matters for notarization.
@@ -83,4 +125,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: pnpm exec electron-builder --mac --publish always -c.mac.identity=- -c.mac.hardenedRuntime=false
+        run: pnpm exec electron-builder --mac --publish always -c.publish.releaseType=draft -c.mac.identity=- -c.mac.hardenedRuntime=false
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "v${{ steps.version.outputs.version }}" --draft=false --latest
