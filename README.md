@@ -85,6 +85,25 @@ logs are in `~/.crew/logs/`. Run `pnpm install-app` again after moving the repo.
 When that checkout is on a clean `main` and GitHub has newer commits, the
 sidebar shows **Update Crew**: it pulls `main` and restarts Crew.
 
+**Installed app (DMG):** download `Crew-<version>-arm64.dmg` (Apple silicon)
+or `Crew-<version>.dmg` (Intel) from
+[Releases](https://github.com/pveen2/crew/releases) and drag Crew to
+Applications. It is only the app: run a conductor yourself (`pnpm conductor`
+from a checkout) or point it at one elsewhere with `~/.crew/app.json`:
+
+```json
+{ "conductorUrl": "https://crew.example.com", "token": "…" }
+```
+
+It checks GitHub Releases at start and every four hours. A signed build
+downloads the update and the sidebar shows **Update Crew**: click it to restart
+into the new version (agents keep running; the conductor is separate). An
+unsigned build only says a new version is out and opens its download page.
+Build a DMG locally with `pnpm --filter @crew/mac dist` (unsigned). A release
+is a version tag: `git tag v0.2.0 && git push origin v0.2.0` runs
+`.github/workflows/release-mac.yml`, which signs and notarizes when the Apple
+secrets listed there are set.
+
 From the terminal (no app needed):
 
 ```sh

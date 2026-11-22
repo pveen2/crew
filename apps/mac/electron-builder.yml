@@ -1,0 +1,39 @@
+# The DMG build of the Mac app. `pnpm --filter @crew/mac dist` builds it locally
+# (unsigned); .github/workflows/release-mac.yml builds, signs and publishes a
+# release from a version tag.
+appId: dev.crew.app
+productName: Crew
+copyright: Copyright © 2026 pveen2
+directories:
+  output: release
+# The renderer (dist/), the bundled main process and preload (build/) and the
+# window icon. Everything the main process needs is bundled into build/main.cjs,
+# so no node_modules go into the app.
+files:
+  - dist/**
+  - build/**
+  - electron/assets/**
+  - package.json
+extraMetadata:
+  main: build/main.cjs
+  crewRepo: pveen2/crew
+npmRebuild: false
+mac:
+  category: public.app-category.productivity
+  icon: electron/assets/icon.png
+  hardenedRuntime: true
+  # Signing and notarization switch on in CI when the Apple secrets exist.
+  notarize: false
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    # The ZIP is what electron-updater downloads.
+    - target: zip
+      arch: [arm64, x64]
+dmg:
+  title: Crew ${version}
+publish:
+  provider: github
+  owner: pveen2
+  repo: crew
+  releaseType: release

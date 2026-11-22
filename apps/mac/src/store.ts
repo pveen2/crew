@@ -17,14 +17,27 @@ import type {
   Turn,
 } from '@crew/protocol';
 
+/** An update the sidebar offers. */
+export interface UpdateInfo {
+  /** Short text on the button: a commit count or a version. */
+  badge: string;
+  /** What clicking does. */
+  title: string;
+  /** True when applying restarts the conductor too, which stops running agents. */
+  stopsAgents: boolean;
+}
+
 declare global {
   interface Window {
     crewHost?: {
       platform: string;
       conductorInfo: () => Promise<{ url: string; token: string } | null>;
-      /** Commits waiting on origin/main (0 outside Crew.app or off a clean main). */
-      updateCheck: () => Promise<number>;
-      /** Pulls and restarts Crew; resolves with an error message if the pull failed. */
+      /**
+       * A waiting update, or null: new commits on main (running from a checkout)
+       * or a new release on GitHub (installed from the DMG).
+       */
+      updateCheck: () => Promise<UpdateInfo | null>;
+      /** Installs it (restart, or the download page); resolves with an error message if that failed. */
       updateApply: () => Promise<string | null>;
     };
   }
@@ -67,6 +80,8 @@ export interface AppState {
   inbox: Record<string, InboxItem>;
   roles: RoleSummary[];
   teamName: string;
+  /** Example questions on the New thread screen, from the team. */
+  suggestions: string[];
   activity: AgentActivity[];
   details: Record<string, ThreadData>;
   view: View;
@@ -156,6 +171,7 @@ let state: AppState = {
   inbox: {},
   roles: [],
   teamName: '',
+  suggestions: [],
   activity: [],
   details: {},
   view: viewFromHash(),
@@ -231,6 +247,7 @@ async function refreshState(): Promise<void> {
     inbox: Object.fromEntries(s.inbox.map((i) => [i.id, i])),
     roles: s.roles,
     teamName: s.team.name,
+    suggestions: s.team.suggestions,
     activity: s.activity,
   });
 }

@@ -1,0 +1,84 @@
+# Builds the Mac app from a version tag and publishes it to GitHub Releases,
+# where installed copies find their updates:
+#
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Without Apple secrets the build is unsigned: it installs (after a Gatekeeper
+# warning) and says when a new version is out, but macOS will not let it
+# install updates itself. With these repository secrets it is signed and
+# notarized, and updates download and install on restart:
+#
+#   MAC_CERT_P12            base64 of the "Developer ID Application" certificate (.p12)
+#   MAC_CERT_PASSWORD       its export password
+#   APPLE_API_KEY_P8        base64 of an App Store Connect API key (.p8)
+#   APPLE_API_KEY_ID        that key's id
+#   APPLE_API_ISSUER        the issuer id from App Store Connect
+name: Release Mac app
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-mac-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    env:
+      SIGNED: ${{ secrets.MAC_CERT_P12 != '' && secrets.APPLE_API_KEY_P8 != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Check
+        run: pnpm typecheck
+
+      - name: Set the app version from the tag
+        working-directory: apps/mac
+        run: npm pkg set version="${GITHUB_REF_NAME#v}"
+
+      - name: Build the renderer and the main process
+        working-directory: apps/mac
+        run: pnpm build && pnpm bundle:main
+
+      - name: Signing and notarization keys
+        if: env.SIGNED == 'true'
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/apple"
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/apple/key.p8"
+          echo "APPLE_API_KEY=$RUNNER_TEMP/apple/key.p8" >> "$GITHUB_ENV"
+
+      - name: Build and publish (signed)
+        if: env.SIGNED == 'true'
+        working-directory: apps/mac
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSC_LINK: ${{ secrets.MAC_CERT_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: pnpm exec electron-builder --mac --publish always -c.mac.notarize=true -c.extraMetadata.crewSigned=true
+
+      - name: Build and publish (unsigned)
+        if: env.SIGNED != 'true'
+        working-directory: apps/mac
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: pnpm exec electron-builder --mac --publish always
