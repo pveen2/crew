@@ -2,12 +2,16 @@
 
 import { randomBytes } from 'node:crypto';
 import { rmSync, writeFileSync } from 'node:fs';
+import { resolveTeamImportsFrom } from '@crew/sdk/resolve';
 import type { ConductorInfo } from '@crew/protocol';
 import { loadCrew } from '@crew/sdk/load';
 import { ensureDirs, paths, port, sharedEngineHome } from './config.ts';
 import { Store } from './db.ts';
 import { Runtime } from './runtime.ts';
 import { startServer } from './server.ts';
+
+// The team may sit in another repo without Crew's packages installed.
+resolveTeamImportsFrom(import.meta.url);
 
 ensureDirs();
 

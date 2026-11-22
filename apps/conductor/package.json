@@ -14,8 +14,9 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@crew/sdk": "workspace:*",
+    "@crew/kit": "workspace:*",
     "@crew/protocol": "workspace:*",
+    "@crew/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.24.0",
     "ws": "^8.18.3",
     "zod": "^3.25.76"

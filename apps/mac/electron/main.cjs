@@ -7,12 +7,13 @@
 // - Installed from the DMG (app.isPackaged): updates come from GitHub Releases
 //   through electron-updater, see releaseUpdates below.
 
-const { app, BrowserWindow, ipcMain, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, nativeTheme } = require('electron');
 const { execFile, execFileSync, spawn } = require('node:child_process');
-const { existsSync, mkdirSync, openSync, readFileSync } = require('node:fs');
+const { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createTeams } = require('./team.cjs');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
 const APP_FILE = join(__dirname, '..', 'dist', 'index.html');
@@ -49,6 +50,11 @@ function readSettings() {
     console.error(`[crew] ${SETTINGS_FILE}: ${err.message}`);
     return {};
   }
+}
+
+function writeSettings(settings) {
+  mkdirSync(CREW_HOME, { recursive: true });
+  writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
 }
 
 function conductorInfo() {
@@ -94,38 +100,106 @@ function loginPath() {
   }
 }
 
-function startConductor() {
-  if (!app.isPackaged || process.env.CREW_CONDUCTOR_URL) return;
+const RUNTIME = join(process.resourcesPath || '', 'runtime');
+let cachedPath = null;
+const teams = createTeams({
+  crewHome: CREW_HOME,
+  readSettings,
+  writeSettings,
+  env: () => ({ ...process.env, PATH: (cachedPath ??= loginPath()) }),
+  exampleDir: join(RUNTIME, 'crew'),
+});
+
+/** True when this app runs its own conductor (installed, and not pointed elsewhere). */
+function ownsConductor() {
+  return app.isPackaged && !process.env.CREW_CONDUCTOR_URL && !readSettings().conductorUrl;
+}
+
+async function startConductor() {
+  if (!ownsConductor() || conductorChild || conductorRunning()) return;
   const settings = readSettings();
-  if (settings.conductorUrl || conductorRunning()) return;
-  const runtime = join(process.resourcesPath, 'runtime');
   const logs = join(CREW_HOME, 'logs');
   mkdirSync(logs, { recursive: true });
   const log = openSync(join(logs, 'conductor.log'), 'a');
+  const team = teams.config();
+  // A GitHub team needs Crew's clone before the first start (later starts reuse it).
+  if (team.kind === 'github') {
+    try {
+      await teams.ensureClone(team);
+    } catch (err) {
+      console.error(`[crew] ${err.message}`);
+    }
+  }
   conductorChild = spawn(
     process.execPath,
-    ['--disable-warning=ExperimentalWarning', join(runtime, 'apps', 'conductor', 'src', 'main.ts')],
+    ['--disable-warning=ExperimentalWarning', join(RUNTIME, 'apps', 'conductor', 'src', 'main.ts')],
     {
-      cwd: runtime,
+      cwd: RUNTIME,
       env: {
         ...process.env,
         ...(settings.env && typeof settings.env === 'object' ? settings.env : {}),
         ELECTRON_RUN_AS_NODE: '1',
-        PATH: loginPath(),
-        CREW_TEAM_DIR: settings.teamDir || process.env.CREW_TEAM_DIR || join(runtime, 'crew'),
+        PATH: (cachedPath ??= loginPath()),
+        CREW_TEAM_DIR: process.env.CREW_TEAM_DIR || teams.teamDir(team),
       },
       stdio: ['ignore', log, log],
     },
   );
-  conductorChild.on('exit', (code) => {
+  const child = conductorChild;
+  child.on('exit', (code) => {
     console.error(`[crew] conductor exited (${code}); see ${join(logs, 'conductor.log')}`);
-    conductorChild = null;
+    if (conductorChild === child) conductorChild = null;
   });
+}
+
+/** Stops this app's conductor and waits for it (it stops running turns first; they can be resumed). */
+function stopConductor() {
+  const child = conductorChild;
+  if (!child) return Promise.resolve();
+  conductorChild = null;
+  return new Promise((done) => {
+    child.once('exit', () => done());
+    child.kill('SIGTERM');
+    setTimeout(done, 15_000);
+  });
+}
+
+async function restartConductor() {
+  await stopConductor();
+  await startConductor();
 }
 
 app.on('before-quit', () => {
   // The conductor stops its running turns on SIGTERM; they can be resumed later.
   conductorChild?.kill('SIGTERM');
+});
+
+// The Team screen and the sidebar's team update button.
+ipcMain.handle('crew:team-info', async () => ({ supported: ownsConductor(), ...(await teams.info()) }));
+ipcMain.handle('crew:team-set', async (_e, next) => {
+  if (!ownsConductor()) return 'Only the installed Crew app runs its own team. From a checkout, set CREW_TEAM_DIR in .env.local.';
+  try {
+    await teams.set(next);
+    await restartConductor();
+    return null;
+  } catch (err) {
+    return String(err.message || err);
+  }
+});
+ipcMain.handle('crew:team-choose-folder', async (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  const r = await dialog.showOpenDialog(win, { title: 'Choose the team folder', properties: ['openDirectory'], message: 'The folder with agent/agent.ts, for example the crew folder in your repo.' });
+  return r.canceled ? null : r.filePaths[0] ?? null;
+});
+ipcMain.handle('crew:team-check', () => (ownsConductor() ? teams.check() : null));
+ipcMain.handle('crew:team-apply', async () => {
+  try {
+    await teams.update();
+    await restartConductor();
+    return null;
+  } catch (err) {
+    return String(err.message || err);
+  }
 });
 
 function createWindow() {
@@ -296,7 +370,7 @@ ipcMain.handle('crew:info', (event) => {
 app.whenReady().then(() => {
   nativeTheme.themeSource = 'system';
   if (app.isPackaged) {
-    startConductor();
+    void startConductor();
     releaseUpdates.start();
   }
   if (process.platform === 'darwin') app.dock?.setIcon(ICON);

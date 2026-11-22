@@ -27,6 +27,22 @@ export interface UpdateInfo {
   stopsAgents: boolean;
 }
 
+/** Where the team comes from (installed app only). */
+export type TeamSource =
+  | { kind: 'example' }
+  | { kind: 'github'; repo: string; path: string; branch: string }
+  | { kind: 'folder'; dir: string };
+
+export type TeamInfo = TeamSource & {
+  /** False when this app does not run its own conductor (running from a checkout, or a server). */
+  supported: boolean;
+  teamDir: string;
+  /** The folder has agent/agent.ts. */
+  ready: boolean;
+  /** Short commit and subject of Crew's clone (GitHub teams). */
+  revision?: string;
+};
+
 declare global {
   interface Window {
     crewHost?: {
@@ -39,6 +55,13 @@ declare global {
       updateCheck: () => Promise<UpdateInfo | null>;
       /** Installs it (restart, or the download page); resolves with an error message if that failed. */
       updateApply: () => Promise<string | null>;
+      teamInfo?: () => Promise<TeamInfo>;
+      /** Switches the team and restarts the conductor; resolves with an error message, or null. */
+      teamSet?: (next: TeamSource) => Promise<string | null>;
+      teamChooseFolder?: () => Promise<string | null>;
+      /** New commits for a GitHub team, or null. */
+      teamCheck?: () => Promise<UpdateInfo | null>;
+      teamApply?: () => Promise<string | null>;
     };
   }
 }
@@ -57,6 +80,7 @@ export type View =
   | { name: 'done' }
   | { name: 'inbox'; itemId?: string }
   | { name: 'agents' }
+  | { name: 'team' }
   | { name: 'thread'; threadId: string; sessionId?: string };
 
 export interface PreviewDoc {
@@ -117,7 +141,7 @@ function viewFromHash(): View {
   const [name, a, b] = location.hash.replace(/^#\/?/, '').split('/').map((x) => (x ? decode(x) : x));
   if (name === 'thread' && a) return { name: 'thread', threadId: a, sessionId: b || undefined };
   if (name === 'inbox') return { name, itemId: a || undefined };
-  if (name === 'threads' || name === 'agents' || name === 'done') return { name };
+  if (name === 'threads' || name === 'agents' || name === 'done' || name === 'team') return { name };
   return { name: 'new', role: (name === 'new' && a) || undefined };
 }
 

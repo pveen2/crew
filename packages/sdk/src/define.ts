@@ -188,6 +188,9 @@ export function defineMemory(def: MemoryDefinition): MemoryDefinition {
   return tag('memory', def);
 }
 
+/** One entry of CrewConfig.brand. */
+export type BrandSource = string | { from: string; to: string };
+
 /**
  * The team as a whole, from crew.config.ts in the team folder. Everything is
  * optional: a team without the file is named "Crew" and has no store or brand.
@@ -200,10 +203,12 @@ export interface CrewConfig {
   /** Example questions on the app's New thread screen. */
   suggestions?: string[];
   /**
-   * Folder (relative to the team folder) copied read-only into every session as
-   * context/brand/. Default: lib/brand.
+   * What every session gets read-only in context/brand/. Paths are relative to
+   * the team folder and may point outside it, e.g. into the brand's own repo:
+   * a folder (its contents are copied), a file, or { from, to } to place a file
+   * or folder at `to` inside context/brand/. Default: lib/brand.
    */
-  brand?: string;
+  brand?: string | BrandSource[];
 }
 
 export function defineCrew(config: CrewConfig): CrewConfig {

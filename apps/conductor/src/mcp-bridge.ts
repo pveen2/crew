@@ -20,6 +20,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import type { ToolDefinition } from '@crew/sdk/define';
+import { resolveTeamImportsFrom } from '@crew/sdk/resolve';
 
 const env = (name: string): string => {
   const v = process.env[name];
@@ -33,6 +34,9 @@ const THREAD_ID = env('CREW_THREAD_ID');
 const AGENT = env('CREW_AGENT');
 const BRIDGE_TOKEN = env('CREW_BRIDGE_TOKEN');
 const CAN_SAVE_ARTIFACTS = process.env.CREW_CAN_SAVE_ARTIFACTS === '1';
+// Team tools may import Crew's packages without their repo installing them.
+resolveTeamImportsFrom(import.meta.url);
+
 const TOOL_FILES = JSON.parse(process.env.CREW_TOOL_FILES ?? '[]') as string[];
 const SUBAGENTS = JSON.parse(process.env.CREW_SUBAGENTS ?? '[]') as Array<{ tool: string; name: string; label: string; description: string }>;
 const MEMORIES = JSON.parse(process.env.CREW_MEMORIES ?? '[]') as Array<{ name: string; description: string }>;

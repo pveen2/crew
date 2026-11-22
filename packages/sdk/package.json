@@ -8,7 +8,8 @@
     ".": "./src/define.ts",
     "./define": "./src/define.ts",
     "./evals": "./src/evals.ts",
-    "./load": "./src/load.ts"
+    "./load": "./src/load.ts",
+    "./resolve": "./src/resolve.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."

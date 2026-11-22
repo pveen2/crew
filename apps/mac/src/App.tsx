@@ -5,6 +5,7 @@ import { Sidebar } from './components/Sidebar';
 import { ThreadView } from './components/ThreadView';
 import { InboxView } from './components/InboxView';
 import { AgentsView } from './components/AgentsView';
+import { TeamView } from './components/TeamView';
 import { NewThreadView, ThreadsView } from './components/Screens';
 
 export function App() {
@@ -57,6 +58,7 @@ export function App() {
           {view.name === 'done' && <ThreadsView done key="done" />}
           {view.name === 'inbox' && <InboxView itemId={view.itemId} />}
           {view.name === 'agents' && <AgentsView />}
+          {view.name === 'team' && <TeamView />}
           {view.name === 'thread' && <ThreadView key={view.threadId} threadId={view.threadId} sessionId={view.sessionId} />}
         </div>
       </div>

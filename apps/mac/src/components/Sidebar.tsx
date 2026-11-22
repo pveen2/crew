@@ -51,14 +51,14 @@ export function Sidebar() {
 
       <div className="sidebar-full" inert={collapsed}>
       <div className="sidebar-top">
-        <span className="sidebar-brand">
+        <button type="button" className="sidebar-brand" title="Team: where the agents come from" onClick={() => navigate({ name: 'team' })}>
           <span className="brand-tile" aria-hidden>
             {teamName.slice(0, 1).toUpperCase()}
           </span>
           <Text as="span" variant="bodyLg" weight="semibold" tone="sidebar">
             {teamName}
           </Text>
-        </span>
+        </button>
         <span className="cr-spacer" />
       </div>
 
@@ -124,7 +124,8 @@ export function Sidebar() {
       <NavItem icon="checkCircle" label="Done" count={doneCount || undefined} selected={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
 
       <div className="sidebar-footer">
-        <UpdateButton working={workingCount} />
+        <UpdateButton working={workingCount} label="Update team" check={window.crewHost?.teamCheck} apply={window.crewHost?.teamApply} />
+        <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} />
         <Connections />
         <div className={`sidebar-conn sidebar-conn--${connection}`} role="status">
           <Icon name={connection === 'online' ? 'checkCircle' : connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
@@ -136,33 +137,47 @@ export function Sidebar() {
   );
 }
 
-/** Shows when an update is waiting: new commits on main, or a new release of the installed app. */
-function UpdateButton({ working }: { working: number }) {
+/**
+ * Shows when an update is waiting. "Update Crew": new commits on main, or a new
+ * release of the installed app. "Update team": new commits for a team from GitHub.
+ */
+function UpdateButton({
+  working,
+  label,
+  check,
+  apply,
+}: {
+  working: number;
+  label: string;
+  check?: () => Promise<UpdateInfo | null>;
+  apply?: () => Promise<string | null>;
+}) {
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
-    const host = window.crewHost;
-    if (!host?.updateCheck) return;
-    const check = () => void host.updateCheck().then(setInfo, () => {});
-    check();
-    const timer = setInterval(check, 10 * 60_000);
+    if (!check) return;
+    const run = () => void check().then(setInfo, () => {});
+    run();
+    const timer = setInterval(run, 10 * 60_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [check]);
   if (!info) return null;
 
   const update = async () => {
-    if (info.stopsAgents && working && !window.confirm(`${working} agent${working === 1 ? ' is' : 's are'} working. Updating restarts Crew and stops them. Update now?`)) return;
+    if (info.stopsAgents && working && !window.confirm(`${working} agent${working === 1 ? ' is' : 's are'} working. Updating restarts the conductor and stops them. Update now?`)) return;
     setBusy(true);
-    const error = await window.crewHost!.updateApply();
-    // A git update quits Crew; a download page opens in the browser and Crew stays.
-    if (error || !info.stopsAgents) setBusy(false);
+    const error = await apply!();
+    // A git update of Crew quits the app. Otherwise the app stays: a team update
+    // restarts only the conductor, a release opens its download page.
+    setBusy(false);
     if (error) window.alert(`Could not update:\n${error}`);
+    else setInfo(null);
   };
 
   return (
     <NavItem
       icon="arrowUp"
-      label="Update Crew"
+      label={label}
       className="sidebar-update"
       title={info.title}
       disabled={busy}

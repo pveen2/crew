@@ -97,14 +97,21 @@ first:
    (Claude Code at least). Each opens Terminal with the right command.
 
 The app brings its own conductor and runs it on its built-in Node; it starts
-and stops with the app. It runs the example team until you point it at your
-own in `~/.crew/app.json`:
+and stops with the app. Choose the team on the **Team** screen (click the team
+name at the top of the sidebar):
 
-```json
-{ "teamDir": "/path/to/your-repo/crew", "env": { "SHOPIFY_STORE": "your-store.myshopify.com" } }
-```
+- **From GitHub**: a repo, the team folder in it and a branch, for example
+  `askphill/wakey`, `crew`, `main`. Crew keeps its own copy in `~/.crew/teams`
+  (made with your git sign-in) and shows **Update team** in the sidebar when
+  the team folder, or a brand file its `crew.config.ts` points at, changes on
+  that branch. One click updates and restarts the conductor.
+- **Folder on this Mac**: run a folder as it is; you keep it up to date.
+- **Example team**: the GM and Web researcher in this repo.
 
-or at a conductor elsewhere with `{ "conductorUrl": "https://…", "token": "…" }`.
+A team needs nothing installed: when its files import `@crew/sdk`, `@crew/kit`
+or `zod` and its repo lacks them, Crew supplies its own. The settings live in
+`~/.crew/app.json`, which also takes extra environment for the conductor
+(`"env": { "SHOPIFY_STORE": "…" }`) or at a conductor elsewhere with `{ "conductorUrl": "https://…", "token": "…" }`.
 A conductor that is already running (`pnpm conductor`) is used as it is.
 
 Updates come from GitHub Releases, checked at start and every four hours. A

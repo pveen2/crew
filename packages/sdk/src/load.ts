@@ -83,7 +83,8 @@ export interface LoadedCrew {
   agents: Record<string, LoadedAgent>;
   /** Rules every agent gets (lib/rules.md): Crew's own system prompt. */
   rules: string;
-  brandDir: string;
+  /** Copied read-only into each session's context/brand/: absolute `from`, `to` relative to context/brand/ ('' = its root). */
+  brand: Array<{ from: string; to: string }>;
   limits: { turnTimeoutMinutes: number; threadTurnTimeoutMinutes: number };
 }
 
@@ -263,12 +264,22 @@ export async function loadCrew(root: string = TEAM_ROOT): Promise<LoadedCrew> {
     lead: leadName,
     agents,
     rules: readText(join(root, 'lib', 'rules.md')),
-    brandDir: resolve(root, raw.brand ?? join('lib', 'brand')),
+    brand: brandSources(root, raw.brand),
     limits: {
       turnTimeoutMinutes: leadDef.limits?.turnTimeoutMinutes ?? 20,
       threadTurnTimeoutMinutes: leadDef.limits?.threadTurnTimeoutMinutes ?? 45,
     },
   };
+}
+
+function brandSources(root: string, brand: CrewConfig['brand']): LoadedCrew['brand'] {
+  const entries = brand === undefined ? [join('lib', 'brand')] : Array.isArray(brand) ? brand : [brand];
+  return entries.map((e) => {
+    const from = resolve(root, typeof e === 'string' ? e : e.from);
+    if (typeof e !== 'string') return { from, to: e.to };
+    // A folder's contents go to the root of context/brand/; a file keeps its name.
+    return { from, to: existsSync(from) && statSync(from).isDirectory() ? '' : basename(from) };
+  });
 }
 
 /** Tool name the lead uses to call a subagent: its folder name in snake_case. */
