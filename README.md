@@ -110,10 +110,11 @@ A conductor that is already running (`pnpm conductor`) is used as it is.
 Updates come from GitHub Releases, checked at start and every four hours. A
 signed build downloads them and the sidebar shows **Update Crew**: click to
 restart into the new version. Until then the button opens the download page.
-Build a DMG locally with `pnpm --filter @crew/mac dist`. A release is a version
-tag (`git tag v0.2.0 && git push origin v0.2.0`), which runs
-`.github/workflows/release-mac.yml`; it signs and notarizes once the Apple
-secrets listed there are set.
+Build a DMG locally with `pnpm --filter @crew/mac dist`. Every merge to main
+that changes more than docs is released as the next patch version by
+`.github/workflows/release-mac.yml`. For a bigger jump, push a version tag
+(`git tag v0.2.0 && git push origin v0.2.0`). The workflow signs and notarizes
+once the Apple secrets listed there are set.
 
 From the terminal (no app needed):
 
