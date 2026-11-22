@@ -191,7 +191,7 @@ export interface AgentActivity {
 
 export interface StateResponse {
   /** The team this conductor runs (crew.config.ts). */
-  team: { name: string };
+  team: { name: string; suggestions: string[] };
   /** Open threads. */
   threads: Thread[];
   /** Closed (archived) threads, most recent first. */

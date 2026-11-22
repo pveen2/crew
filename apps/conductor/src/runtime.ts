@@ -325,7 +325,7 @@ export class Runtime {
   async state(): Promise<StateResponse> {
     const crew = await loadCrew();
     return {
-      team: { name: crew.config.name },
+      team: { name: crew.config.name, suggestions: crew.config.suggestions ?? [] },
       threads: this.store.threads().filter((t) => !t.archived).map((t) => this.withMeta(t)),
       done: this.store.threads().filter((t) => t.archived).slice(0, 200).map((t) => this.withMeta(t)),
       inbox: this.store.openInbox(),

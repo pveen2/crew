@@ -197,6 +197,8 @@ export interface CrewConfig {
   name?: string;
   /** The Shopify store the team works on. SHOPIFY_STORE overrides it. */
   shopify?: { store: string };
+  /** Example questions on the app's New thread screen. */
+  suggestions?: string[];
   /**
    * Folder (relative to the team folder) copied read-only into every session as
    * context/brand/. Default: lib/brand.

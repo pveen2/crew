@@ -18,15 +18,10 @@ import { createThread, navigate, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
 import { RoleFace, RoleFaces, age, useNow } from './common';
 
-const SUGGESTIONS = [
-  'Welke producten verkochten de afgelopen 30 dagen het best, en wat valt op?',
-  'Bedenk drie campagnerichtingen voor de donkere wintermaanden.',
-  'Check onze productpagina’s op ontbrekende afbeeldingen, SEO-teksten en voorraadproblemen.',
-  'Schrijf een conceptmail voor klanten die al 60 dagen niet hebben besteld.',
-];
-
 export function NewThreadView({ initialRole }: { initialRole?: string }) {
   const roles = useApp((s) => s.roles);
+  // Example questions come from the team (suggestions in crew.config.ts).
+  const suggestions = useApp((s) => s.suggestions);
   const online = useApp((s) => s.connection === 'online');
   const [text, setText] = useState('');
   const images = useAttachments();
@@ -97,25 +92,27 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
               </Text>
             )}
           </BlockStack>
-          <BlockStack gap="200">
-            <Text variant="headingMd">Try</Text>
-            <Card>
-              {SUGGESTIONS.map((s) => (
-                <CardRowButton
-                  key={s}
-                  onClick={() => {
-                    setText(s);
-                    ref.current?.focus();
-                  }}
-                >
-                  <Text as="span" variant="bodyLg" className="grow" truncate>
-                    {s}
-                  </Text>
-                  <Icon name="arrowUpRight" size={12} />
-                </CardRowButton>
-              ))}
-            </Card>
-          </BlockStack>
+          {suggestions.length > 0 && (
+            <BlockStack gap="200">
+              <Text variant="headingMd">Try</Text>
+              <Card>
+                {suggestions.map((s) => (
+                  <CardRowButton
+                    key={s}
+                    onClick={() => {
+                      setText(s);
+                      ref.current?.focus();
+                    }}
+                  >
+                    <Text as="span" variant="bodyLg" className="grow" truncate>
+                      {s}
+                    </Text>
+                    <Icon name="arrowUpRight" size={12} />
+                  </CardRowButton>
+                ))}
+              </Card>
+            </BlockStack>
+          )}
         </BlockStack>
       </div>
     </Panel>

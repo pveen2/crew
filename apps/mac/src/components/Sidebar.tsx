@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { navigate, signInConnection, useApp } from '../store';
+import { navigate, signInConnection, useApp, type UpdateInfo } from '../store';
 import { RoleFaces, age, useNow } from './common';
 
 export function Sidebar() {
@@ -136,28 +136,27 @@ export function Sidebar() {
   );
 }
 
-/** Shows when main on GitHub has new commits; pulls and restarts Crew. */
+/** Shows when an update is waiting: new commits on main, or a new release of the installed app. */
 function UpdateButton({ working }: { working: number }) {
-  const [count, setCount] = useState(0);
+  const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     const host = window.crewHost;
     if (!host?.updateCheck) return;
-    const check = () => void host.updateCheck().then(setCount, () => {});
+    const check = () => void host.updateCheck().then(setInfo, () => {});
     check();
     const timer = setInterval(check, 10 * 60_000);
     return () => clearInterval(timer);
   }, []);
-  if (!count) return null;
+  if (!info) return null;
 
   const update = async () => {
-    if (working && !window.confirm(`${working} agent${working === 1 ? ' is' : 's are'} working. Updating restarts Crew and stops them. Update now?`)) return;
+    if (info.stopsAgents && working && !window.confirm(`${working} agent${working === 1 ? ' is' : 's are'} working. Updating restarts Crew and stops them. Update now?`)) return;
     setBusy(true);
     const error = await window.crewHost!.updateApply();
-    if (error) {
-      setBusy(false);
-      window.alert(`Could not update:\n${error}`);
-    }
+    // A git update quits Crew; a download page opens in the browser and Crew stays.
+    if (error || !info.stopsAgents) setBusy(false);
+    if (error) window.alert(`Could not update:\n${error}`);
   };
 
   return (
@@ -165,10 +164,10 @@ function UpdateButton({ working }: { working: number }) {
       icon="arrowUp"
       label="Update Crew"
       className="sidebar-update"
-      title={`${count} new change${count === 1 ? '' : 's'} on main. Click to update and restart.`}
+      title={info.title}
       disabled={busy}
       onClick={() => void update()}
-      suffix={<span className="sidebar-tool-action">{busy ? <Spinner size={11} label="Updating" /> : count}</span>}
+      suffix={<span className="sidebar-tool-action">{busy ? <Spinner size={11} label="Updating" /> : info.badge}</span>}
     />
   );
 }
