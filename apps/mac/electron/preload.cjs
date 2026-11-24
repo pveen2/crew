@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('crewHost', {
   conductorInfo: () => ipcRenderer.invoke('crew:info'),
   updateCheck: () => ipcRenderer.invoke('crew:update-check'),
   updateApply: () => ipcRenderer.invoke('crew:update-apply'),
+  whereInfo: () => ipcRenderer.invoke('crew:where-info'),
+  whereSet: (next) => ipcRenderer.invoke('crew:where-set', next),
   teamInfo: () => ipcRenderer.invoke('crew:team-info'),
   teamSet: (next) => ipcRenderer.invoke('crew:team-set', next),
   teamChooseFolder: () => ipcRenderer.invoke('crew:team-choose-folder'),

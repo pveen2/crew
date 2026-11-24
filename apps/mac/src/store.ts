@@ -33,6 +33,9 @@ export type TeamSource =
   | { kind: 'github'; repo: string; path: string; branch: string }
   | { kind: 'folder'; dir: string };
 
+/** Where Crew runs: this Mac's own conductor, or a server (behind Cloudflare Access). */
+export type WhereInfo = { mode: 'local' | 'server'; url: string | null; /** Set outside the app (a checkout, or CREW_CONDUCTOR_URL). */ fixed: boolean };
+
 export type TeamInfo = TeamSource & {
   /** False when this app does not run its own conductor (running from a checkout, or a server). */
   supported: boolean;
@@ -56,6 +59,9 @@ declare global {
       updateCheck: () => Promise<UpdateInfo | null>;
       /** Installs it (restart, or the download page); resolves with an error message if that failed. */
       updateApply: () => Promise<string | null>;
+      whereInfo?: () => Promise<WhereInfo>;
+      /** Switches between this Mac and a server; resolves with an error message, or null (the window then reloads). */
+      whereSet?: (next: { mode: 'local' | 'server'; url?: string }) => Promise<string | null>;
       teamInfo?: () => Promise<TeamInfo>;
       /** Switches the team and restarts the conductor; resolves with an error message, or null. */
       teamSet?: (next: TeamSource) => Promise<string | null>;

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Banner, BlockStack, Button, Card, InlineStack, Panel, SegmentedControl, Text, TextField } from '@crew/ui';
-import { useApp, type TeamInfo, type TeamSource } from '../store';
+import { useApp, type TeamInfo, type TeamSource, type WhereInfo } from '../store';
+
+/** The team's server. One for now, so choosing Server connects to it straight away. */
+const SERVER = 'crew.paul.studio';
 
 type Kind = TeamSource['kind'];
 
@@ -63,10 +66,13 @@ export function TeamView() {
           Now: <strong>{teamName || 'Crew'}</strong> · {roles.length} {roles.length === 1 ? 'agent' : 'agents'} · {describe(info)}
         </Text>
         {info && !info.supported && (
-          <Banner tone="info">This Crew uses a conductor it did not start (a checkout or a server), so the team is set there.</Banner>
+          <Banner tone="info">This Crew runs on a server (or from a checkout), so the team is chosen there.</Banner>
         )}
       </BlockStack>
 
+      <WhereCard />
+
+      {info?.supported !== false && (
       <Card>
         <BlockStack gap="400" className="team-form">
           <SegmentedControl<Kind>
@@ -132,7 +138,57 @@ export function TeamView() {
           </InlineStack>
         </BlockStack>
       </Card>
+      )}
     </Page>
+  );
+}
+
+/**
+ * Where Crew runs: this Mac's own conductor, or the team's server. Choosing one
+ * switches at once; for the server the sign-in then opens in the browser.
+ */
+function WhereCard() {
+  const host = window.crewHost;
+  const [where, setWhere] = useState<WhereInfo | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => void host?.whereInfo?.().then(setWhere), []);
+  if (!host?.whereInfo || !where) return null;
+
+  const choose = async (mode: WhereInfo['mode']) => {
+    if (mode === where.mode || busy) return;
+    setBusy(true);
+    setError(null);
+    // On success the window reloads and connects (the server asks you to sign in first).
+    const err = await host.whereSet!({ mode, url: SERVER });
+    setBusy(false);
+    if (err) setError(err);
+  };
+
+  return (
+    <Card>
+      <BlockStack gap="300" className="team-form">
+        <SegmentedControl<WhereInfo['mode']>
+          label="Where Crew runs"
+          value={where.mode}
+          onValueChange={(m) => void choose(m)}
+          items={[
+            { value: 'local', label: 'This Mac' },
+            { value: 'server', label: 'Server' },
+          ]}
+        />
+        <Text variant="caption" tone="secondary">
+          {busy
+            ? 'Switching…'
+            : where.mode === 'server'
+              ? `On the team's server (${(where.url ?? SERVER).replace(/^https:\/\//, '')}): the same agents, threads and Inbox for everyone. You sign in with Google in your browser.`
+              : 'Here, on your own engine sign-ins. Choose the team below.'}
+        </Text>
+        {where.fixed && <Banner tone="info">Set outside the app (a checkout or CREW_CONDUCTOR_URL), so it can't be changed here.</Banner>}
+        {error && <Banner tone="critical">{error}</Banner>}
+      </BlockStack>
+    </Card>
   );
 }
 

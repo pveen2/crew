@@ -86,9 +86,14 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
 
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
-      const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
-      if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
-      if (accessEnabled && !(await accessEmail(req))) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
+      // Behind Cloudflare Access the person's Access login is what counts; the app
+      // token is only needed without it (a conductor on a Mac).
+      if (accessEnabled) {
+        if (!(await accessEmail(req))) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
+      } else {
+        const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
+        if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
+      }
 
       if (parts[0] !== 'api') return send(res, 404, { error: 'Not found' });
       const [, a, id, action] = parts;
@@ -188,8 +193,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (
       url.pathname !== '/ws' ||
-      !sameToken(url.searchParams.get('token') ?? '', opts.token) ||
-      (accessEnabled && !(await accessEmail(req)))
+      (accessEnabled ? !(await accessEmail(req)) : !sameToken(url.searchParams.get('token') ?? '', opts.token))
     ) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
