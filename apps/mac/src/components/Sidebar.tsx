@@ -50,9 +50,12 @@ export function Sidebar() {
         <IconButton tone="dark" size="md" icon="settings" label="Settings" pressed={view.name === 'settings'} onClick={() => navigate({ name: 'settings' })} />
         {canStart ? (
           <IconButton tone="dark" size="md" icon={starting ? 'clock' : 'play'} label={starting ? 'Starting conductor…' : 'Start conductor'} disabled={starting} onClick={() => void startConductor()} />
-        ) : <span className={`sidebar-conn--${connection} sidebar-rail-conn`} role="status" title={connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}>
-          <Icon name={connection === 'online' ? 'checkCircle' : connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
-        </span>}
+        ) : connection !== 'online' && (
+          // Only shown when something is off; being connected is the normal state.
+          <span className={`sidebar-conn--${connection} sidebar-rail-conn`} role="status" title={connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}>
+            <Icon name={connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
+          </span>
+        )}
       </div>
 
       <div className="sidebar-full" inert={collapsed}>
@@ -144,11 +147,14 @@ export function Sidebar() {
         <UpdateButton working={workingCount} label="Update team" check={window.crewHost?.teamCheck} apply={window.crewHost?.teamApply} />
         <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} />
         <Connections />
-        <div className={`sidebar-conn sidebar-conn--${connection}`}>
-          <Icon name={connection === 'online' ? 'checkCircle' : connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
-          <span role="status">{connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}</span>
-          {canStart && <Button size="slim" icon="play" disabled={starting} aria-label="Start conductor" onClick={() => void startConductor()}>{starting ? 'Starting…' : 'Start'}</Button>}
-        </div>
+        {/* Only shown when something is off; being connected is the normal state. */}
+        {connection !== 'online' && (
+          <div className={`sidebar-conn sidebar-conn--${connection}`}>
+            <Icon name={connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
+            <span role="status">{connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}</span>
+            {canStart && <Button size="slim" icon="play" disabled={starting} aria-label="Start conductor" onClick={() => void startConductor()}>{starting ? 'Starting…' : 'Start'}</Button>}
+          </div>
+        )}
       </div>
       </div>
     </nav>
