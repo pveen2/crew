@@ -65,7 +65,8 @@ function conductorInfo() {
     return { url: process.env.CREW_CONDUCTOR_URL, token: process.env.CREW_CONDUCTOR_TOKEN };
   }
   const settings = readSettings();
-  if (settings.conductorUrl && settings.token) return { url: String(settings.conductorUrl).replace(/\/+$/, ''), token: String(settings.token) };
+  // A server behind Cloudflare Access needs no token: the Access login is the credential.
+  if (settings.conductorUrl) return { url: String(settings.conductorUrl).replace(/\/+$/, ''), token: String(settings.token ?? '') };
   // Otherwise the conductor on this Mac.
   try {
     const info = JSON.parse(readFileSync(join(CREW_HOME, 'conductor.json'), 'utf8'));
@@ -214,6 +215,47 @@ ipcMain.handle('crew:team-apply', async () => {
   } catch (err) {
     return String(err.message || err);
   }
+});
+
+// Where Crew runs: on this Mac (its own conductor) or on a server.
+function serverUrl(raw) {
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  try {
+    const u = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`);
+    if (u.protocol !== 'https:' || !u.hostname.includes('.') || u.pathname.replace(/\/+$/, '') || u.search) return null;
+    return u.origin;
+  } catch {
+    return null;
+  }
+}
+
+ipcMain.handle('crew:where-info', () => {
+  if (process.env.CREW_CONDUCTOR_URL) return { mode: 'server', url: process.env.CREW_CONDUCTOR_URL, fixed: true };
+  const s = readSettings();
+  return s.conductorUrl ? { mode: 'server', url: s.conductorUrl, fixed: !app.isPackaged } : { mode: 'local', url: null, fixed: !app.isPackaged };
+});
+ipcMain.handle('crew:where-set', async (event, next) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url)) return 'Not allowed.';
+  if (!app.isPackaged || process.env.CREW_CONDUCTOR_URL) return 'From a checkout, set this with CREW_CONDUCTOR_URL.';
+  const settings = readSettings();
+  if (next?.mode === 'server') {
+    const url = serverUrl(next.url);
+    if (!url) return 'Enter the server address, for example crew.example.com.';
+    settings.conductorUrl = url;
+    delete settings.token;
+    writeSettings(settings);
+    await stopConductor();
+  } else {
+    delete settings.conductorUrl;
+    delete settings.token;
+    writeSettings(settings);
+    await startConductor().catch((err) => console.error('[crew] conductor:', err.message));
+  }
+  // Reconnect from scratch against the new conductor.
+  BrowserWindow.fromWebContents(event.sender)?.webContents.reload();
+  return null;
 });
 
 const BROWSER_PARTITION = 'persist:crew-browser';
