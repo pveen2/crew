@@ -30,6 +30,7 @@ import {
   removeQueuedMessage,
   resolveInbox,
   resumeSession,
+  runAgain,
   selectPreview,
   sendMessage,
   setPreviewWidth,
@@ -885,7 +886,8 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 {thread.title}
               </Text>
               <Text variant="caption" tone="secondary" leading="tight" truncate>
-                {thread.roles.map((r) => labels[r] ?? r).join(', ')} · started {ago(thread.createdAt, now)}
+                {thread.roles.map((r) => labels[r] ?? r).join(', ')}
+                {thread.benched?.length ? ` · without ${thread.benched.map((r) => labels[r] ?? r).join(', ')}` : ''} · started {ago(thread.createdAt, now)}
               </Text>
             </BlockStack>
           )}
@@ -893,6 +895,11 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
           <span className="header-faces">
             <RoleFaces roles={thread.roles} size="md" />
           </span>
+          {session.depth === 0 && (
+            <Button size="slim" icon="reload" title="Ask the same question in a new thread, with specialists switched on or off" onClick={() => runAgain(threadId)}>
+              Run again
+            </Button>
+          )}
           <Button size="slim" icon="checkCircle" className="header-close" onClick={() => void archiveThread(threadId)}>
             Close thread
           </Button>

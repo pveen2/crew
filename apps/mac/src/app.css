@@ -595,6 +595,40 @@ body,
 .to-label {
   padding-left: var(--cr-space-150);
 }
+.team-toggles {
+  flex-wrap: wrap;
+  align-items: center;
+}
+.team-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cr-space-100);
+  height: var(--cr-height-control-sm);
+  padding: 0 var(--cr-space-150) 0 var(--cr-space-100);
+  border: 1px solid var(--cr-color-border);
+  border-radius: var(--cr-radius-250);
+  background: transparent;
+  color: var(--cr-color-text);
+  font: inherit;
+  font-size: var(--cr-font-size-313);
+  cursor: default;
+}
+.team-toggle:hover {
+  background: var(--cr-color-bg-fill-hover);
+}
+.team-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--cr-focus-ring);
+}
+.team-toggle--off {
+  border-style: dashed;
+  color: var(--cr-color-text-tertiary);
+  text-decoration: line-through;
+}
+.team-toggle--off .cr-face {
+  filter: grayscale(1);
+  opacity: 0.5;
+}
 .search-field {
   width: var(--cr-width-search);
 }

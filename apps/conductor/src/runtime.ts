@@ -296,6 +296,7 @@ export class Runtime {
       engine: a.engine,
       model: a.model,
       permissions: a.permissions,
+      isLead: a.isLead,
     }));
   }
 
@@ -374,16 +375,21 @@ export class Runtime {
     return session;
   }
 
-  async createThread(text: string, roleName?: string, uploads?: AttachmentUpload[]): Promise<Thread> {
+  async createThread(text: string, roleName?: string, uploads?: AttachmentUpload[], benchedNames: string[] = []): Promise<Thread> {
     const crew = await loadCrew();
     const role = roleName ?? crew.lead;
     if (!crew.agents[role]) throw new Error(`Unknown agent "${role}". Agents: ${Object.keys(crew.agents).join(', ')}`);
+    const benched = [...new Set(benchedNames)];
+    for (const name of benched) {
+      const a = crew.agents[name];
+      if (!a || a.isLead) throw new Error(`"${name}" is not a specialist on this team.`);
+    }
     const now = Date.now();
     const threadId = newId('t');
     const rootId = 'pending';
     const attachments = saveAttachments(threadId, uploads);
     text = text.trim() || (attachments.length ? 'See the attached image.' : text);
-    const thread = { id: threadId, title: titleFrom(text), status: 'running' as const, rootSessionId: rootId, createdAt: now, updatedAt: now, archived: false };
+    const thread = { id: threadId, title: titleFrom(text), status: 'running' as const, rootSessionId: rootId, createdAt: now, updatedAt: now, archived: false, benched };
     // Insert the thread first (sessions reference it), then point it at its root.
     this.store.insertThread(thread);
     const root = this.createSession(crew, threadId, role, null);
@@ -568,7 +574,7 @@ export class Runtime {
   private buildMcp(crew: LoadedCrew, agent: LoadedAgent, session: SessionRow, canDelegate: boolean): Record<string, McpServerSpec> {
     const subagents = canDelegate
       ? Object.values(crew.agents)
-          .filter((a) => !a.isLead)
+          .filter((a) => !a.isLead && !this.benchedIn(session.threadId).includes(a.name))
           .map((a) => ({ tool: subagentToolName(a.name), name: a.name, label: a.label, description: a.description }))
       : [];
     const servers: Record<string, McpServerSpec> = {
@@ -715,6 +721,7 @@ export class Runtime {
         engine: session.engine,
         workdir: session.workdir,
         canDelegate,
+        benched: this.benchedIn(session.threadId),
         memories: this.recallMemories(agent),
       });
       syncAttachments(session.threadId, session.workdir);
@@ -871,6 +878,9 @@ export class Runtime {
 
     if (agent.isLead && session.depth === 0) {
       const sub = Object.values(crew.agents).find((a) => !a.isLead && subagentToolName(a.name) === tool);
+      if (sub && this.benchedIn(session.threadId).includes(sub.name)) {
+        throw new Error(`The owner switched the ${sub.label} off for this thread. Do this part yourself or with the specialists you have.`);
+      }
       if (sub) return this.callSubagent(crew, session, sub, String(args.message ?? ''), signal);
     }
 
