@@ -3,8 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:* ws://localhost:* https: wss:; img-src 'self' data: blob: https:; style-src 'self' 'unsafe-inline'; frame-src 'self' about: data:; script-src 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Crew</title>
     <link rel="icon" type="image/png" href="/icon.png" />
+    <!-- Add to Home Screen on a phone (the web app the conductor serves on a server). -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Crew" />
+    <meta name="theme-color" content="#111111" />
   </head>
   <body>
     <div id="root"></div>

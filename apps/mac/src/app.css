@@ -928,3 +928,181 @@ body,
 .server-login .grow {
   flex: 1;
 }
+
+/* ------------------------------------------------------------------ phone (the web app) */
+
+/* Only on a phone: the top bar's team name and New thread, the Inbox's back button. */
+.titlebar-team,
+.titlebar-new,
+.phone-only {
+  display: none !important;
+}
+.inbox-detail-actions {
+  display: contents;
+}
+.nav-backdrop {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  html,
+  body {
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Full bleed, around the notch and home indicator; sized to what is visible
+     so the keyboard pushes the composer up (--app-height, main.tsx). */
+  .app {
+    top: var(--app-top, 0);
+    bottom: auto;
+    height: var(--app-height, 100dvh);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  }
+  .titlebar {
+    flex-basis: var(--cr-height-header);
+    padding: 0 var(--cr-space-150);
+    color: var(--cr-color-text-sidebar);
+  }
+  .titlebar-lights {
+    display: none;
+  }
+  .titlebar-team {
+    display: block !important;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: var(--cr-font-weight-semibold);
+  }
+  .titlebar-new {
+    display: inline-flex !important;
+  }
+  .phone-only {
+    display: inline-flex !important;
+  }
+  .phone-hide {
+    display: none !important;
+  }
+
+  /* The sidebar is a drawer over the page; the icon rail is not used. */
+  .sidebar,
+  .sidebar--collapsed {
+    position: fixed;
+    z-index: 30;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(86vw, 320px);
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) env(safe-area-inset-left);
+    box-sizing: border-box;
+    background: var(--cr-color-bg-app);
+    box-shadow: var(--cr-shadow-panel);
+    transform: translateX(-105%);
+    transition: transform var(--cr-duration-medium) var(--cr-easing);
+  }
+  .nav-open .sidebar {
+    transform: none;
+  }
+  .sidebar-rail,
+  .sidebar .cr-nav-item__shortcut {
+    display: none;
+  }
+  .sidebar .sidebar-full {
+    position: static;
+    width: 100%;
+    height: 100%;
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 29;
+    inset: 0;
+    background: rgb(0 0 0 / 0.4);
+  }
+
+  /* One pane at a time. */
+  .app-body,
+  .panes,
+  .workspace {
+    gap: 0;
+  }
+  .workspace .cr-panel {
+    border-radius: var(--cr-radius-600) var(--cr-radius-600) 0 0;
+  }
+  .pane-resizer {
+    display: none;
+  }
+  .pane-list {
+    flex: 1 1 auto !important;
+    min-width: 0;
+  }
+  /* The preview covers the thread; its close button goes back to the chat. */
+  .pane-preview {
+    position: fixed;
+    z-index: 20;
+    left: 0;
+    right: 0;
+    top: var(--app-top, 0);
+    height: var(--app-height, 100dvh);
+    padding-top: env(safe-area-inset-top);
+    box-sizing: border-box;
+    border-radius: 0;
+  }
+  .doc-frame {
+    margin: 0 var(--cr-space-150) var(--cr-space-150);
+  }
+  .doc-scroll {
+    padding: var(--cr-space-300);
+  }
+
+  .chat {
+    padding: var(--cr-space-400) var(--cr-space-300) var(--cr-space-500);
+    gap: var(--cr-space-400);
+  }
+  .owner-message,
+  .bubble {
+    max-width: 88%;
+  }
+  .thread-title {
+    padding: 0 var(--cr-space-100);
+  }
+  .composer-dock {
+    padding: var(--cr-space-150) var(--cr-space-200) calc(var(--cr-space-200) + env(safe-area-inset-bottom));
+  }
+  .reading {
+    padding: var(--cr-space-400) var(--cr-space-300) calc(var(--cr-space-400) + env(safe-area-inset-bottom));
+  }
+  .answer-form {
+    flex-wrap: wrap;
+  }
+
+  /* Inbox item: title on the first row, the actions under it. */
+  .inbox-detail-header {
+    flex-wrap: wrap;
+    height: auto;
+    padding-block: var(--cr-space-150);
+    row-gap: var(--cr-space-150);
+  }
+  .inbox-detail-header .detail-title {
+    flex: 1 1 0;
+  }
+  .inbox-detail-header .cr-spacer,
+  .inbox-detail-header .header-gap {
+    display: none;
+  }
+  .inbox-detail-actions {
+    display: flex;
+    flex: 1 0 100%;
+    justify-content: flex-end;
+    gap: var(--cr-space-150);
+  }
+
+  /* iOS zooms into any field with text under 16px. */
+  input,
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+}

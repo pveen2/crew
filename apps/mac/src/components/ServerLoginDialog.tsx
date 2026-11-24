@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Banner, BlockStack, Button, InlineStack, Spinner, Text, TextField } from '@crew/ui';
-import { closeServerLogin, sendLoginCode, useApp } from '../store';
+import { closeServerLogin, openExternal, sendLoginCode, useApp } from '../store';
 
 /**
  * A tool signing in on the team's server. The sign-in page opens in the
@@ -78,7 +78,7 @@ export function ServerLoginDialog() {
         {login.url && !login.done && (
           <Text variant="caption" tone="secondary">
             No page?{' '}
-            <a href={login.url} onClick={(e) => (e.preventDefault(), void window.crewHost?.openExternal?.(login.url!))}>
+            <a href={login.url} onClick={(e) => (e.preventDefault(), openExternal(login.url!))}>
               Open the sign-in page
             </a>
             . It signs the tool in on the server, for everyone on the team.

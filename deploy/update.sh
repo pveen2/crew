@@ -33,9 +33,10 @@ NEW=$(as_crew "git -C '$APP' rev-parse origin/main")
 
 log "crew ${OLD:0:7} -> ${NEW:0:7}"
 as_crew "cd '$APP' && git reset -q --hard origin/main"
-if ! as_crew "cd '$APP' && { git diff --quiet '$OLD' HEAD -- pnpm-lock.yaml || pnpm install --frozen-lockfile --reporter=silent; } && pnpm -s typecheck"; then
-  log "install or typecheck failed on ${NEW:0:7}; staying on ${OLD:0:7}"
-  as_crew "cd '$APP' && git reset -q --hard '$OLD' && pnpm install --frozen-lockfile --reporter=silent"
+# The web app the conductor serves for phones is apps/mac/dist: build it too.
+if ! as_crew "cd '$APP' && { git diff --quiet '$OLD' HEAD -- pnpm-lock.yaml || pnpm install --frozen-lockfile --reporter=silent; } && pnpm -s typecheck && pnpm -s --filter @crew/mac build >/dev/null"; then
+  log "install, typecheck or build failed on ${NEW:0:7}; staying on ${OLD:0:7}"
+  as_crew "cd '$APP' && git reset -q --hard '$OLD' && pnpm install --frozen-lockfile --reporter=silent && pnpm -s --filter @crew/mac build >/dev/null" || true
   exit 1
 fi
 if [ "$(as_crew "git -C '$APP' diff --quiet '$OLD' HEAD -- deploy/update.sh && echo same")" != same ]; then

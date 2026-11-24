@@ -10,6 +10,7 @@ import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 import { accessEmail, accessEnabled } from './access.ts';
 import { cancelLogin, loginInput, loginState } from './server-login.ts';
+import { serveWeb } from './web.ts';
 
 /** A conductor on a (Linux) server rather than someone's Mac. */
 const onServer = process.platform !== 'darwin';
@@ -104,7 +105,11 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
       }
 
-      if (parts[0] !== 'api') return send(res, 404, { error: 'Not found' });
+      if (parts[0] !== 'api') {
+        // Behind Access the conductor also serves the app itself, for phones.
+        if (accessEnabled && req.method === 'GET' && (await serveWeb(url.pathname, res))) return;
+        return send(res, 404, { error: 'Not found' });
+      }
       const [, a, id, action] = parts;
 
       if (req.method === 'GET' && a === 'state') return send(res, 200, await runtime.state());

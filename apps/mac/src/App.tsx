@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Banner, IconButton } from '@crew/ui';
-import { navigate, openUrl, toggleSidebar, useApp } from './store';
+import { isPhone, navigate, openExternal, openUrl, toggleNav, toggleSidebar, useApp, webApp } from './store';
 import { Sidebar } from './components/Sidebar';
 import { ServerLoginDialog } from './components/ServerLoginDialog';
 import { ThreadView } from './components/ThreadView';
@@ -15,8 +15,25 @@ export function App() {
   const connection = useApp((s) => s.connection);
   const startError = useApp((s) => s.conductorStartError);
   const collapsed = useApp((s) => s.sidebarCollapsed);
+  const navOpen = useApp((s) => s.navOpen);
+  const teamName = useApp((s) => s.teamName) || 'Crew';
 
   useEffect(() => window.crewHost?.onOpenUrl?.(openUrl), []);
+
+  // The web app: a web link would replace the app in its own window (on an iPhone
+  // there is no way back); open it in a new tab instead.
+  useEffect(() => {
+    if (window.crewHost) return;
+    const onClick = (e: MouseEvent) => {
+      const a = (e.target as Element | null)?.closest?.('a[href]');
+      if (!(a instanceof HTMLAnchorElement) || e.defaultPrevented) return;
+      if (!/^https?:$/.test(a.protocol) || a.origin === location.origin) return;
+      e.preventDefault();
+      openExternal(a.href);
+    };
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -34,7 +51,7 @@ export function App() {
   }, []);
 
   return (
-    <div className={`app cr-root ${window.crewHost ? 'in-electron' : 'in-browser'}`}>
+    <div className={`app cr-root ${window.crewHost ? 'in-electron' : 'in-browser'}${webApp ? ' web-app' : ''}${navOpen ? ' nav-open' : ''}`}>
       {/* Window title bar, as in Codex/ChatGPT: the traffic lights and the sidebar
           toggle share one row above everything, so the toggle never moves and the
           lights never crowd the sidebar or a pane. */}
@@ -46,12 +63,17 @@ export function App() {
           icon="sidebar"
           label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           title={`${collapsed ? 'Expand' : 'Collapse'} sidebar  ⌘B`}
-          onClick={() => toggleSidebar()}
+          // On a phone the sidebar opens over the page instead of folding.
+          onClick={() => (isPhone() ? toggleNav() : toggleSidebar())}
         />
+        <span className="titlebar-team">{teamName}</span>
+        <span className="cr-spacer" />
+        <IconButton tone="dark" size="md" icon="plus" label="New thread" className="titlebar-new" onClick={() => navigate({ name: 'new' })} />
       </header>
       <ServerLoginDialog />
       <div className="app-body">
       <Sidebar />
+      {navOpen && <div className="nav-backdrop" aria-hidden onClick={() => toggleNav(false)} />}
       <div className="workspace">
         {connection === 'offline' && (
           <Banner tone="caution" icon="wifiOff">

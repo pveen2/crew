@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { InboxItem } from '@crew/protocol';
-import { BlockStack, Button, Icon, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Text, TextField, type IconName } from '@crew/ui';
-import { setInboxListWidth } from '../store';
+import { BlockStack, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Text, TextField, cx, type IconName } from '@crew/ui';
+import { isPhone, setInboxListWidth } from '../store';
 import { PaneResizer } from './PaneResizer';
 import { decideApproval, ensureThreads, navigate, resolveInbox, resumeThread, selectPreview, sendMessage, setInboxFilter, useApp } from '../store';
 import { Markdown, RoleFace, age, ago, useNow, useRoleLabel } from './common';
@@ -105,7 +105,8 @@ function InboxDetail({ item }: { item: InboxItem }) {
   };
   return (
     <>
-      <PanelHeader>
+      <PanelHeader className="inbox-detail-header">
+        <IconButton icon="chevronLeft" label="Back to the Inbox" className="phone-only" onClick={() => navigate({ name: 'inbox' })} />
         <InlineStack gap="200" paddingInline="150" className="detail-title">
           <Icon name={kind.icon} size={13} />
           <Text as="h1" variant="headingSm" truncate title={itemTitle(item)}>
@@ -116,6 +117,7 @@ function InboxDetail({ item }: { item: InboxItem }) {
           </Text>
         </InlineStack>
         <span className="cr-spacer" />
+        <span className="inbox-detail-actions">
         <Button onClick={openThread}>Open thread</Button>
         <span className="header-gap" />
         {item.kind === 'approval' ? (
@@ -141,6 +143,7 @@ function InboxDetail({ item }: { item: InboxItem }) {
             Done
           </Button>
         )}
+        </span>
       </PanelHeader>
       {doc ? (
         // A draft looks exactly like it does in the thread's preview pane.
@@ -189,13 +192,14 @@ export function InboxView({ itemId }: { itemId?: string }) {
   useEffect(() => ensureThreads(all.map((i) => i.threadId)), [all]);
   // Keep a selection: the first item when none (or a resolved one) is selected.
   const listWidth = useApp((s) => s.inboxListWidth);
+  // On a phone the list is its own screen: nothing is picked for you.
   useEffect(() => {
-    if (!selected && items[0]) navigate({ name: 'inbox', itemId: items[0].id });
+    if (!selected && items[0] && !isPhone()) navigate({ name: 'inbox', itemId: items[0].id });
   }, [selected, items]);
 
   return (
     <>
-      <Panel className="pane-list" aria-label="Inbox" style={listWidth ? { flex: `0 1 ${listWidth}px` } : undefined}>
+      <Panel className={cx('pane-list', selected && 'phone-hide')} aria-label="Inbox" style={listWidth ? { flex: `0 1 ${listWidth}px` } : undefined}>
         <PanelHeader>
           <Text as="h1" variant="headingSm" className="list-title">
             Inbox
@@ -224,7 +228,7 @@ export function InboxView({ itemId }: { itemId?: string }) {
         </div>
       </Panel>
       <PaneResizer target="before" label="Resize Inbox list" min={260} minOther={420} onResize={setInboxListWidth} onReset={() => setInboxListWidth(null)} />
-      <Panel as="main" className="pane-main">
+      <Panel as="main" className={cx('pane-main', !selected && 'phone-hide')}>
         {selected ? (
           <InboxDetail key={selected.id} item={selected} />
         ) : (
