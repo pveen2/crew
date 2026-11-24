@@ -9,6 +9,13 @@ import type { CreateThreadRequest, SendMessageRequest, ServerMessage } from '@cr
 import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 import { accessEmail, accessEnabled } from './access.ts';
+import { cancelLogin, loginInput, loginState } from './server-login.ts';
+
+/** A conductor on a (Linux) server rather than someone's Mac. */
+const onServer = process.platform !== 'darwin';
+/** CREW_ADMINS: who may sign tools in on a server (comma-separated emails). */
+const admins = new Set((process.env.CREW_ADMINS ?? '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean));
+const isAdmin = (email: string | null) => Boolean(email && admins.has(email.toLowerCase()));
 
 function sameToken(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -88,8 +95,10 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
       // Behind Cloudflare Access the person's Access login is what counts; the app
       // token is only needed without it (a conductor on a Mac).
+      let email: string | null = null;
       if (accessEnabled) {
-        if (!(await accessEmail(req))) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
+        email = await accessEmail(req);
+        if (!email) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
       } else {
         const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
         if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
@@ -101,10 +110,31 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       if (req.method === 'GET' && a === 'state') return send(res, 200, await runtime.state());
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
 
+      // On a server only admins sign tools in, for the whole team.
+      const mayManage = !onServer || isAdmin(email);
       if (a === 'connections') {
-        if (req.method === 'GET' && !id) return send(res, 200, await connections(url.searchParams.has('refresh')));
+        if (req.method === 'GET' && !id) {
+          const list = await connections(url.searchParams.has('refresh'));
+          return send(res, 200, mayManage ? list : list.map((c) => ({ ...c, canSignIn: false })));
+        }
         if (req.method === 'POST' && id && action === 'sign-in') {
-          await signIn(id);
+          if (!mayManage) return send(res, 403, { error: 'Only the server admin signs tools in, for the whole team.' });
+          const login = await signIn(id);
+          return send(res, 200, login ?? { ok: true });
+        }
+      }
+
+      // A sign-in running on the server: /api/logins/<id>, …/input, …/cancel
+      if (a === 'logins' && id) {
+        if (!mayManage) return send(res, 403, { error: 'Only the server admin signs tools in.' });
+        if (req.method === 'GET' && !action) return send(res, 200, loginState(id) ?? { error: 'No such sign-in' });
+        if (req.method === 'POST' && action === 'input') {
+          const body = await readJson<{ text?: string }>(req);
+          await loginInput(id, String(body.text ?? ''));
+          return send(res, 200, { ok: true });
+        }
+        if (req.method === 'POST' && action === 'cancel') {
+          cancelLogin(id);
           return send(res, 200, { ok: true });
         }
       }

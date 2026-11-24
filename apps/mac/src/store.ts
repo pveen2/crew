@@ -15,6 +15,7 @@ import type {
   Thread,
   ThreadDetailResponse,
   Turn,
+  ServerLogin,
 } from '@crew/protocol';
 
 /** An update the sidebar offers. */
@@ -70,6 +71,8 @@ declare global {
       teamCheck?: () => Promise<UpdateInfo | null>;
       teamApply?: () => Promise<string | null>;
       openExternal?: (url: string) => Promise<void>;
+      /** Catches a server sign-in's return to 127.0.0.1:<port> on this Mac and passes it to the server. */
+      loginRelay?: (port: number, loginId: string) => Promise<string | null>;
       onOpenUrl?: (cb: (url: string) => void) => () => void;
     };
   }
@@ -111,6 +114,9 @@ export interface AppState {
   connections: ConnectionStatus[];
   /** Sign-ins opened from the app and still waited on, by connection id. */
   signingIn: Record<string, true>;
+  /** A sign-in running on the server (the app shows its link and code). */
+  serverLogin: ServerLogin | null;
+  serverLoginError: string | null;
   threads: Record<string, Thread>;
   /** Closed threads, shown under Done. */
   done: Record<string, Thread>;
@@ -218,6 +224,8 @@ let state: AppState = {
   conductorStartError: null,
   connections: [],
   signingIn: {},
+  serverLogin: null,
+  serverLoginError: null,
   threads: {},
   done: {},
   inbox: {},
@@ -766,7 +774,13 @@ export async function signInConnection(id: string): Promise<void> {
   set((s) => ({ signingIn: { ...s.signingIn, [id]: true } }));
   signInDeadline.set(id, Date.now() + SIGN_IN_WAIT_MS);
   try {
-    await api('POST', `/api/connections/${encodeURIComponent(id)}/sign-in`);
+    const r = await api<ServerLogin | { ok: true }>('POST', `/api/connections/${encodeURIComponent(id)}/sign-in`);
+    // On a server the sign-in runs there; follow it in the app.
+    if ('id' in r) {
+      stopWaiting([id]);
+      followServerLogin(r);
+      return;
+    }
   } catch (err) {
     stopWaiting([id]);
     window.alert((err as Error).message);
@@ -785,6 +799,65 @@ export async function signInConnection(id: string): Promise<void> {
       void loadConnections(true);
     }, 4000);
   }
+}
+
+// ---------------------------------------------------------------------------
+// A sign-in running on the server
+
+let loginPoll: number | undefined;
+const opened = new Set<string>();
+const relayed = new Set<string>();
+
+function followServerLogin(login: ServerLogin): void {
+  set({ serverLogin: login, serverLoginError: null });
+  window.clearInterval(loginPoll);
+  const step = async () => {
+    const cur = state.serverLogin;
+    if (!cur) return window.clearInterval(loginPoll);
+    let next: ServerLogin;
+    try {
+      next = await api<ServerLogin>('GET', `/api/logins/${encodeURIComponent(cur.id)}`);
+    } catch (err) {
+      set({ serverLoginError: (err as Error).message });
+      return;
+    }
+    // A browser sign-in that returns to 127.0.0.1: catch it here, pass it on.
+    if (next.callbackPort && !relayed.has(next.id)) {
+      relayed.add(next.id);
+      const err = await window.crewHost?.loginRelay?.(next.callbackPort, next.id);
+      if (err) set({ serverLoginError: err });
+    }
+    if (next.url && !opened.has(next.id)) {
+      opened.add(next.id);
+      void window.crewHost?.openExternal?.(next.url);
+    }
+    set({ serverLogin: next });
+    if (next.done) {
+      window.clearInterval(loginPoll);
+      void loadConnections(true);
+    }
+  };
+  void step();
+  loginPoll = window.setInterval(() => void step(), 1500);
+}
+
+export async function sendLoginCode(text: string): Promise<void> {
+  const cur = state.serverLogin;
+  if (!cur) return;
+  try {
+    await api('POST', `/api/logins/${encodeURIComponent(cur.id)}/input`, { text });
+    set({ serverLoginError: null });
+  } catch (err) {
+    set({ serverLoginError: (err as Error).message });
+  }
+}
+
+export function closeServerLogin(): void {
+  const cur = state.serverLogin;
+  window.clearInterval(loginPoll);
+  if (cur && !cur.done) void api('POST', `/api/logins/${encodeURIComponent(cur.id)}/cancel`).catch(() => undefined);
+  set({ serverLogin: null, serverLoginError: null });
+  void loadConnections(true);
 }
 
 // Coming back from Terminal or the browser: check again, past the cache.

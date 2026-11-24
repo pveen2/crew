@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('crewHost', {
   teamCheck: () => ipcRenderer.invoke('crew:team-check'),
   teamApply: () => ipcRenderer.invoke('crew:team-apply'),
   openExternal: (url) => ipcRenderer.invoke('crew:open-external', url),
+  loginRelay: (port, loginId) => ipcRenderer.invoke('crew:login-relay', port, loginId),
   /** Web links clicked anywhere in the app; returns an unsubscribe. */
   onOpenUrl: (cb) => {
     const listener = (_e, url) => cb(url);

@@ -892,3 +892,39 @@ body,
   flex: 1 1 auto;
   min-width: 0;
 }
+
+/* A tool signing in on the team's server (ServerLoginDialog). */
+.server-login {
+  width: min(440px, calc(100vw - 48px));
+  padding: 24px;
+  border: 1px solid var(--cr-color-border-elevated);
+  border-radius: 14px;
+  background: var(--cr-color-bg-surface);
+  color: inherit;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+.server-login::backdrop {
+  background: rgba(0, 0, 0, 0.35);
+}
+.server-login-code {
+  font: 600 28px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.08em;
+  text-align: center;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--cr-color-bg-surface-secondary);
+  user-select: all;
+}
+.server-login-output {
+  max-height: 140px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  font: 12px/1.4 ui-monospace, Menlo, monospace;
+  white-space: pre-wrap;
+  border-radius: 8px;
+  background: var(--cr-color-bg-surface-secondary);
+}
+.server-login .grow {
+  flex: 1;
+}
