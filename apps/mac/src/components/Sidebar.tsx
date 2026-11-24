@@ -129,7 +129,8 @@ export function Sidebar() {
 
       <div className="sidebar-footer">
         <UpdateButton working={workingCount} label="Update team" check={window.crewHost?.teamCheck} apply={window.crewHost?.teamApply} />
-        <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} />
+        {/* Asking is cheap for releases: the app itself checks GitHub every 15 minutes. */}
+        <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} every={60_000} />
         <Connections />
         <div className={`sidebar-conn sidebar-conn--${connection}`}>
           <Icon name={connection === 'online' ? 'checkCircle' : connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
@@ -151,8 +152,11 @@ function UpdateButton({
   label,
   check,
   apply,
+  every = 10 * 60_000,
 }: {
   working: number;
+  /** How often to ask, in ms. */
+  every?: number;
   label: string;
   check?: () => Promise<UpdateInfo | null>;
   apply?: () => Promise<string | null>;
@@ -161,11 +165,23 @@ function UpdateButton({
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (!check) return;
-    const run = () => void check().then(setInfo, () => {});
+    // Also when Crew comes to the front, at most once a minute.
+    let last = 0;
+    const run = () => {
+      last = Date.now();
+      void check().then(setInfo, () => {});
+    };
+    const onFocus = () => {
+      if (Date.now() - last > 60_000) run();
+    };
     run();
-    const timer = setInterval(run, 10 * 60_000);
-    return () => clearInterval(timer);
-  }, [check]);
+    const timer = setInterval(run, every);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [check, every]);
   if (!info) return null;
 
   const update = async () => {

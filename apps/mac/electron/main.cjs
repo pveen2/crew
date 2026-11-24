@@ -285,13 +285,18 @@ const git = (...args) =>
     execFile('git', args, { cwd: REPO, timeout: 60_000 }, (err, out) => (err ? reject(err) : resolve(out.trim()))),
   );
 
+let lastGitFetch = 0;
 const updateFromGit = {
   async check() {
     if (!process.env.CREW_LAUNCHER) return null;
     try {
       if ((await git('rev-parse', '--abbrev-ref', 'HEAD')) !== 'main') return null;
       if (await git('status', '--porcelain')) return null;
-      await git('fetch', '--quiet', 'origin', 'main');
+      // The sidebar asks every minute; fetch at most every 10 minutes.
+      if (Date.now() - lastGitFetch > 10 * 60_000) {
+        lastGitFetch = Date.now();
+        await git('fetch', '--quiet', 'origin', 'main');
+      }
       const count = Number(await git('rev-list', '--count', 'HEAD..origin/main'));
       if (!count) return null;
       return { badge: String(count), title: `${count} new change${count === 1 ? '' : 's'} on main. Click to update and restart.`, stopsAgents: true };
@@ -346,9 +351,18 @@ const releaseUpdates = (() => {
       ready = info.version;
     });
     updater.on('error', (err) => console.error('[crew] update:', err?.message || err));
-    const check = () => updater.checkForUpdates().catch(() => {});
+    // Every 15 minutes, and when Crew comes to the front (at most once a minute),
+    // so a new release shows up while the app stays open.
+    let lastCheck = 0;
+    const check = () => {
+      lastCheck = Date.now();
+      return updater.checkForUpdates().catch(() => {});
+    };
     check();
-    setInterval(check, 4 * 60 * 60_000);
+    setInterval(check, 15 * 60_000);
+    app.on('browser-window-focus', () => {
+      if (Date.now() - lastCheck > 60_000) void check();
+    });
   }
 
   return {
