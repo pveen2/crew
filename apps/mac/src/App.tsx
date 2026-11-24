@@ -11,6 +11,7 @@ import { NewThreadView, ThreadsView } from './components/Screens';
 export function App() {
   const view = useApp((s) => s.view);
   const connection = useApp((s) => s.connection);
+  const startError = useApp((s) => s.conductorStartError);
   const collapsed = useApp((s) => s.sidebarCollapsed);
 
   useEffect(() => {
@@ -49,7 +50,9 @@ export function App() {
       <div className="workspace">
         {connection === 'offline' && (
           <Banner tone="caution" icon="wifiOff">
-            Can’t reach the conductor. Start it with <code>pnpm conductor</code>; the app reconnects by itself.
+            {startError ?? (window.crewHost?.startConductor
+              ? 'Can’t reach the conductor. You can start it from the sidebar.'
+              : 'Can’t reach the conductor. Crew will reconnect when it’s available.')}
           </Banner>
         )}
         <div className="panes">

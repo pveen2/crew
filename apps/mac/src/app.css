@@ -251,6 +251,9 @@ body,
   padding: 0 var(--cr-space-250);
   color: var(--cr-color-text-sidebar-secondary);
 }
+.sidebar-conn .cr-button {
+  margin-left: auto;
+}
 .sidebar-conn span {
   color: var(--cr-color-text-sidebar);
 }

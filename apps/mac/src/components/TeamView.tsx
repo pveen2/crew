@@ -82,7 +82,7 @@ export function TeamView() {
 
           {kind === 'github' && (
             <BlockStack gap="300">
-              <TextField showLabel label="Repository" placeholder="askphill/wakey" value={repo} onChange={setRepo} />
+              <TextField showLabel label="Repository" placeholder="owner/name" value={repo} onChange={setRepo} />
               <InlineStack gap="300">
                 <TextField showLabel label="Team folder in the repo" value={path} onChange={setPath} className="grow" />
                 <TextField showLabel label="Branch" value={branch} onChange={setBranch} className="grow" />
@@ -123,7 +123,7 @@ export function TeamView() {
           {saved && !error && <Banner tone="info">Team switched. The conductor restarted with it.</Banner>}
 
           <InlineStack gap="300">
-            <Button variant="primary" onClick={() => void save()} disabled={busy || (info ? !info.supported : true)}>
+            <Button variant="primary" onClick={() => void save()} disabled={busy || (info ? !info.supported : true) || (kind === 'github' && !repo.trim()) || (kind === 'folder' && !dir.trim())}>
               {busy ? (kind === 'github' ? 'Getting the team…' : 'Switching…') : 'Use this team'}
             </Button>
             <Text variant="caption" tone="tertiary">

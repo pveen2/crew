@@ -47,6 +47,7 @@ declare global {
   interface Window {
     crewHost?: {
       platform: string;
+      startConductor?: () => Promise<void>;
       conductorInfo: () => Promise<{ url: string; token: string } | null>;
       /**
        * A waiting update, or null: new commits on main (running from a checkout)
@@ -94,6 +95,8 @@ export interface PreviewDoc {
 
 export interface AppState {
   connection: 'connecting' | 'online' | 'offline';
+  conductorStarting: boolean;
+  conductorStartError: string | null;
   /** Engine CLIs and services the team uses, and whether each is signed in. */
   connections: ConnectionStatus[];
   /** Sign-ins opened from the app and still waited on, by connection id. */
@@ -188,6 +191,8 @@ function loadFlag(key: string): boolean {
 
 let state: AppState = {
   connection: 'connecting',
+  conductorStarting: false,
+  conductorStartError: null,
   connections: [],
   signingIn: {},
   threads: {},
@@ -344,6 +349,24 @@ let ws: WebSocket | null = null;
 /** Socket messages that arrived before the snapshot they must be applied on top of. */
 let pending: ServerMessage[] | null = null;
 
+let startTimeout: number | undefined;
+
+export async function startConductor(): Promise<void> {
+  const launch = window.crewHost?.startConductor;
+  if (!launch || state.connection !== 'offline' || state.conductorStarting) return;
+  set({ conductorStarting: true, conductorStartError: null });
+  try {
+    await launch();
+    if (!state.conductorStarting) return;
+    startTimeout = window.setTimeout(() => set({
+      conductorStarting: false,
+      conductorStartError: 'Still offline. Check conductor.log in your Crew logs folder, then try again.',
+    }), 15_000);
+  } catch (err) {
+    set({ conductorStarting: false, conductorStartError: (err as Error).message });
+  }
+}
+
 function retry(ms: number): void {
   set({ connection: 'offline' });
   setTimeout(() => void connect(), ms);
@@ -354,7 +377,6 @@ function retry(ms: number): void {
  * flight is buffered and replayed on top of it, so nothing is lost.
  */
 export async function connect(): Promise<void> {
-  set({ connection: 'connecting' });
   conn = await resolveConductor();
   if (!conn) return retry(2000);
 
@@ -385,7 +407,8 @@ export async function connect(): Promise<void> {
   const buffered = pending;
   pending = null;
   for (const msg of buffered) onMessage(msg);
-  set({ connection: 'online' });
+  window.clearTimeout(startTimeout);
+  set({ connection: 'online', conductorStarting: false, conductorStartError: null });
   navigate(state.view);
   void loadConnections();
 }

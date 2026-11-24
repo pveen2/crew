@@ -9,12 +9,9 @@ import { loadCrew } from '@crew/sdk/load';
 import { paths, sharedEngineHome } from './config.ts';
 import { engines } from './engines/index.ts';
 
-/** The team's store (crew.config.ts or SHOPIFY_STORE), read again before each check or sign-in. */
-let shopifyStore = '';
-async function refreshStore(): Promise<void> {
-  shopifyStore = (await loadCrew().catch(() => undefined))?.config.shopify?.store ?? '';
-}
-const shopifyScopes = 'read_products,read_inventory,read_orders,read_customers,write_products,write_inventory';
+import { readScopes, writeScopes } from '@crew/kit/shopify';
+
+const shopifyScopes = `${readScopes},${writeScopes}`;
 
 interface Run {
   ok: boolean;
@@ -64,11 +61,11 @@ function common(r: Run, label: string): Check | null {
 interface Def {
   id: ConnectionId;
   label: string;
-  check: () => Promise<Check>;
+  check: (store: string) => Promise<Check>;
   /** Shell command that installs the CLI, for when it is missing. */
   install?: string;
   /** Shell command that signs in. Undefined: nothing to sign in to. */
-  signIn?: () => string;
+  signIn?: (store: string) => string;
 }
 
 function engineSignIn(engine: keyof typeof engines): () => string {
@@ -141,9 +138,9 @@ const defs: Def[] = [
     id: 'shopify',
     label: 'Shopify',
     install: 'npm install -g @shopify/cli@latest',
-    signIn: () => `shopify store auth --store ${sh(shopifyStore)} --scopes ${sh(shopifyScopes)}`,
-    async check() {
-      if (!shopifyStore) return { status: 'unknown', detail: 'No store set in crew.config.ts' };
+    signIn: (shopifyStore) => `shopify store auth --store ${sh(shopifyStore)} --scopes ${sh(shopifyScopes)}`,
+    async check(shopifyStore) {
+      if (!shopifyStore) return { status: 'unknown', detail: 'Set shopify.store in the team’s crew.config.ts' };
       const r = await run('shopify', ['store', 'execute', '--store', shopifyStore, '--json', '--query', '{ shop { name } }'], {}, 20_000);
       const c = common(r, 'The Shopify CLI');
       if (c) return c;
@@ -170,9 +167,8 @@ function sh(s: string): string {
   return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-async function usedBy(): Promise<Record<ConnectionId, string[]>> {
+function usedBy(crew: Awaited<ReturnType<typeof loadCrew>> | undefined): Record<ConnectionId, string[]> {
   const out: Record<ConnectionId, string[]> = { claude: [], codex: [], grok: [], antigravity: [], shopify: [], browser: [] };
-  const crew = await loadCrew().catch(() => undefined);
   if (!crew) return out;
   const add = (id: ConnectionId, who: string) => {
     if (!out[id].includes(who)) out[id].push(who);
@@ -193,12 +189,16 @@ export function connections(refresh = false): Promise<ConnectionStatus[]> {
   if (!refresh && cache && Date.now() - cache[0]!.checkedAt < MAX_AGE_MS) return Promise.resolve(cache);
   inflight ??= (async () => {
     try {
-      await Promise.all([refreshLoginPath(), refreshStore()]);
-      const [users, checks] = await Promise.all([usedBy(), Promise.all(defs.map((d) => d.check().catch((): Check => ({ status: 'unknown' }))))]);
+      const [crew] = await Promise.all([loadCrew().catch(() => undefined), refreshLoginPath()]);
+      const store = crew?.config.shopify?.store?.trim() ?? '';
+      const users = usedBy(crew);
+      const active = defs.filter((d) => d.id !== 'shopify' || users.shopify.length > 0);
+      const checks = await Promise.all(active.map((d) => d.check(store).catch((): Check => ({ status: 'unknown' }))));
       const now = Date.now();
-      cache = defs.map((d, i) => {
+      cache = active.map((d, i) => {
         const c = checks[i]!;
-        const canSignIn = c.status === 'missing' ? Boolean(d.install) : c.status !== 'connected' && Boolean(d.signIn);
+        const canSignIn = (d.id !== 'shopify' || Boolean(store)) &&
+          (c.status === 'missing' ? Boolean(d.install) : c.status !== 'connected' && Boolean(d.signIn));
         return { id: d.id, label: d.label, ...c, usedBy: users[d.id], canSignIn, checkedAt: now };
       });
       return cache;
@@ -215,18 +215,24 @@ export function connections(refresh = false): Promise<ConnectionStatus[]> {
  * which connection.
  */
 export async function signIn(id: string): Promise<void> {
-  await refreshStore();
   const d = defs.find((x) => x.id === id);
   if (!d) throw new Error(`No such connection: ${id}`);
+  let store = '';
+  if (id === 'shopify') {
+    const crew = await loadCrew();
+    if (!usedBy(crew).shopify.length) throw new Error('This team does not use Shopify.');
+    store = crew.config.shopify?.store?.trim() ?? '';
+    if (!store) throw new Error('Set shopify.store in the team’s crew.config.ts before signing in.');
+  }
   const current = (await connections()).find((c) => c.id === id);
   const steps: string[] = [`echo ${sh(`Crew: ${current?.status === 'missing' ? 'installing' : 'signing in to'} ${d.label}`)}`];
   if (current?.status === 'missing') {
     if (!d.install) throw new Error(`${d.label} has no install step`);
     // A fresh login shell after the install, so a new PATH entry is picked up.
-    steps.push(d.install, ...(d.signIn ? [`"$SHELL" -lc ${sh(d.signIn())}`] : []));
+    steps.push(d.install, ...(d.signIn ? [`"$SHELL" -lc ${sh(d.signIn(store))}`] : []));
   } else {
     if (!d.signIn) throw new Error(`${d.label} has nothing to sign in to`);
-    steps.push(d.signIn());
+    steps.push(d.signIn(store));
   }
   // pipefail: a failed download in `curl … | bash` must stop the chain.
   const script =
