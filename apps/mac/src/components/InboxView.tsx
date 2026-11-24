@@ -146,7 +146,7 @@ function InboxDetail({ item }: { item: InboxItem }) {
         // A draft looks exactly like it does in the thread's preview pane.
         <>
           <DocSourceBar doc={doc} />
-          <DocView doc={doc} />
+          <DocView doc={doc} threadId={item.threadId} />
         </>
       ) : (
       <div className="pane-scroll">

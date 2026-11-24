@@ -73,6 +73,12 @@ const paths = {
       <path d="M12 7v5l3 2" />
     </>
   ),
+  reload: (
+    <>
+      <path d="M21 12a9 9 0 1 1-2.6-6.4" />
+      <path d="M21 4v5h-5" />
+    </>
+  ),
   copy: (
     <>
       <rect x="8" y="8" width="12" height="12" rx="2" />

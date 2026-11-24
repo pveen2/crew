@@ -7,7 +7,7 @@
 // - Installed from the DMG (app.isPackaged): updates come from GitHub Releases
 //   through electron-updater, see releaseUpdates below.
 
-const { app, BrowserWindow, dialog, ipcMain, net, shell, nativeTheme } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, net, session, shell, nativeTheme } = require('electron');
 const { execFile, execFileSync, spawn } = require('node:child_process');
 const { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');
@@ -215,6 +215,22 @@ ipcMain.handle('crew:team-apply', async () => {
   }
 });
 
+const BROWSER_PARTITION = 'persist:crew-browser';
+const isWebUrl = (url) => /^https?:\/\//i.test(url);
+
+ipcMain.handle('crew:open-external', (event, url) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url)) return;
+  if (typeof url === 'string' && isWebUrl(url)) return shell.openExternal(url);
+});
+
+/** The browser tab's session: pages get no permissions (camera, notifications, location, …). */
+function hardenBrowserSession() {
+  const ses = session.fromPartition(BROWSER_PARTITION);
+  ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  ses.setPermissionCheckHandler(() => false);
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     icon: ICON,
@@ -234,24 +250,77 @@ function createWindow() {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
+      webviewTag: true, // the browser tab in the preview panel
     },
   });
 
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+  // Web links open in the browser tab of the preview panel, as in T3 Code. Cmd-click (a background
+  // tab) still opens the system browser, and so does a link when no thread is on screen.
+  const openUrl = (url) => win.webContents.send('crew:open-url', url);
+  win.webContents.setWindowOpenHandler(({ url, disposition }) => {
+    if (/^https?:/.test(url)) {
+      if (disposition === 'background-tab') shell.openExternal(url);
+      else openUrl(url);
+    } else if (/^mailto:/.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  // The window only ever shows the app. Links open in the system browser.
+  // The window only ever shows the app.
   const guard = (e, url) => {
     if (isAppUrl(url)) return;
     e.preventDefault();
-    if (/^https?:/.test(url)) shell.openExternal(url);
+    if (/^https?:/.test(url)) openUrl(url);
   };
   win.webContents.on('will-navigate', guard);
   win.webContents.on('will-redirect', guard);
   win.webContents.on('will-frame-navigate', (e) => {
-    if (!e.isMainFrame) return; // preview iframes are sandboxed srcdoc
-    guard(e, e.url);
+    if (e.isMainFrame) return guard(e, e.url);
+    // A preview iframe is a srcdoc document. A link clicked inside it would load the page into
+    // the frame, and most sites refuse to be framed, which leaves the preview blank.
+    if (/^https?:/.test(e.url)) {
+      e.preventDefault();
+      openUrl(e.url);
+    }
+  });
+
+  // The browser tab is a <webview> in its own persistent session (sign-ins stay), with no preload
+  // and no Node, and only web pages.
+  // Preferences are rebuilt rather than trusted: the <webview> attributes could ask for more.
+  win.webContents.on('will-attach-webview', (e, prefs, params) => {
+    if (params.partition !== BROWSER_PARTITION || !isWebUrl(params.src || '')) {
+      e.preventDefault();
+      return;
+    }
+    for (const key of ['preload', 'enableBlinkFeatures', 'disableBlinkFeatures', 'additionalArguments']) delete prefs[key];
+    Object.assign(prefs, {
+      partition: BROWSER_PARTITION,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false,
+      experimentalFeatures: false,
+      webviewTag: false,
+    });
+  });
+  win.webContents.on('did-attach-webview', (_e, guest) => {
+    // A page's new tab or window becomes another browser tab in the panel; cmd-click goes to the
+    // system browser, as in the rest of the app.
+    guest.setWindowOpenHandler(({ url, disposition }) => {
+      if (isWebUrl(url)) {
+        if (disposition === 'background-tab') shell.openExternal(url);
+        else openUrl(url);
+      } else if (/^mailto:/i.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+    // The page itself stays on web pages, also after a redirect. Its own iframes may be about:blank.
+    const onlyWeb = (e) => {
+      if (!e.isMainFrame || isWebUrl(e.url)) return;
+      e.preventDefault();
+      if (/^mailto:/i.test(e.url)) shell.openExternal(e.url);
+    };
+    guest.on('will-frame-navigate', onlyWeb);
+    guest.on('will-redirect', onlyWeb);
   });
 
   const hash = process.env.CREW_OPEN || '';
@@ -412,6 +481,7 @@ app.whenReady().then(() => {
     releaseUpdates.start();
   }
   if (process.platform === 'darwin') app.dock?.setIcon(ICON);
+  hardenBrowserSession();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
