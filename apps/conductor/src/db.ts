@@ -287,6 +287,12 @@ export class Store {
   threads(): Omit<Thread, 'roles' | 'statusText' | 'usage'>[] {
     return this.all('SELECT * FROM threads ORDER BY updated_at DESC').map(toThread);
   }
+  setThreadTitle(id: string, title: string): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
+    const t = this.thread(id);
+    if (!t) throw new Error(`No thread ${id}`);
+    this.run('UPDATE threads SET title = ? WHERE id = ?', title, id);
+    return { ...t, title };
+  }
   updateThread(id: string, patch: Partial<Pick<Thread, 'title' | 'status' | 'archived'>>): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     const t = this.thread(id);
     if (!t) throw new Error(`No thread ${id}`);

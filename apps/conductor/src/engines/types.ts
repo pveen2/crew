@@ -51,6 +51,8 @@ export interface EngineRunOptions {
   denyPaths: string[];
   /** Images for this turn (absolute paths inside the workdir). Engines that take images natively attach them. */
   images?: string[];
+  /** A one-off answer with no tools and nothing saved (Crew's own small jobs, like thread titles). Engines do what they support. */
+  oneShot?: boolean;
   /** Web search and fetch. Off for roles that can read store or customer data. */
   webAccess: boolean;
   signal: AbortSignal;

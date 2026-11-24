@@ -240,11 +240,17 @@ has it. `CREW_STEERING=off` turns steering off: every message then waits.
 
 **One MCP server for every agent**: each CLI starts the `crew` MCP server
 (`apps/conductor/src/mcp-bridge.ts`, stdio). It offers the lead's subagent
-tools, `ask_owner`, `show_preview`, `save_artifact` (specialists),
-`read_artifact`, the memory tools and the agent's own `tools/`. A subagent
-tool starts or reuses that specialist's session in the same thread, on its
-engine and model, waits and returns the answer. Turns time out per the
-lead's `limits` in `agent/agent.ts`.
+tools, `rename_thread` (lead), `ask_owner`, `show_preview`,
+`save_artifact` (specialists), `read_artifact`, the memory tools and the
+agent's own `tools/`. A subagent tool starts or reuses that specialist's
+session in the same thread, on its engine and model, waits and returns the
+answer. Turns time out per the lead's `limits` in `agent/agent.ts`.
+
+**Thread titles**: a new thread first shows its opening line. In the
+background a small model on the lead's engine (Haiku on Claude Code; the
+lead's own model elsewhere) writes a 3–6 word title and replaces it. The
+lead can rename the thread later with `rename_thread` when the work turns
+out to be about something else.
 
 **Recovery**: threads, sessions, turns and events are stored in
 `~/.crew/crew.db`. On start, the conductor marks running turns as interrupted,

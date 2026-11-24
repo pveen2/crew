@@ -3,6 +3,7 @@
 // conductor over local HTTP:
 //
 //   <subagent>(message)             lead only: one tool per agent/subagents/<name>, e.g. store_manager
+//   rename_thread(title)            lead only: give the thread a clearer title
 //   ask_owner(question)             put a question in the owner's Inbox
 //   show_preview(title, artifactId | content)   show a document to the owner
 //   save_artifact(title, content)   specialists: store long work, get an id back
@@ -34,6 +35,7 @@ const THREAD_ID = env('CREW_THREAD_ID');
 const AGENT = env('CREW_AGENT');
 const BRIDGE_TOKEN = env('CREW_BRIDGE_TOKEN');
 const CAN_SAVE_ARTIFACTS = process.env.CREW_CAN_SAVE_ARTIFACTS === '1';
+const CAN_RENAME_THREAD = process.env.CREW_CAN_RENAME_THREAD === '1';
 // Team tools may import Crew's packages without their repo installing them.
 resolveTeamImportsFrom(import.meta.url);
 
@@ -106,6 +108,21 @@ for (const sub of SUBAGENTS) {
       annotations: local,
     },
     forward(sub.tool),
+  );
+}
+
+if (CAN_RENAME_THREAD) {
+  server.registerTool(
+    'rename_thread',
+    {
+      description:
+        "Rename this thread in the owner's sidebar. It starts with a short title guessed from the first message; " +
+        'rename it when that title is vague or wrong, or when the work turned out to be about something else. ' +
+        '3 to 6 words naming the subject, for example "Rhode competitor research". Do not rename just to rephrase a title that already fits.',
+      inputSchema: { title: z.string().min(1).max(80) },
+      annotations: local,
+    },
+    forward('rename_thread'),
   );
 }
 
