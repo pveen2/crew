@@ -155,8 +155,11 @@ export function cleanTitle(raw: string): string {
   return t.length > 64 ? t.slice(0, 61).trimEnd() + '…' : t;
 }
 
-/** The cheapest model per engine for the one-line thread title. Undefined: use the lead's own model. */
-const TITLE_MODELS: Partial<Record<Engine, string>> = { 'claude-code': 'haiku' };
+/**
+ * The cheapest model per engine for the one-line thread title. Undefined: use the
+ * lead's own model, which is also the fallback when the small one is not available.
+ */
+const TITLE_MODELS: Partial<Record<Engine, string>> = { 'claude-code': 'haiku', codex: 'gpt-6-luna' };
 
 const TITLE_PROMPT = (text: string) =>
   'Write a short title (3 to 6 words) for a work thread that starts with the message below. ' +
@@ -438,10 +441,10 @@ export class Runtime {
     const timer = setTimeout(() => controller.abort(), 60_000);
     try {
       mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const result = await engines[lead.engine].run({
+      const run = (model: string) => engines[lead.engine].run({
         workdir: dir,
         runDir: dir,
-        model: TITLE_MODELS[lead.engine] ?? lead.model,
+        model,
         reasoning: lead.engine === 'codex' ? 'low' : undefined,
         permissions: 'read-only',
         prompt: TITLE_PROMPT(text),
@@ -453,6 +456,9 @@ export class Runtime {
         signal: controller.signal,
         onEvent: () => {},
       });
+      const small = TITLE_MODELS[lead.engine];
+      let result = await run(small ?? lead.model);
+      if (!result.ok && small && small !== lead.model && !controller.signal.aborted) result = await run(lead.model);
       const title = result.ok ? cleanTitle(result.finalText) : '';
       const current = this.store.thread(threadId);
       if (controller.signal.aborted || !title || !current || current.archived) return;

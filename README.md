@@ -247,8 +247,9 @@ session in the same thread, on its engine and model, waits and returns the
 answer. Turns time out per the lead's `limits` in `agent/agent.ts`.
 
 **Thread titles**: a new thread first shows its opening line. In the
-background a small model on the lead's engine (Haiku on Claude Code; the
-lead's own model elsewhere) writes a 3–6 word title and replaces it. The
+background a small model on the lead's engine (Haiku on Claude Code,
+GPT-6-Luna on Codex; otherwise, or when that model is unavailable, the
+lead's own model) writes a 3–6 word title and replaces it. The
 lead can rename the thread later with `rename_thread` when the work turns
 out to be about something else.
 
