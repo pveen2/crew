@@ -881,3 +881,14 @@ body,
 .web-tab[hidden] {
   display: none;
 }
+
+/* ------------------------------------------------------------------ settings */
+
+.settings-row {
+  align-items: center;
+  padding: var(--cr-space-400);
+}
+.settings-row__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}

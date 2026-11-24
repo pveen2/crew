@@ -13,3 +13,4 @@ export { Tabs, SegmentedControl, type TabItem } from './Tabs';
 export { TextField, Composer, ChipSelect, type TextFieldProps, type ComposerProps, type ChipSelectProps } from './fields';
 export { ListItem, NavItem, type ListItemProps, type NavItemProps } from './ListItem';
 export { Banner, Disclosure } from './misc';
+export { Switch } from './Switch';

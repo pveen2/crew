@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Face, FaceStack, type FaceSize } from '@crew/ui';
+import type { Usage } from '@crew/protocol';
 import { useApp } from '../store';
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -116,4 +117,39 @@ export function oneLine(s: string, max = 140): string {
 
 export function engineName(engine: string): string {
   return engine === 'codex' ? 'Codex' : engine === 'grok' ? 'Grok' : engine === 'antigravity' ? 'Antigravity' : 'Claude Code';
+}
+
+/** "$0.42", "$12", "<$0.01". */
+export function money(usd: number): string {
+  if (usd > 0 && usd < 0.01) return '<$0.01';
+  return `$${usd.toFixed(usd >= 10 ? 0 : 2)}`;
+}
+
+/** "950", "12k", "1.2M". */
+export function tokenCount(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${Math.round(n / 1000)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+/**
+ * Short spend label: the API-price cost when an engine reported one, else the
+ * token count. Empty when nothing was used yet.
+ */
+export function usageLabel(u: Usage | null | undefined): string {
+  if (!u) return '';
+  if (u.costUsd !== null) return u.unpricedTokens ? `${money(u.costUsd)} + ${tokenCount(u.unpricedTokens)} tok` : money(u.costUsd);
+  const total = u.inputTokens + u.outputTokens;
+  return total ? `${tokenCount(total)} tok` : '';
+}
+
+/** Tooltip for a spend label. */
+export function usageTitle(u: Usage | null | undefined): string {
+  if (!u) return '';
+  const lines = [];
+  if (u.costUsd !== null) lines.push(`${money(u.costUsd)} at API prices, as the engines report it`);
+  if (u.costUsd !== null && u.unpricedTokens) lines.push(`Plus ${tokenCount(u.unpricedTokens)} tokens from engines that report no price (Codex)`);
+  lines.push(`${tokenCount(u.inputTokens)} tokens in, ${tokenCount(u.outputTokens)} out`);
+  lines.push('Runs on your subscriptions, so this is what it would cost per token, not what is billed.');
+  return lines.join('\n');
 }

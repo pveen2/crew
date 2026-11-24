@@ -84,6 +84,7 @@ export type View =
   | { name: 'inbox'; itemId?: string }
   | { name: 'agents' }
   | { name: 'team' }
+  | { name: 'settings' }
   | { name: 'thread'; threadId: string; sessionId?: string };
 
 export interface PreviewDoc {
@@ -124,6 +125,8 @@ export interface AppState {
   closedPreviews: Record<string, Record<string, true>>;
   /** Sidebar folded down to the icon rail. Remembered across launches. */
   sidebarCollapsed: boolean;
+  /** Show what threads and agents spent (Settings). On unless switched off; kept on this Mac. */
+  showSpend: boolean;
   previewDevice: 'desktop' | 'phone';
   /** Width of the preview pane in px, set by dragging; null = the default split. Kept on this Mac. */
   previewWidth: number | null;
@@ -156,7 +159,7 @@ function viewFromHash(): View {
   const [name, a, b] = location.hash.replace(/^#\/?/, '').split('/').map((x) => (x ? decode(x) : x));
   if (name === 'thread' && a) return { name: 'thread', threadId: a, sessionId: b || undefined };
   if (name === 'inbox') return { name, itemId: a || undefined };
-  if (name === 'threads' || name === 'agents' || name === 'done' || name === 'team') return { name };
+  if (name === 'threads' || name === 'agents' || name === 'done' || name === 'team' || name === 'settings') return { name };
   return { name: 'new', role: (name === 'new' && a) || undefined };
 }
 
@@ -183,6 +186,7 @@ function loadRead(): Record<string, true> {
 }
 
 const SIDEBAR_KEY = 'crew.sidebar.collapsed';
+const SHOW_SPEND_KEY = 'crew.settings.showSpend';
 const PREVIEW_WIDTH_KEY = 'crew.preview.width';
 const INBOX_LIST_WIDTH_KEY = 'crew.inbox.listWidth';
 function loadWidth(key: string): number | null {
@@ -193,11 +197,12 @@ function loadWidth(key: string): number | null {
     return null;
   }
 }
-function loadFlag(key: string): boolean {
+function loadFlag(key: string, fallback = false): boolean {
   try {
-    return localStorage.getItem(key) === '1';
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : v === '1';
   } catch {
-    return false;
+    return fallback;
   }
 }
 
@@ -221,6 +226,7 @@ let state: AppState = {
   extraPreviews: {},
   closedPreviews: {},
   sidebarCollapsed: loadFlag(SIDEBAR_KEY),
+  showSpend: loadFlag(SHOW_SPEND_KEY, true),
   previewDevice: 'desktop',
   previewWidth: loadWidth(PREVIEW_WIDTH_KEY),
   inboxListWidth: loadWidth(INBOX_LIST_WIDTH_KEY),
@@ -508,6 +514,15 @@ export function markRead(ids: string[]): void {
     }
     return { inboxRead };
   });
+}
+
+export function setShowSpend(showSpend: boolean): void {
+  set({ showSpend });
+  try {
+    localStorage.setItem(SHOW_SPEND_KEY, showSpend ? '1' : '0');
+  } catch {
+    /* storage unavailable: the choice lasts for this session */
+  }
 }
 
 export function setInboxFilter(inboxFilter: 'all' | 'unread'): void {

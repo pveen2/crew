@@ -22,11 +22,12 @@ import type {
   ThreadDetailResponse,
   ThreadStatus,
   TurnStatus,
+  Usage,
 } from '@crew/protocol';
 import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
 import type { SessionRow, Store } from './db.ts';
-import { engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
+import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
 
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
@@ -267,7 +268,7 @@ export class Runtime {
   // -------------------------------------------------------------------------
   // Read models
 
-  private withMeta(t: Omit<Thread, 'roles' | 'statusText'>): Thread {
+  private withMeta(t: Omit<Thread, 'roles' | 'statusText' | 'usage'>): Thread {
     const sessions = this.store.sessionsOfThread(t.id);
     const roles = [...new Set(sessions.map((s) => s.role))];
     let statusText = '';
@@ -284,7 +285,7 @@ export class Runtime {
       const open = this.store.openInboxOfThread(t.id, ['draft']);
       statusText = open.length ? 'Draft to review' : 'Done';
     }
-    return { ...t, roles, statusText };
+    return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id) };
   }
 
   async roles(): Promise<RoleSummary[]> {
@@ -652,7 +653,7 @@ export class Runtime {
       const now = Date.now();
       this.store.insertTurn({
         id: turnId, sessionId, threadId: session.threadId, prompt: savePrompt, status: 'interrupted',
-        callerSessionId: null, result: null, error: NOT_STARTED, startedAt: now, endedAt: now,
+        callerSessionId: null, result: null, error: NOT_STARTED, startedAt: now, endedAt: now, usage: null,
       });
       return { turnId, status: 'interrupted', text: '', error: NOT_STARTED };
     }
@@ -682,6 +683,7 @@ export class Runtime {
       error: null,
       startedAt,
       endedAt: null,
+      usage: null,
     });
 
     const controller = new AbortController();
@@ -715,6 +717,7 @@ export class Runtime {
     opts.signal?.addEventListener('abort', onCallerGone, { once: true });
 
     let outcome: TurnOutcome;
+    let usage: Usage | undefined;
     let timer: NodeJS.Timeout | undefined;
     try {
       const crew = await loadCrew();
@@ -785,6 +788,7 @@ export class Runtime {
         newSessionId: canResume ? undefined : (session.engineSessionId ?? undefined),
       });
 
+      usage = result.usage;
       if (!result.ok && result.resumeFailed && !controller.signal.aborted) {
         // The CLI lost the conversation (for example it was killed before saving). Start fresh.
         this.emit(session, turnId, { type: 'status', text: 'Could not restore the earlier conversation; starting a fresh session.' });
@@ -796,6 +800,7 @@ export class Runtime {
           resumeId: null,
           newSessionId: freshId ?? undefined,
         });
+        usage = addUsage(usage, result.usage);
       }
 
       if (result.ok) {
@@ -814,13 +819,13 @@ export class Runtime {
       opts.signal?.removeEventListener('abort', onCallerGone);
     }
 
-    this.store.finishTurn(turnId, outcome.status, outcome.text || null, outcome.error ?? null);
+    this.store.finishTurn(turnId, outcome.status, outcome.text || null, outcome.error ?? null, usage);
     this.running.delete(sessionId);
     const queued = (this.pending.get(sessionId) ?? 0) > 0;
     const sessionStatus =
       outcome.status === 'interrupted' ? 'interrupted' : outcome.status === 'error' ? 'error' : queued ? 'queued' : 'idle';
     session = this.setSession(sessionId, { status: sessionStatus });
-    this.emit(session, turnId, { type: 'turn_done', status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error });
+    this.emit(session, turnId, { type: 'turn_done', status: outcome.status, durationMs: Date.now() - startedAt, error: outcome.error, usage });
 
     if (showCardInParent) {
       this.emit(parent, this.running.get(parent.id)?.turnId ?? null, {

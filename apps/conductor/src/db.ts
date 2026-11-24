@@ -14,6 +14,7 @@ import type {
   ThreadStatus,
   Turn,
   TurnStatus,
+  Usage,
 } from '@crew/protocol';
 
 const SCHEMA = `
@@ -123,7 +124,7 @@ CREATE TABLE IF NOT EXISTS verdicts (
 
 type Row = Record<string, SQLInputValue>;
 
-function toThread(r: Row): Omit<Thread, 'roles' | 'statusText'> {
+function toThread(r: Row): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
   return {
     id: r.id as string,
     title: r.title as string,
@@ -179,6 +180,14 @@ function toTurn(r: Row): Turn {
     error: (r.error as string | null) ?? null,
     startedAt: Number(r.started_at),
     endedAt: r.ended_at == null ? null : Number(r.ended_at),
+    usage:
+      r.cost_usd == null && r.input_tokens == null && r.output_tokens == null
+        ? null
+        : {
+            costUsd: r.cost_usd == null ? null : Number(r.cost_usd),
+            inputTokens: Number(r.input_tokens ?? 0),
+            outputTokens: Number(r.output_tokens ?? 0),
+          },
   };
 }
 
@@ -241,6 +250,9 @@ export class Store {
       "ALTER TABLE inbox ADD COLUMN role TEXT NOT NULL DEFAULT ''",
       'ALTER TABLE inbox ADD COLUMN preview_id TEXT',
       "ALTER TABLE threads ADD COLUMN benched TEXT NOT NULL DEFAULT '[]'",
+    'ALTER TABLE turns ADD COLUMN cost_usd REAL',
+    'ALTER TABLE turns ADD COLUMN input_tokens INTEGER',
+    'ALTER TABLE turns ADD COLUMN output_tokens INTEGER',
     ]) {
       try {
         this.db.exec(sql);
@@ -262,20 +274,20 @@ export class Store {
 
   // Threads ------------------------------------------------------------------
 
-  insertThread(t: Omit<Thread, 'roles' | 'statusText'>): void {
+  insertThread(t: Omit<Thread, 'roles' | 'statusText' | 'usage'>): void {
     this.run(
       'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched) VALUES (?,?,?,?,?,?,?,?)',
       t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched),
     );
   }
-  thread(id: string): Omit<Thread, 'roles' | 'statusText'> | undefined {
+  thread(id: string): Omit<Thread, 'roles' | 'statusText' | 'usage'> | undefined {
     const r = this.get('SELECT * FROM threads WHERE id = ?', id);
     return r && toThread(r);
   }
-  threads(): Omit<Thread, 'roles' | 'statusText'>[] {
+  threads(): Omit<Thread, 'roles' | 'statusText' | 'usage'>[] {
     return this.all('SELECT * FROM threads ORDER BY updated_at DESC').map(toThread);
   }
-  updateThread(id: string, patch: Partial<Pick<Thread, 'title' | 'status' | 'archived'>>): Omit<Thread, 'roles' | 'statusText'> {
+  updateThread(id: string, patch: Partial<Pick<Thread, 'title' | 'status' | 'archived'>>): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     const t = this.thread(id);
     if (!t) throw new Error(`No thread ${id}`);
     const next = { ...t, ...patch, updatedAt: Date.now() };
@@ -353,9 +365,27 @@ export class Store {
     const r = this.get('SELECT pid FROM turns WHERE id = ?', id);
     return r?.pid == null ? null : Number(r.pid);
   }
-  finishTurn(id: string, status: TurnStatus, result: string | null, error: string | null): Turn {
-    this.run('UPDATE turns SET status = ?, result = ?, error = ?, ended_at = ? WHERE id = ?', status, result, error, Date.now(), id);
+  finishTurn(id: string, status: TurnStatus, result: string | null, error: string | null, usage?: Usage): Turn {
+    this.run(
+      'UPDATE turns SET status = ?, result = ?, error = ?, ended_at = ?, cost_usd = ?, input_tokens = ?, output_tokens = ? WHERE id = ?',
+      status, result, error, Date.now(), usage?.costUsd ?? null, usage?.inputTokens ?? null, usage?.outputTokens ?? null, id,
+    );
     return this.turn(id)!;
+  }
+  /** Everything the thread's turns used, all agents together. */
+  usageOfThread(threadId: string): Usage {
+    const r = this.get(
+      `SELECT SUM(cost_usd) AS cost, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+        SUM(CASE WHEN cost_usd IS NULL THEN COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) ELSE 0 END) AS unpriced
+       FROM turns WHERE thread_id = ?`,
+      threadId,
+    );
+    return {
+      costUsd: r?.cost == null ? null : Number(r.cost),
+      inputTokens: Number(r?.input ?? 0),
+      outputTokens: Number(r?.output ?? 0),
+      unpricedTokens: Number(r?.unpriced ?? 0),
+    };
   }
 
   // Events -------------------------------------------------------------------

@@ -22,7 +22,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate } from './process.ts';
-import type { EngineAdapter, EngineEvent, EngineResult, EngineRunOptions } from './types.ts';
+import { addUsage, readUsage, type EngineAdapter, type EngineEvent, type EngineResult, type EngineRunOptions } from './types.ts';
+import type { Usage } from '@crew/protocol';
 
 function agyEnv(): Record<string, string> {
   const env = agentBaseEnv();
@@ -96,6 +97,8 @@ export const antigravity: EngineAdapter = {
     const toolSteps = new Set<number>();
     let failure: string | undefined;
     let done = false;
+    let usage: Usage | undefined;
+    const stepUsage = new Map<number, Usage>();
     const emit = (e: EngineEvent) => opts.onEvent(e);
 
     const announce = (id: unknown) => {
@@ -119,6 +122,9 @@ export const antigravity: EngineAdapter = {
         switch (raw.event) {
           case 'step_update': {
             const step = Number(msg.step_index);
+            // Per-step usage, kept for a run that stops before its result.
+            const su = readUsage(msg.usage) ?? readUsage(msg.usage_metadata);
+            if (su) stepUsage.set(step, su);
             const state = String(msg.state ?? '').toUpperCase();
             const type = String(msg.step_type ?? '');
             if (type === 'agent_response') {
@@ -155,6 +161,7 @@ export const antigravity: EngineAdapter = {
           }
           case 'result': {
             done = true;
+            usage = readUsage(msg.usage) ?? readUsage(msg.usage_metadata) ?? usage;
             const status = String(msg.status ?? '').toUpperCase();
             if (typeof msg.response === 'string') finalText = msg.response;
             if (status && status !== 'SUCCESS') {
@@ -169,13 +176,15 @@ export const antigravity: EngineAdapter = {
 
     const durationMs = Date.now() - started;
     const text = finalText || lastText;
-    if (run.aborted) return { ok: false, engineSessionId, finalText: text, error: 'Stopped', durationMs };
+    // No usage on a result (or no result): fall back to what the steps reported.
+    if (!usage) for (const u of stepUsage.values()) usage = addUsage(usage, u);
+    if (run.aborted) return { ok: false, engineSessionId, finalText: text, error: 'Stopped', durationMs, usage };
     if (!done || failure || run.exitCode !== 0) {
       const error = failure ?? (run.stderrTail || `agy exited with code ${run.exitCode}`);
       const resumeFailed = Boolean(opts.resumeId) && /conversation .*(not found|does not exist)|unknown conversation/i.test(error + run.stderrTail);
-      return { ok: false, engineSessionId, finalText: text, error: notSignedInHint(error), resumeFailed, durationMs };
+      return { ok: false, engineSessionId, finalText: text, error: notSignedInHint(error), resumeFailed, durationMs, usage };
     }
-    return { ok: true, engineSessionId, finalText: text, durationMs };
+    return { ok: true, engineSessionId, finalText: text, durationMs, usage };
   },
 };
 

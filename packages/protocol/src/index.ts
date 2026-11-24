@@ -24,6 +24,25 @@ export interface Thread {
   statusText: string;
   /** Specialists switched off for this thread: the lead cannot call them. */
   benched: string[];
+  /** What every turn in the thread used so far, all agents together. */
+  usage: Usage;
+}
+
+/**
+ * What a turn used. Engines run on the owner's subscriptions, so costUsd is what
+ * the same work would cost at API prices, as the engine reports it (Claude Code
+ * does; Codex reports only tokens). Null: no turn reported a cost.
+ */
+export interface Usage {
+  costUsd: number | null;
+  /** All input tokens, cached ones included. */
+  inputTokens: number;
+  outputTokens: number;
+  /**
+   * Thread totals only: tokens from turns that reported no cost (Codex, for one).
+   * When this is above 0 and costUsd is set, costUsd covers only part of the work.
+   */
+  unpricedTokens?: number;
 }
 
 export interface Session {
@@ -55,6 +74,8 @@ export interface Turn {
   error: string | null;
   startedAt: number;
   endedAt: number | null;
+  /** Null while running, or when the engine reported nothing. */
+  usage: Usage | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +161,7 @@ export type CrewEventBody =
       /** Set when the lead started this turn by calling this specialist. */
       callerRole?: string;
     }
-  | { type: 'turn_done'; status: TurnStatus; durationMs: number; error?: string }
+  | { type: 'turn_done'; status: TurnStatus; durationMs: number; error?: string; usage?: Usage }
   | { type: 'status'; text: string };
 
 export type CrewEvent = EventBase & CrewEventBody;

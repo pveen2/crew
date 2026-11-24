@@ -1,4 +1,4 @@
-import type { Engine, Permissions } from '@crew/protocol';
+import type { Engine, Permissions, Usage } from '@crew/protocol';
 
 /** A stdio MCP server to attach to the CLI. */
 export interface McpServerSpec {
@@ -71,6 +71,46 @@ export interface EngineResult {
   /** True when the CLI could not find the session to resume. */
   resumeFailed?: boolean;
   durationMs: number;
+  /** What the run used, when the CLI reports it. */
+  usage?: Usage;
+}
+
+/** Adds two usages; a cost stays null only when neither side has one. */
+export function addUsage(a: Usage | undefined, b: Usage | undefined): Usage | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return {
+    costUsd: a.costUsd === null && b.costUsd === null ? null : (a.costUsd ?? 0) + (b.costUsd ?? 0),
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+  };
+}
+
+/**
+ * Reads token counts and a cost from a usage object in whichever naming the CLI
+ * uses (input_tokens, inputTokens, prompt_tokens, promptTokenCount, …).
+ * Undefined when it holds no counts.
+ */
+export function readUsage(raw: unknown): Usage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const num = (...keys: string[]) => {
+    for (const k of keys) if (typeof o[k] === 'number' && Number.isFinite(o[k])) return o[k] as number;
+    return undefined;
+  };
+  const input = num('input_tokens', 'inputTokens', 'prompt_tokens', 'promptTokens', 'promptTokenCount');
+  const cached = num('cache_read_input_tokens', 'cacheReadInputTokens', 'cached_input_tokens', 'cachedInputTokens', 'cachedContentTokenCount') ?? 0;
+  const created = num('cache_creation_input_tokens', 'cacheCreationInputTokens', 'cacheWriteInputTokens') ?? 0;
+  const output = num('output_tokens', 'outputTokens', 'completion_tokens', 'completionTokens', 'candidatesTokenCount');
+  const cost = num('total_cost_usd', 'cost_usd', 'costUsd', 'cost');
+  if (input === undefined && output === undefined && cost === undefined) return undefined;
+  // Anthropic counts cache reads and writes apart from input_tokens; OpenAI and Google count them inside it.
+  const anthropicStyle = 'cache_read_input_tokens' in o || 'cache_creation_input_tokens' in o;
+  return {
+    costUsd: cost ?? null,
+    inputTokens: (input ?? 0) + (anthropicStyle ? cached + created : 0),
+    outputTokens: output ?? 0,
+  };
 }
 
 export interface EngineAdapter {

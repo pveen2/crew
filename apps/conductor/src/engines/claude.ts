@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate, type StdinHandle } from './process.ts';
-import type { EngineAdapter, EngineEvent, EngineResult, EngineRunOptions } from './types.ts';
+import { addUsage, readUsage, type EngineAdapter, type EngineEvent, type EngineResult, type EngineRunOptions } from './types.ts';
+import type { Usage } from '@crew/protocol';
 
 function userLine(text: string, uuid: string): string {
   return JSON.stringify({ type: 'user', uuid, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -111,6 +112,11 @@ export const claudeCode: EngineAdapter = {
     let lastText = '';
     let resultError: string | undefined;
     let gotResult = false;
+    // What this run used, added up per result. total_cost_usd is a running total for the
+    // whole Claude session, earlier runs included when resumed, so it is not used.
+    let usage: Usage | undefined;
+    // Assistant messages since the last result, by message id: what a stopped run used.
+    const unsettled = new Map<string, Usage>();
     const emit = (e: EngineEvent) => opts.onEvent(e);
 
     // Owner messages written in mid-turn that the agent has not read yet.
@@ -164,6 +170,9 @@ export const claudeCode: EngineAdapter = {
         if (msg.parent_tool_use_id) return;
 
         if (type === 'assistant') {
+          const m = msg.message as { id?: string; usage?: unknown } | undefined;
+          const u = readUsage(m?.usage);
+          if (u && m?.id) unsettled.set(m.id, { ...u, costUsd: null });
           const content = (msg.message as { content?: Array<Record<string, unknown>> })?.content ?? [];
           for (const block of content) {
             if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
@@ -195,6 +204,9 @@ export const claudeCode: EngineAdapter = {
           closeSteer();
           gotResult = true;
           if (typeof msg.session_id === 'string') engineSessionId = msg.session_id;
+          const u = readUsage(msg.usage);
+          if (u) usage = addUsage(usage, { ...u, costUsd: costSinceLastResult(msg) });
+          unsettled.clear();
           if (msg.is_error || msg.subtype !== 'success') {
             resultError = String(msg.result ?? (msg.errors as unknown) ?? msg.subtype ?? 'Claude Code reported an error');
           } else {
@@ -211,17 +223,31 @@ export const claudeCode: EngineAdapter = {
     unread.clear();
 
     const durationMs = Date.now() - started;
+    // Stopped or crashed before a result: keep what the assistant messages reported (tokens only).
+    for (const u of unsettled.values()) usage = addUsage(usage, u);
     if (run.aborted) {
-      return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs };
+      return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs, usage };
     }
     const resumeFailed = Boolean(opts.resumeId) && /no conversation found/i.test(run.stderrTail + (resultError ?? ''));
     if (!gotResult || resultError || run.exitCode !== 0) {
       const error = resultError ?? (run.stderrTail || `claude exited with code ${run.exitCode}`);
-      return { ok: false, engineSessionId, finalText: finalText || lastText, error: notSignedInHint(error), resumeFailed, durationMs };
+      return { ok: false, engineSessionId, finalText: finalText || lastText, error: notSignedInHint(error), resumeFailed, durationMs, usage };
     }
-    return { ok: true, engineSessionId, finalText: finalText || lastText, durationMs };
+    return { ok: true, engineSessionId, finalText: finalText || lastText, durationMs, usage };
   },
 };
+
+/**
+ * This result's own cost: model_usage_since_last_result has a costUSD per model.
+ * Null when the CLI does not report it (older versions).
+ */
+function costSinceLastResult(msg: Record<string, unknown>): number | null {
+  const per = msg.model_usage_since_last_result as Record<string, { costUSD?: unknown }> | undefined;
+  if (!per || typeof per !== 'object') return null;
+  let sum: number | null = null;
+  for (const m of Object.values(per)) if (typeof m?.costUSD === 'number') sum = (sum ?? 0) + m.costUSD;
+  return sum;
+}
 
 function notSignedInHint(error: string): string {
   if (/not logged in|login|authenticate|invalid api key|oauth/i.test(error)) {

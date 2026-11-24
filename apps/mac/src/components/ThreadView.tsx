@@ -41,7 +41,22 @@ import {
 } from '../store';
 import { AttachmentTray, MessageImages, useAttachments } from './attachments';
 import { PaneResizer } from './PaneResizer';
-import { Elapsed, Markdown, RoleFace, RoleFaces, ago, clock, duration, engineName, oneLine, useNow, useRoleLabel, useRoleLabels } from './common';
+import {
+  Elapsed,
+  Markdown,
+  RoleFace,
+  RoleFaces,
+  ago,
+  clock,
+  duration,
+  engineName,
+  oneLine,
+  usageLabel,
+  usageTitle,
+  useNow,
+  useRoleLabel,
+  useRoleLabels,
+} from './common';
 import { PreviewPanel, usePreviewDocs } from './PreviewPanel';
 
 type Ev<T extends CrewEvent['type']> = Extract<CrewEvent, { type: T }>;
@@ -187,6 +202,7 @@ function SubagentRow({ threadId, start, data }: { threadId: string; start: Ev<'s
   const labels = useRoleLabels();
   const [open, setOpen] = useState(false);
   const now = useNow(1000, !open);
+  const showSpend = useApp((s) => s.showSpend);
   const { done, status } = subagentState(start, data);
 
   const childEvents = data.events.filter((e) => e.turnId === start.childTurnId);
@@ -204,6 +220,8 @@ function SubagentRow({ threadId, start, data }: { threadId: string; start: Ev<'s
 
   const badge = STATUS_BADGE[status];
   const time = status === 'running' ? duration(now - start.ts) : done && status === 'done' ? duration(done.durationMs) : '';
+  const childUsage = data.events.find((e): e is Ev<'turn_done'> => e.type === 'turn_done' && e.turnId === start.childTurnId)?.usage;
+  const spent = showSpend ? usageLabel(childUsage) : '';
   const detailsId = `sub-${start.childTurnId}`;
 
   const openResult = () =>
@@ -229,9 +247,10 @@ function SubagentRow({ threadId, start, data }: { threadId: string; start: Ev<'s
             {line}
           </Text>
         </button>
-        <Badge tone={badge.tone}>
+        <Badge tone={badge.tone} title={showSpend ? usageTitle(childUsage) || undefined : undefined}>
           {badge.label}
           {time ? ` · ${time}` : ''}
+          {spent ? ` · ${spent}` : ''}
         </Badge>
         {status === 'running' || status === 'queued' ? (
           <IconButton icon="stop" label={`Stop ${label}`} iconSize={13} onClick={() => void stopSession(start.childSessionId)} />
@@ -812,6 +831,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
   const loadError = useApp((s) => s.loadErrors[threadId]);
   const data = useApp((s) => s.details[threadId]);
   const previewOpen = useApp((s) => s.previewOpen);
+  const showSpend = useApp((s) => s.showSpend);
   const docs = usePreviewDocs(threadId, true);
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
@@ -888,6 +908,12 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
               <Text variant="caption" tone="secondary" leading="tight" truncate>
                 {thread.roles.map((r) => labels[r] ?? r).join(', ')}
                 {thread.benched?.length ? ` · without ${thread.benched.map((r) => labels[r] ?? r).join(', ')}` : ''} · started {ago(thread.createdAt, now)}
+                {showSpend && usageLabel(thread.usage) ? (
+                  <span className="numeric" title={usageTitle(thread.usage)}>
+                    {' · '}
+                    {usageLabel(thread.usage)} spent
+                  </span>
+                ) : null}
               </Text>
             </BlockStack>
           )}
