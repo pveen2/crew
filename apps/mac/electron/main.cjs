@@ -9,7 +9,7 @@
 
 const { app, BrowserWindow, dialog, ipcMain, net, shell, nativeTheme } = require('electron');
 const { execFile, execFileSync, spawn } = require('node:child_process');
-const { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
+const { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -116,12 +116,17 @@ function ownsConductor() {
   return app.isPackaged && !process.env.CREW_CONDUCTOR_URL && !readSettings().conductorUrl;
 }
 
-async function startConductor() {
+let launchInFlight = null;
+function startConductor() {
+  launchInFlight ??= launchConductor().finally(() => { launchInFlight = null; });
+  return launchInFlight;
+}
+
+async function launchConductor() {
   if (!ownsConductor() || conductorChild || conductorRunning()) return;
   const settings = readSettings();
   const logs = join(CREW_HOME, 'logs');
   mkdirSync(logs, { recursive: true });
-  const log = openSync(join(logs, 'conductor.log'), 'a');
   const team = teams.config();
   // A GitHub team needs Crew's clone before the first start (later starts reuse it).
   if (team.kind === 'github') {
@@ -131,23 +136,30 @@ async function startConductor() {
       console.error(`[crew] ${err.message}`);
     }
   }
-  conductorChild = spawn(
-    process.execPath,
-    ['--disable-warning=ExperimentalWarning', join(RUNTIME, 'apps', 'conductor', 'src', 'main.ts')],
-    {
-      cwd: RUNTIME,
-      env: {
-        ...process.env,
-        ...(settings.env && typeof settings.env === 'object' ? settings.env : {}),
-        ELECTRON_RUN_AS_NODE: '1',
-        PATH: (cachedPath ??= loginPath()),
-        CREW_TEAM_DIR: process.env.CREW_TEAM_DIR || teams.teamDir(team),
+  if (conductorRunning()) return;
+  const log = openSync(join(logs, 'conductor.log'), 'a');
+  try {
+    conductorChild = spawn(
+      process.execPath,
+      ['--disable-warning=ExperimentalWarning', join(RUNTIME, 'apps', 'conductor', 'src', 'main.ts')],
+      {
+        cwd: RUNTIME,
+        env: {
+          ...process.env,
+          ...(settings.env && typeof settings.env === 'object' ? settings.env : {}),
+          ELECTRON_RUN_AS_NODE: '1',
+          PATH: (cachedPath ??= loginPath()),
+          CREW_TEAM_DIR: process.env.CREW_TEAM_DIR || teams.teamDir(team),
+        },
+        stdio: ['ignore', log, log],
       },
-      stdio: ['ignore', log, log],
-    },
-  );
+    );
+  } finally {
+    closeSync(log);
+  }
   const child = conductorChild;
-  child.on('exit', (code) => {
+  child.once('error', (err) => console.error('[crew] conductor:', err.message));
+  child.once('close', (code) => {
     console.error(`[crew] conductor exited (${code}); see ${join(logs, 'conductor.log')}`);
     if (conductorChild === child) conductorChild = null;
   });
@@ -218,6 +230,7 @@ function createWindow() {
     backgroundColor: '#00000000',
     webPreferences: {
       preload: PRELOAD,
+      additionalArguments: ownsConductor() ? ['--crew-local-conductor'] : [],
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
@@ -381,10 +394,18 @@ ipcMain.handle('crew:info', (event) => {
   return conductorInfo();
 });
 
+ipcMain.handle('crew:start-conductor', async (event) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url) || !ownsConductor()) {
+    throw new Error('This window cannot start a local conductor.');
+  }
+  await startConductor();
+});
+
 app.whenReady().then(() => {
   nativeTheme.themeSource = 'system';
   if (app.isPackaged) {
-    void startConductor();
+    void startConductor().catch((err) => console.error('[crew] conductor:', err.message));
     releaseUpdates.start();
   }
   if (process.platform === 'darwin') app.dock?.setIcon(ICON);

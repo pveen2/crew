@@ -7,7 +7,9 @@ import { userInfo } from 'node:os';
 import { promisify, stripVTControlCharacters } from 'node:util';
 import { Kind, OperationTypeNode, parse } from 'graphql';
 
-export const readScopes = 'read_products,read_inventory,read_orders,read_customers';
+/** What the store manager can look at. Markets, languages, locations and discounts are read so questions about them can be answered. */
+export const readScopes =
+  'read_products,read_inventory,read_orders,read_customers,read_markets,read_locales,read_locations,read_discounts';
 /** Products and collections (write_products) and stock levels (write_inventory). Nothing on orders, customers or discounts. */
 export const writeScopes = 'write_products,write_inventory';
 const timeoutMs = 30_000;
@@ -73,11 +75,18 @@ export async function graphql(
     }
     if (failure.killed) throw new Error(`Shopify CLI timed out after ${timeoutMs / 1000} seconds.`);
 
-    const detail = stripVTControlCharacters(failure.stderr || failure.stdout || '').trim();
+    const detail = cliError(failure.stdout) ?? stripVTControlCharacters(failure.stderr || failure.stdout || '').trim();
     if (/no stored app authentication|stored app authentication.*(?:expired|no longer valid)/i.test(detail)) {
       throw new Error(
         `Shopify CLI needs stored authentication for ${store}. Ask the owner to run: ` +
           `shopify store auth --store ${store} --scopes ${scopes}`,
+      );
+    }
+    const missing = /Required access: `?(\w+)`?/i.exec(detail)?.[1];
+    if (!opts.allowMutations && missing) {
+      throw new Error(
+        `Shopify refused the query: the stored authentication lacks ${missing}. Ask the owner to sign in to Shopify again ` +
+          `(Shopify → Sign in in Crew's sidebar, or: shopify store auth --store ${store} --scopes ${scopes}).\n${detail.slice(0, 1500)}`,
       );
     }
     if (opts.allowMutations && /access denied|scope/i.test(detail)) {
@@ -95,4 +104,24 @@ export async function graphql(
   } catch {
     throw new Error('Shopify CLI returned invalid JSON.');
   }
+}
+
+/**
+ * With --json the CLI prints progress events on stderr and the failure as one
+ * {"error": …} line on stdout. Return Shopify's own error messages from it, so
+ * the reason (for example a missing access scope) reaches the agent.
+ */
+function cliError(stdout: string | undefined): string | undefined {
+  for (const line of (stdout ?? '').split('\n').reverse()) {
+    let parsed: { error?: { message?: string; details?: { errors?: { message?: string }[] } } };
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!parsed?.error) continue;
+    const messages = (parsed.error.details?.errors ?? []).map((e) => e.message).filter(Boolean);
+    return (messages.length ? messages.join('\n') : parsed.error.message) || undefined;
+  }
+  return undefined;
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
-import { IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { navigate, signInConnection, useApp, type UpdateInfo } from '../store';
+import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
+import { navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
 import { RoleFaces, age, useNow } from './common';
 
 export function Sidebar() {
@@ -13,6 +13,8 @@ export function Sidebar() {
   const inboxRead = useApp((s) => s.inboxRead);
   const activity = useApp((s) => s.activity);
   const connection = useApp((s) => s.connection);
+  const starting = useApp((s) => s.conductorStarting);
+  const canStart = connection === 'offline' && Boolean(window.crewHost?.startConductor);
   const collapsed = useApp((s) => s.sidebarCollapsed);
   const now = useNow(1000);
 
@@ -44,9 +46,11 @@ export function Sidebar() {
         <IconButton tone="dark" size="md" icon="agents" label="Agents" pressed={view.name === 'agents'} onClick={() => navigate({ name: 'agents' })} />
         <span className="cr-spacer" />
         <IconButton tone="dark" size="md" icon="checkCircle" label="Done" pressed={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
-        <span className={`sidebar-conn--${connection} sidebar-rail-conn`} role="status" title={connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}>
+        {canStart ? (
+          <IconButton tone="dark" size="md" icon={starting ? 'clock' : 'play'} label={starting ? 'Starting conductor…' : 'Start conductor'} disabled={starting} onClick={() => void startConductor()} />
+        ) : <span className={`sidebar-conn--${connection} sidebar-rail-conn`} role="status" title={connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}>
           <Icon name={connection === 'online' ? 'checkCircle' : connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
-        </span>
+        </span>}
       </div>
 
       <div className="sidebar-full" inert={collapsed}>
@@ -127,9 +131,10 @@ export function Sidebar() {
         <UpdateButton working={workingCount} label="Update team" check={window.crewHost?.teamCheck} apply={window.crewHost?.teamApply} />
         <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} />
         <Connections />
-        <div className={`sidebar-conn sidebar-conn--${connection}`} role="status">
+        <div className={`sidebar-conn sidebar-conn--${connection}`}>
           <Icon name={connection === 'online' ? 'checkCircle' : connection === 'offline' ? 'wifiOff' : 'clock'} size={14} />
-          <span>{connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}</span>
+          <span role="status">{connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}</span>
+          {canStart && <Button size="slim" icon="play" disabled={starting} aria-label="Start conductor" onClick={() => void startConductor()}>{starting ? 'Starting…' : 'Start'}</Button>}
         </div>
       </div>
       </div>
@@ -207,7 +212,7 @@ function Connections() {
   const connections = useApp((s) => s.connections);
   const signingIn = useApp((s) => s.signingIn);
   // Connected tools drop out of the list; with everything connected there is no section.
-  const shown = connections.filter((c) => c.status !== 'connected');
+  const shown = connections.filter((c) => c.status !== 'connected' && (c.id !== 'shopify' || c.usedBy.length > 0));
   if (!shown.length) return null;
 
   return (

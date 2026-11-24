@@ -2,6 +2,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('crewHost', {
   platform: process.platform,
+  ...(process.argv.includes('--crew-local-conductor') && {
+    startConductor: () => ipcRenderer.invoke('crew:start-conductor'),
+  }),
   conductorInfo: () => ipcRenderer.invoke('crew:info'),
   updateCheck: () => ipcRenderer.invoke('crew:update-check'),
   updateApply: () => ipcRenderer.invoke('crew:update-apply'),
