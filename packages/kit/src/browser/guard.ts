@@ -5,6 +5,8 @@
 //   tool's schema and from every call). agent-browser runs with the owner's
 //   real HOME, so a chosen path could overwrite any of the owner's files.
 //   The image still comes back inline, which is what the agent needs.
+//   agent-browser also keeps its own copy under ~/.agent-browser/tmp/screenshots
+//   and names it in the result: that copy is deleted and its path left out.
 // - Results: any text longer than MAX_CHARS is cut, with a note. config.json's
 //   maxOutput does not cover `agent_browser_read` with `raw: true` (a Pinterest
 //   page came back at 1.3M characters). Claude Code then saves the overflow
@@ -14,12 +16,17 @@
 // Usage: guard.ts <agent-browser args...>
 
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, resolve, sep } from 'node:path';
 import { createInterface } from 'node:readline';
 
 // Text and structuredContent can carry the same page, and Claude Code stops at about 25,000 tokens.
 const MAX_CHARS = 30_000;
 const SCREENSHOT = 'agent_browser_screenshot';
 const PATH_ARGS = ['path', 'screenshotDir'];
+/** Where agent-browser saves a screenshot when it is given no path. */
+const SHOT_DIR = join(homedir(), '.agent-browser', 'tmp', 'screenshots');
 
 type Msg = { id?: unknown; method?: string; params?: any; result?: any };
 
@@ -33,7 +40,7 @@ process.on('SIGTERM', () => child.kill('SIGTERM'));
 process.on('SIGINT', () => child.kill('SIGINT'));
 
 /** Request ids we sent as tools/list or tools/call, so we know what each response is. */
-const pending = new Map<string, 'list' | 'call'>();
+const pending = new Map<string, 'list' | 'call' | 'shot'>();
 const key = (id: unknown) => JSON.stringify(id);
 
 function cut(s: string): string {
@@ -53,9 +60,29 @@ function cutDeep(v: unknown): unknown {
   return v;
 }
 
+/** Delete agent-browser's temp copy of a screenshot and leave its path out of the result. */
+function dropShotCopies(msg: Msg): void {
+  const found = new Set<string>();
+  const scan = (v: unknown): unknown => {
+    if (typeof v === 'string') {
+      return v.replace(/\S+\.(?:png|jpe?g|webp)\b/gi, (p) => {
+        const abs = resolve(p);
+        if (!abs.startsWith(SHOT_DIR + sep)) return p;
+        found.add(abs);
+        return '(screenshot attached)';
+      });
+    }
+    if (Array.isArray(v)) return v.map(scan);
+    if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === 'data' ? x : scan(x)]));
+    return v;
+  };
+  msg.result = scan(msg.result);
+  for (const f of found) rmSync(f, { force: true });
+}
+
 function fromClient(msg: Msg): Msg {
   if (msg.id !== undefined && (msg.method === 'tools/list' || msg.method === 'tools/call')) {
-    pending.set(key(msg.id), msg.method === 'tools/list' ? 'list' : 'call');
+    pending.set(key(msg.id), msg.method === 'tools/list' ? 'list' : msg.params?.name === SCREENSHOT ? 'shot' : 'call');
   }
   if (msg.method === 'tools/call' && msg.params?.name === SCREENSHOT && msg.params.arguments) {
     for (const a of PATH_ARGS) delete msg.params.arguments[a];
@@ -77,6 +104,7 @@ function fromServer(msg: Msg): Msg {
       }
     }
   } else {
+    if (kind === 'shot') dropShotCopies(msg);
     for (const c of msg.result.content ?? []) {
       if (c?.type === 'text' && typeof c.text === 'string') c.text = cut(c.text);
     }

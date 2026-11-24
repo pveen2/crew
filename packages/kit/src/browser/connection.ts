@@ -7,12 +7,14 @@ import { defineConnection } from '@crew/sdk/define';
 //
 // Safety lives in three places:
 // - The allow-list below: no JavaScript eval, no saved logins or profiles, no
-//   uploads, no screenshots or files on disk, no network or cookie tools.
+//   uploads, no files on disk, no network or cookie tools. Screenshots are
+//   allowed: the image comes back inline, so the agent can see what a page
+//   shows (ad references, product photos) instead of only its text.
 // - config.json: page text comes back wrapped in boundary markers and capped
 //   in size, so a page is harder to mistake for instructions.
 // - guard.ts: cuts any result over 30,000 characters (raw reads ignore the
-//   config cap) and strips screenshot file paths, so nothing is written where
-//   the agent chooses.
+//   config cap), strips the screenshot path arguments so nothing is written
+//   where the agent chooses, and deletes agent-browser's own temp copy.
 // - Who gets it: never an agent that also holds store or customer data. A page
 //   could talk such an agent into sending that data out.
 //
@@ -35,6 +37,8 @@ const READ = [
   'agent_browser_forward',
   'agent_browser_reload',
   'agent_browser_close',
+  // Inline image only; guard.ts keeps it off disk.
+  'agent_browser_screenshot',
 ];
 
 /** Clicking and filling in forms: needed for calculators, filters and cookie banners. */
