@@ -918,11 +918,11 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
             </BlockStack>
           )}
           <span className="cr-spacer" />
-          <span className="header-faces">
+          <span className="header-faces phone-hide">
             <RoleFaces roles={thread.roles} size="md" />
           </span>
           {session.depth === 0 && (
-            <Button size="slim" icon="reload" title="Ask the same question in a new thread, with specialists switched on or off" onClick={() => runAgain(threadId)}>
+            <Button size="slim" icon="reload" className="phone-hide" title="Ask the same question in a new thread, with specialists switched on or off" onClick={() => runAgain(threadId)}>
               Run again
             </Button>
           )}
