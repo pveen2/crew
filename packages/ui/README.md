@@ -66,7 +66,7 @@ Primitives
   #29845A, `--cr-amber-*`, `--cr-red-50/700` (state colours for interrupted and
   failed, not in v5 but needed by real data)
 - Agent faces (sizes `--cr-size-face-xs` 18 … `-2xl` 36): one disc colour per agent,
-  `--cr-face-gm` #F0531F, `--cr-face-developer` #2F5BEA, `--cr-face-store-manager` #1FAE5B, `--cr-face-data-analyst` #F7C31C, `--cr-face-paid-media` #23A8F0, `--cr-face-creative-strategist` #F2408C, `--cr-face-creative-producer` #9ACD2A, `--cr-face-brand-reviewer` #E0262E, `--cr-face-email-and-retention` #FF85B3, `--cr-face-customer-care` #10B0A3, `--cr-face-social-and-community` #D94FD3, `--cr-face-finance-and-operations` #C07F2C, `--cr-face-seo-and-geo` #138A4E, `--cr-face-dj` #8B4CF0,
+  `--cr-face-gm` #F0531F, `--cr-face-developer` #2F5BEA, `--cr-face-store-manager` #1FAE5B, `--cr-face-data-analyst` #F7C31C, `--cr-face-paid-media` #23A8F0, `--cr-face-creative-strategist` #F2408C, `--cr-face-creative-producer` #9ACD2A, `--cr-face-brand-reviewer` #E0262E, `--cr-face-email-and-retention` #FF85B3, `--cr-face-customer-care` #10B0A3, `--cr-face-social-and-community` #D94FD3, `--cr-face-finance-and-operations` #C07F2C, `--cr-face-seo-and-geo` #138A4E, `--cr-face-dj` #8B4CF0, `--cr-face-copywriter` #FF9A1F, `--cr-face-designer` #7C8CFF, `--cr-face-web-researcher` #7EDCC0,
   `--cr-face-neutral` #8F8F8F; ring and mouth `--cr-face-ink` #151515
 
 Semantic, white panel surface

@@ -24,6 +24,15 @@ const MOUTHS: Record<string, ReactNode> = {
   'finance-and-operations': <path d="M45 58 Q 50 62 55 58" />,
   'seo-and-geo': <path d="M34 42 A 19 19 0 0 0 57 66" />,
   dj: <path d="M37 54 Q 43 65 50 56 Q 57 65 63 54" />,
+  copywriter: <path d="M37 58 L 45 58 M 55 58 L 63 58" />,
+  designer: <path d="M36 55 L 43 61 L 50 55 L 57 61 L 64 55" />,
+  'web-researcher': (
+    <>
+      <circle cx="39" cy="58" r="1" />
+      <circle cx="50" cy="58" r="1" />
+      <circle cx="61" cy="58" r="1" />
+    </>
+  ),
   neutral: <path d="M44 58 L 56 58" />,
 };
 
@@ -36,6 +45,9 @@ const ALIASES: Record<string, string> = {
   'social-community': 'social-and-community',
   'finance-operations': 'finance-and-operations',
   'finance-ops': 'finance-and-operations',
+  'copy-writer': 'copywriter',
+  'web-research': 'web-researcher',
+  researcher: 'web-researcher',
 };
 
 const STATE_MOUTHS: Record<Exclude<FaceState, 'idle'>, ReactNode> = {
