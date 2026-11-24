@@ -27,6 +27,10 @@ import { ensureDirs, paths, sharedEngineHome } from '@crew/conductor/config';
 import { engines } from '@crew/conductor/engines';
 import { crewTools, translateAgent } from '@crew/conductor/translate';
 import { api, bold, conductor, cyan, dim, fmtDuration, green, red, yellow } from './api.ts';
+import { resolveTeamImportsFrom } from '@crew/sdk/resolve';
+
+// The team may sit in another repo without Crew's packages installed (as in the conductor).
+resolveTeamImportsFrom(new URL('../apps/conductor/src/main.ts', import.meta.url).href);
 
 const argv = process.argv.slice(2);
 const cmd = argv.shift();
