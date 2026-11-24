@@ -57,7 +57,10 @@ export function crewTools(crew: LoadedCrew, agent: LoadedAgent, canDelegate: boo
     tools.push({ name: 'rename_thread', description: 'Give the thread a clearer 3–6 word title when the current one is vague or wrong.' });
   }
   tools.push({ name: 'ask_owner', description: 'Ask the owner something only they can answer, then end your turn.' });
-  tools.push({ name: 'show_preview', description: 'Show a document to the owner: an artifactId, or short content.' });
+  tools.push({
+    name: 'show_preview',
+    description: 'Show a document to the owner: an artifactId, or short content. Use html (styled by Crew) for anything visual or with images.',
+  });
   if (!agent.isLead) tools.push({ name: 'save_artifact', description: 'Save long work and get an id to hand back.' });
   tools.push({ name: 'read_artifact', description: 'Read an artifact by id.' });
   for (const m of agent.memories) {

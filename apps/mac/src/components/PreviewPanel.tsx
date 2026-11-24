@@ -1,7 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IconButton, InlineStack, Panel, PanelHeader, SegmentedControl, Tabs, Text } from '@crew/ui';
-import { closePreview, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
+import tokensCss from '@crew/ui/tokens.css?raw';
+import documentCss from '@crew/ui/document.css?raw';
+import { attachmentDataUrl, closePreview, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
 import { Markdown, RoleFace, ago, useRoleLabel } from './common';
+
+/** What every HTML document gets first: the Crew tokens and the document look. */
+const DOCUMENT_CSS = `${tokensCss}\n${documentCss}`;
 
 /** show_preview documents plus subagent results opened from a card, oldest first. */
 /** A thread's documents. With `openOnly`, the tabs the owner closed are left out. */
@@ -120,32 +125,69 @@ function WebDoc({ doc, threadId, hidden = false }: { doc: PreviewDoc; threadId: 
   );
 }
 
+/** `attachments/<file>` (or `./attachments/<file>`): a thread image an agent put in a document. */
+const ATTACHMENT_SRC = /^(?:\.\/)?attachments\/([\w][\w.-]*)$/;
+
 /**
- * Web links in an HTML document open as new tabs (the browser tab in the panel), never inside the
- * frame: most sites refuse to be framed and the preview would go blank. Links within the report
- * (#section) are left alone.
+ * Get an agent's HTML document ready for the sandboxed frame:
+ * - Crew's tokens and document styles go first in <head>, so it looks like the app unless the
+ *   agent styled it itself (the defaults have no specificity; see @crew/ui document.css).
+ * - Thread images (`attachments/<file>`: the owner's uploads and screenshots agents kept) become
+ *   data: URLs. The frame has no origin and cannot fetch from the conductor itself.
+ * - Web links open as new tabs (the browser tab in the panel), never inside the frame: most sites
+ *   refuse to be framed and the preview would go blank. Links within the report (#section) stay.
  */
-function withLinksInNewTabs(html: string): string {
+async function prepareHtml(html: string, threadId: string | undefined): Promise<string> {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
   for (const a of parsed.querySelectorAll('a[href], area[href]')) {
     if (/^https?:\/\//i.test(a.getAttribute('href') ?? '')) a.setAttribute('target', '_blank');
   }
+  const style = parsed.createElement('style');
+  style.setAttribute('data-crew', '');
+  style.textContent = DOCUMENT_CSS;
+  parsed.head.prepend(style);
+
+  const images = [...parsed.querySelectorAll('img[src], source[srcset], video[poster]')];
+  await Promise.all(
+    images.map(async (el) => {
+      const attr = el.tagName === 'SOURCE' ? 'srcset' : el.tagName === 'VIDEO' ? 'poster' : 'src';
+      const file = ATTACHMENT_SRC.exec((el.getAttribute(attr) ?? '').trim())?.[1];
+      if (!file) return;
+      if (!threadId) return el.setAttribute('alt', `${el.getAttribute('alt') ?? ''} (image not available here)`.trim());
+      try {
+        el.setAttribute(attr, await attachmentDataUrl(threadId, file));
+      } catch {
+        el.setAttribute('alt', `${el.getAttribute('alt') ?? ''} (image ${file} not found)`.trim());
+      }
+    }),
+  );
+
   const dt = parsed.doctype;
   const doctype = dt
     ? `<!DOCTYPE ${dt.name}${dt.publicId ? ` PUBLIC "${dt.publicId}"` : ''}${dt.systemId ? `${dt.publicId ? '' : ' SYSTEM'} "${dt.systemId}"` : ''}>`
-    : '';
+    : '<!DOCTYPE html>';
   return doctype + parsed.documentElement.outerHTML;
 }
 
 /** Renders one document: Markdown, HTML in a sandboxed frame, or a web page. */
 export function DocView({ doc, device = 'desktop', threadId }: { doc: PreviewDoc; device?: 'desktop' | 'phone'; threadId?: string }) {
-  const html = useMemo(() => (doc.format === 'html' ? withLinksInNewTabs(doc.content) : ''), [doc.format, doc.content]);
+  const [html, setHtml] = useState<{ id: string; source: string; ready: string } | null>(null);
+  useEffect(() => {
+    if (doc.format !== 'html') return;
+    let live = true;
+    void prepareHtml(doc.content, threadId).then((ready) => live && setHtml({ id: doc.id, source: doc.content, ready }));
+    return () => {
+      live = false;
+    };
+  }, [doc.id, doc.format, doc.content, threadId]);
+
   if (doc.format === 'web' && threadId) return <WebDoc key={doc.id} doc={doc} threadId={threadId} />;
   return (
     <div className={`doc-frame doc-frame--${device}`}>
       {doc.format === 'html' ? (
         // Popups are allowed only so target="_blank" links reach the window-open handler, which opens them in the browser.
-        <iframe title={doc.title} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={html} />
+        // Rendered once its images are in, so the frame loads one time.
+        html?.id === doc.id && html.source === doc.content ? <iframe title={doc.title} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={html.ready} /> : null
       ) : (
         <div className="doc-scroll">
           <Markdown text={doc.content} className="md--doc" />
@@ -209,7 +251,7 @@ export function PreviewPanel({ threadId, docs }: { threadId: string; docs: Previ
               />
             ) : null}
           </DocSourceBar>
-          <DocView doc={doc} device={doc.format === 'html' ? device : 'desktop'} />
+          <DocView doc={doc} device={doc.format === 'html' ? device : 'desktop'} threadId={threadId} />
         </>
       ) : null}
     </Panel>

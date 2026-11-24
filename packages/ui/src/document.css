@@ -1,0 +1,293 @@
+/*
+ * The Crew look for HTML documents agents write (show_preview / save_artifact
+ * with format html). The app puts tokens.css and this file at the top of every
+ * such document, before the agent's own styles.
+ *
+ * Element defaults sit inside :where() (no specificity), so any CSS the agent
+ * writes still wins, and an ad mock-up with its own styles looks as designed.
+ * The crew-* classes are the ready-made parts agents are told about in
+ * apps/conductor/src/mcp-bridge.ts (show_preview). Keep the two in step.
+ */
+
+:where(html) {
+  font-family: var(--cr-font-family);
+  font-size: var(--cr-font-size-350);
+  line-height: var(--cr-line-height-normal);
+  color: var(--cr-color-text);
+  background: var(--cr-color-bg-surface);
+  -webkit-font-smoothing: antialiased;
+}
+:where(body) {
+  margin: 0;
+  padding: var(--cr-space-600);
+}
+:where(h1, h2, h3, h4) {
+  font-weight: var(--cr-font-weight-semibold);
+  line-height: var(--cr-line-height-tight);
+}
+:where(h1) {
+  font-size: var(--cr-font-size-500);
+  margin: 0 0 var(--cr-space-150);
+}
+:where(h2) {
+  font-size: var(--cr-font-size-400);
+  margin: var(--cr-space-1000) 0 var(--cr-space-200);
+}
+:where(h3) {
+  font-size: var(--cr-font-size-350);
+  margin: var(--cr-space-600) 0 var(--cr-space-150);
+}
+:where(p, ul, ol, table, blockquote) {
+  margin: 0 0 var(--cr-space-300);
+}
+:where(ul, ol) {
+  padding-left: var(--cr-space-500);
+}
+:where(a) {
+  color: var(--cr-color-text-link);
+}
+:where(strong, b) {
+  font-weight: var(--cr-font-weight-semibold);
+}
+:where(img, video) {
+  max-width: 100%;
+  height: auto;
+}
+:where(hr) {
+  border: 0;
+  border-top: 1px solid var(--cr-color-border-subtle);
+  margin: var(--cr-space-600) 0;
+}
+:where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--cr-font-size-313);
+}
+:where(th, td) {
+  padding: var(--cr-space-150) var(--cr-space-200);
+  border-bottom: 1px solid var(--cr-color-border-subtle);
+  text-align: left;
+  vertical-align: top;
+}
+:where(th) {
+  font-weight: var(--cr-font-weight-semibold);
+  color: var(--cr-color-text-secondary);
+}
+:where(blockquote) {
+  padding-left: var(--cr-space-300);
+  border-left: 2px solid var(--cr-color-border);
+  color: var(--cr-color-text-secondary);
+}
+:where(code) {
+  font-family: var(--cr-font-family-mono);
+  font-size: 0.9em;
+  padding: var(--cr-space-025) var(--cr-space-100);
+  border-radius: var(--cr-radius-100);
+  background: var(--cr-color-bg-fill);
+}
+
+/* ------------------------------------------------------------------ parts */
+
+/* Secondary text: the line under a title, a caption, a source. */
+.crew-lede,
+.crew-muted {
+  color: var(--cr-color-text-secondary);
+}
+.crew-lede {
+  font-size: var(--cr-font-size-375);
+  line-height: var(--cr-line-height-snug);
+  margin: 0 0 var(--cr-space-600);
+  max-width: var(--cr-width-content);
+}
+.crew-small {
+  font-size: var(--cr-font-size-313);
+}
+
+/* A grid of cards that fills the width: about 240px per column. */
+.crew-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--cr-space-400);
+  margin: var(--cr-space-300) 0 var(--cr-space-600);
+}
+
+.crew-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--cr-radius-500);
+  background: var(--cr-color-bg-surface);
+  box-shadow: var(--cr-shadow-border-subtle);
+  overflow: hidden;
+}
+/* The image area of a card, 4:5 like a feed ad. Use --square, --story (9:16) or --wide (16:9) to change it. */
+.crew-card-media {
+  position: relative;
+  aspect-ratio: 4 / 5;
+  background: var(--cr-color-bg-fill);
+  overflow: hidden;
+}
+.crew-card-media--square {
+  aspect-ratio: 1;
+}
+.crew-card-media--story {
+  aspect-ratio: 9 / 16;
+}
+.crew-card-media--wide {
+  aspect-ratio: 16 / 9;
+}
+.crew-card-media > img,
+.crew-card-media > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* Show the whole image (a screenshot with text) instead of filling the frame. */
+.crew-card-media--contain > img,
+.crew-card-media--contain > video {
+  object-fit: contain;
+}
+/* No image: say why in a short line inside the media area. */
+.crew-card-media > .crew-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--cr-space-500);
+  text-align: center;
+  color: var(--cr-color-text-tertiary);
+  font-size: var(--cr-font-size-313);
+}
+.crew-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-space-200);
+  padding: var(--cr-space-350) var(--cr-space-400) var(--cr-space-400);
+  flex: 1 1 auto;
+}
+.crew-card-body > * {
+  margin: 0;
+}
+.crew-card-title {
+  font-weight: var(--cr-font-weight-semibold);
+  line-height: var(--cr-line-height-snug);
+}
+/* Pushes what follows (a button) to the bottom so buttons line up across a row. */
+.crew-card-body > .crew-actions {
+  margin-top: auto;
+  padding-top: var(--cr-space-100);
+}
+
+.crew-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cr-space-150);
+}
+.crew-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 var(--cr-space-200);
+  border-radius: var(--cr-radius-full);
+  background: var(--cr-color-bg-fill);
+  color: var(--cr-color-text);
+  font-size: var(--cr-font-size-300);
+  font-weight: var(--cr-font-weight-medium);
+  white-space: nowrap;
+}
+.crew-tag--strong {
+  background: var(--cr-color-bg-fill-brand);
+  color: var(--cr-color-text-on-fill);
+}
+.crew-tag--success {
+  background: var(--cr-color-bg-success);
+  color: var(--cr-color-text-success);
+}
+.crew-tag--caution {
+  background: var(--cr-color-bg-caution);
+  color: var(--cr-color-text-caution);
+}
+.crew-tag--critical {
+  background: var(--cr-color-bg-critical);
+  color: var(--cr-color-text-critical);
+}
+
+.crew-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cr-space-200);
+}
+.crew-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cr-space-150);
+  height: var(--cr-height-control-md);
+  padding: 0 var(--cr-space-300);
+  border-radius: var(--cr-radius-300);
+  background: var(--cr-color-bg-surface);
+  box-shadow: var(--cr-shadow-border-control);
+  color: var(--cr-color-text);
+  font-size: var(--cr-font-size-325);
+  font-weight: var(--cr-font-weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.crew-button:hover {
+  background: var(--cr-color-bg-fill-hover);
+}
+.crew-button--primary {
+  background: var(--cr-color-bg-fill-brand);
+  box-shadow: none;
+  color: var(--cr-color-text-on-fill);
+}
+.crew-button--primary:hover {
+  background: var(--cr-color-bg-fill-brand-hover);
+}
+
+/* A boxed remark: a caveat, what was not found, the method. */
+.crew-note {
+  margin: 0 0 var(--cr-space-400);
+  padding: var(--cr-space-300) var(--cr-space-400);
+  border-radius: var(--cr-radius-400);
+  background: var(--cr-color-bg-surface-secondary);
+  box-shadow: var(--cr-shadow-border-subtle);
+  color: var(--cr-color-text-emphasis);
+}
+.crew-note > :last-child {
+  margin-bottom: 0;
+}
+
+/* Key figures in a row: <div class="crew-stats"><div class="crew-stat"><b>83</b><span>days live</span></div>…</div> */
+.crew-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--cr-space-300);
+  margin: 0 0 var(--cr-space-600);
+}
+.crew-stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-space-050);
+  padding: var(--cr-space-300) var(--cr-space-400);
+  border-radius: var(--cr-radius-400);
+  background: var(--cr-color-bg-surface-secondary);
+  box-shadow: var(--cr-shadow-border-subtle);
+}
+.crew-stat > b {
+  font-size: var(--cr-font-size-500);
+  font-weight: var(--cr-font-weight-semibold);
+  line-height: var(--cr-line-height-tight);
+}
+.crew-stat > span {
+  color: var(--cr-color-text-secondary);
+  font-size: var(--cr-font-size-313);
+}
+
+@media (max-width: 480px) {
+  :where(body) {
+    padding: var(--cr-space-400);
+  }
+}

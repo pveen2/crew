@@ -654,6 +654,33 @@ export function attachmentUrl(threadId: string, file: string): Promise<string> {
   return p;
 }
 
+const attachmentDataUrls = new Map<string, Promise<string>>();
+/**
+ * A thread image as a data: URL, for HTML documents. They render in a sandboxed frame with
+ * no origin of its own, which cannot load the app's blob: URLs.
+ */
+export function attachmentDataUrl(threadId: string, file: string): Promise<string> {
+  const key = `${threadId}/${file}`;
+  let p = attachmentDataUrls.get(key);
+  if (!p) {
+    p = attachmentUrl(threadId, file)
+      .then((url) => fetch(url))
+      .then((res) => res.blob())
+      .then(
+        (blob) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result));
+            reader.onerror = () => reject(reader.error ?? new Error('Could not read the image'));
+            reader.readAsDataURL(blob);
+          }),
+      );
+    p.catch(() => attachmentDataUrls.delete(key));
+    attachmentDataUrls.set(key, p);
+  }
+  return p;
+}
+
 /** `benched`: specialists switched off for this thread; the lead cannot call them. */
 export async function createThread(text: string, role?: string, files?: File[], benched: string[] = []): Promise<void> {
   const t = await api<Thread>('POST', '/api/threads', { text, role, attachments: await toUploads(files), benched });

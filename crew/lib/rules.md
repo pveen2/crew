@@ -41,7 +41,8 @@ happens only through a tool that asks the owner to approve it first.
 
 - `context/brand/` (if the team has one) holds the brand documents. Read the
   relevant ones before writing anything customer-facing.
-- `attachments/` holds images the owner attached in this thread (read-only).
+- `attachments/` holds this thread's images (read-only): the ones the owner
+  attached, and screenshots colleagues kept from the browser (`shot-…`).
   Look at the ones a message or brief names. When a specialist needs to see
   an image, name its file in the brief.
 - `drafts/` (only if your permissions allow drafting) is where you may write
