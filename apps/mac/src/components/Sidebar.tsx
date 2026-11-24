@@ -200,9 +200,10 @@ const STATUS_TEXT: Record<ConnectionStatus['status'], string> = {
 };
 
 function connectionTitle(c: ConnectionStatus, waiting: boolean): string {
-  const lines = [`${c.label}: ${STATUS_TEXT[c.status]}${c.detail ? ` (${c.detail})` : ''}`];
+  const lines = [`${c.label}: ${STATUS_TEXT[c.status]}${c.onServer ? ' on the server' : ''}${c.detail ? ` (${c.detail})` : ''}`];
   lines.push(c.usedBy.length ? `Used by ${c.usedBy.join(', ')}` : 'Not used by the team right now');
   if (waiting) lines.push('Finish in Terminal. This updates when it is done.');
+  else if (c.onServer) lines.push('The server admin signs it in, once, for the whole team.');
   else if (c.canSignIn) lines.push(c.status === 'missing' ? 'Click to install and sign in, in Terminal' : 'Click to sign in, in Terminal');
   return lines.join('\n');
 }
@@ -212,7 +213,10 @@ function Connections() {
   const connections = useApp((s) => s.connections);
   const signingIn = useApp((s) => s.signingIn);
   // Connected tools drop out of the list; with everything connected there is no section.
-  const shown = connections.filter((c) => c.status !== 'connected' && (c.id !== 'shopify' || c.usedBy.length > 0));
+  // On a server only what the team uses: nobody can act on the rest from here.
+  const shown = connections.filter(
+    (c) => c.status !== 'connected' && (c.id !== 'shopify' || c.usedBy.length > 0) && (!c.onServer || c.usedBy.length > 0),
+  );
   if (!shown.length) return null;
 
   return (
