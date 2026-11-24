@@ -2,10 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
 import { navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
-import { RoleFaces, age, useNow } from './common';
+import { RoleFaces, age, usageLabel, usageTitle, useNow } from './common';
 
 export function Sidebar() {
   const view = useApp((s) => s.view);
+  const showSpend = useApp((s) => s.showSpend);
   const teamName = useApp((s) => s.teamName) || 'Crew';
   const threads = useApp((s) => s.threads);
   const doneCount = useApp((s) => Object.keys(s.done).length);
@@ -46,6 +47,7 @@ export function Sidebar() {
         <IconButton tone="dark" size="md" icon="agents" label="Agents" pressed={view.name === 'agents'} onClick={() => navigate({ name: 'agents' })} />
         <span className="cr-spacer" />
         <IconButton tone="dark" size="md" icon="checkCircle" label="Done" pressed={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
+        <IconButton tone="dark" size="md" icon="settings" label="Settings" pressed={view.name === 'settings'} onClick={() => navigate({ name: 'settings' })} />
         {canStart ? (
           <IconButton tone="dark" size="md" icon={starting ? 'clock' : 'play'} label={starting ? 'Starting conductor…' : 'Start conductor'} disabled={starting} onClick={() => void startConductor()} />
         ) : <span className={`sidebar-conn--${connection} sidebar-rail-conn`} role="status" title={connection === 'online' ? 'Conductor connected' : connection === 'connecting' ? 'Connecting…' : 'Conductor offline'}>
@@ -118,7 +120,17 @@ export function Sidebar() {
                   age(t.updatedAt, now)
                 )
               }
-              subtitle={<span className={strong ? 'sidebar-status-strong' : undefined}>{t.statusText}</span>}
+              subtitle={
+                <>
+                  <span className={strong ? 'sidebar-status-strong' : undefined}>{t.statusText}</span>
+                  {showSpend && usageLabel(t.usage) ? (
+                    <span className="sidebar-cost numeric" title={usageTitle(t.usage)}>
+                      {' · '}
+                      {usageLabel(t.usage)}
+                    </span>
+                  ) : null}
+                </>
+              }
               trailing={<RoleFaces roles={t.roles} size="xs" />}
             />
           );
@@ -128,6 +140,7 @@ export function Sidebar() {
       <NavItem icon="checkCircle" label="Done" count={doneCount || undefined} selected={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
 
       <div className="sidebar-footer">
+        <NavItem icon="settings" label="Settings" selected={view.name === 'settings'} onClick={() => navigate({ name: 'settings' })} />
         <UpdateButton working={workingCount} label="Update team" check={window.crewHost?.teamCheck} apply={window.crewHost?.teamApply} />
         <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} />
         <Connections />

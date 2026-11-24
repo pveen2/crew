@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate, type StdinHandle } from './process.ts';
-import type { EngineAdapter, EngineEvent, EngineResult, EngineRunOptions } from './types.ts';
+import { addUsage, readUsage, type EngineAdapter, type EngineEvent, type EngineResult, type EngineRunOptions } from './types.ts';
+import type { Usage } from '@crew/protocol';
 
 function userLine(text: string, uuid: string): string {
   return JSON.stringify({ type: 'user', uuid, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text }] } });
@@ -111,6 +112,9 @@ export const claudeCode: EngineAdapter = {
     let lastText = '';
     let resultError: string | undefined;
     let gotResult = false;
+    // Tokens add up per result; total_cost_usd is already a running total for the process.
+    let usage: Usage | undefined;
+    let costUsd: number | null = null;
     const emit = (e: EngineEvent) => opts.onEvent(e);
 
     // Owner messages written in mid-turn that the agent has not read yet.
@@ -195,6 +199,9 @@ export const claudeCode: EngineAdapter = {
           closeSteer();
           gotResult = true;
           if (typeof msg.session_id === 'string') engineSessionId = msg.session_id;
+          const u = readUsage(msg.usage);
+          if (u) usage = addUsage(usage, { ...u, costUsd: null });
+          if (typeof msg.total_cost_usd === 'number') costUsd = Math.max(costUsd ?? 0, msg.total_cost_usd);
           if (msg.is_error || msg.subtype !== 'success') {
             resultError = String(msg.result ?? (msg.errors as unknown) ?? msg.subtype ?? 'Claude Code reported an error');
           } else {
@@ -211,15 +218,16 @@ export const claudeCode: EngineAdapter = {
     unread.clear();
 
     const durationMs = Date.now() - started;
+    if (costUsd !== null) usage = { inputTokens: 0, outputTokens: 0, ...usage, costUsd };
     if (run.aborted) {
-      return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs };
+      return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs, usage };
     }
     const resumeFailed = Boolean(opts.resumeId) && /no conversation found/i.test(run.stderrTail + (resultError ?? ''));
     if (!gotResult || resultError || run.exitCode !== 0) {
       const error = resultError ?? (run.stderrTail || `claude exited with code ${run.exitCode}`);
-      return { ok: false, engineSessionId, finalText: finalText || lastText, error: notSignedInHint(error), resumeFailed, durationMs };
+      return { ok: false, engineSessionId, finalText: finalText || lastText, error: notSignedInHint(error), resumeFailed, durationMs, usage };
     }
-    return { ok: true, engineSessionId, finalText: finalText || lastText, durationMs };
+    return { ok: true, engineSessionId, finalText: finalText || lastText, durationMs, usage };
   },
 };
 

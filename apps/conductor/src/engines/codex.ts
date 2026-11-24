@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate, type StdinHandle } from './process.ts';
 import type { EngineAdapter, EngineEvent, EngineResult, EngineRunOptions } from './types.ts';
+import type { Usage } from '@crew/protocol';
 
 /** A TOML value. JSON strings and arrays of strings are valid TOML. */
 function toml(value: unknown): string {
@@ -160,6 +161,9 @@ export const codex: EngineAdapter = {
       }
     };
 
+    let usage: Usage | undefined;
+    let usageBase: { input: number; output: number } | undefined;
+
     const run = await runJsonl({
       command: 'codex',
       args,
@@ -190,7 +194,18 @@ export const codex: EngineAdapter = {
         }
         const method = msg.method as string;
         const p = (msg.params ?? {}) as Record<string, unknown>;
-        if (method === 'turn/completed') {
+        if (method === 'thread/tokenUsage/updated') {
+          // total covers the whole Codex thread, earlier turns included: keep what this run added.
+          const t = p.tokenUsage as { total?: Record<string, number>; last?: Record<string, number> } | undefined;
+          if (t?.total && t.last) {
+            if (!usageBase) usageBase = { input: t.total.inputTokens - t.last.inputTokens, output: t.total.outputTokens - t.last.outputTokens };
+            usage = {
+              costUsd: null,
+              inputTokens: Math.max(0, t.total.inputTokens - usageBase.input),
+              outputTokens: Math.max(0, t.total.outputTokens - usageBase.output),
+            };
+          }
+        } else if (method === 'turn/completed') {
           closeSteer();
           const turn = p.turn as { status?: string; error?: { message?: string } | null };
           if (turn.status === 'completed') completed = true;
@@ -262,12 +277,12 @@ export const codex: EngineAdapter = {
     calls.clear();
 
     const durationMs = Date.now() - started;
-    if (run.aborted) return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs };
+    if (run.aborted) return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs, usage };
     if (!completed || failure) {
       const error = failure ?? lastError ?? (run.stderrTail || `codex exited with code ${run.exitCode}`);
-      return { ok: false, engineSessionId, finalText: lastText, error: notSignedInHint(error), resumeFailed, durationMs };
+      return { ok: false, engineSessionId, finalText: lastText, error: notSignedInHint(error), resumeFailed, durationMs, usage };
     }
-    return { ok: true, engineSessionId, finalText: lastText, durationMs };
+    return { ok: true, engineSessionId, finalText: lastText, durationMs, usage };
   },
 };
 

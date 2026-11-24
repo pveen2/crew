@@ -13,3 +13,4 @@ export const engines: Record<Engine, EngineAdapter> = {
 };
 
 export type * from './types.ts';
+export { addUsage } from './types.ts';

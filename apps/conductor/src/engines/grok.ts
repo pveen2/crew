@@ -17,7 +17,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate } from './process.ts';
-import type { EngineAdapter, EngineEvent, EngineResult, EngineRunOptions } from './types.ts';
+import { readUsage, type EngineAdapter, type EngineEvent, type EngineResult, type EngineRunOptions } from './types.ts';
+import type { Usage } from '@crew/protocol';
 
 const READ_TOOLS = ['read_file', 'grep', 'glob', 'list_dir', 'todo_write'];
 // x_search (posts on X) is part of web access: it reaches the same outside world as web search.
@@ -132,6 +133,7 @@ export const grok: EngineAdapter = {
     let thoughtBuf = '';
     let failure: string | undefined;
     let ended = false;
+    let usage: Usage | undefined;
     const emit = (e: EngineEvent) => opts.onEvent(e);
 
     // streaming-json sends text and thoughts in pieces; join them into whole messages.
@@ -193,6 +195,7 @@ export const grok: EngineAdapter = {
           case 'end':
             flush();
             ended = true;
+            usage = readUsage(msg.usage) ?? usage;
             if (typeof msg.sessionId === 'string' && msg.sessionId) {
               engineSessionId = msg.sessionId;
               if (!announced) emit({ kind: 'session', engineSessionId });
@@ -208,13 +211,13 @@ export const grok: EngineAdapter = {
     flush();
 
     const durationMs = Date.now() - started;
-    if (run.aborted) return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs };
+    if (run.aborted) return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs, usage };
     if (!ended || failure || run.exitCode !== 0) {
       const error = failure ?? (run.stderrTail || `grok exited with code ${run.exitCode}`);
       const resumeFailed = Boolean(opts.resumeId) && /not found|no such session|does not exist|unknown session/i.test(error + run.stderrTail);
-      return { ok: false, engineSessionId, finalText: lastText, error: notSignedInHint(error), resumeFailed, durationMs };
+      return { ok: false, engineSessionId, finalText: lastText, error: notSignedInHint(error), resumeFailed, durationMs, usage };
     }
-    return { ok: true, engineSessionId, finalText: lastText, durationMs };
+    return { ok: true, engineSessionId, finalText: lastText, durationMs, usage };
   },
 };
 
