@@ -468,30 +468,53 @@
 .cr-face circle.cr-face__disc {
   fill: var(--cr-face-color);
 }
-.cr-face .cr-face__eyes {
-  fill: var(--cr-face-eyes);
-  stroke: var(--cr-face-eyes);
+.cr-face .cr-face__ink {
+  fill: none;
+  stroke: var(--cr-face-ink);
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .cr-face--gm {
   --cr-face-color: var(--cr-face-gm);
 }
+.cr-face--developer {
+  --cr-face-color: var(--cr-face-developer);
+}
 .cr-face--store-manager {
   --cr-face-color: var(--cr-face-store-manager);
-}
-.cr-face--creative-strategist {
-  --cr-face-color: var(--cr-face-creative-strategist);
-}
-.cr-face--paid-media {
-  --cr-face-color: var(--cr-face-paid-media);
 }
 .cr-face--data-analyst {
   --cr-face-color: var(--cr-face-data-analyst);
 }
-.cr-face--seo {
-  --cr-face-color: var(--cr-face-seo);
+.cr-face--paid-media {
+  --cr-face-color: var(--cr-face-paid-media);
+}
+.cr-face--creative-strategist {
+  --cr-face-color: var(--cr-face-creative-strategist);
+}
+.cr-face--creative-producer {
+  --cr-face-color: var(--cr-face-creative-producer);
+}
+.cr-face--brand-reviewer {
+  --cr-face-color: var(--cr-face-brand-reviewer);
+}
+.cr-face--email-and-retention {
+  --cr-face-color: var(--cr-face-email-and-retention);
 }
 .cr-face--customer-care {
   --cr-face-color: var(--cr-face-customer-care);
+}
+.cr-face--social-and-community {
+  --cr-face-color: var(--cr-face-social-and-community);
+}
+.cr-face--finance-and-operations {
+  --cr-face-color: var(--cr-face-finance-and-operations);
+}
+.cr-face--seo-and-geo {
+  --cr-face-color: var(--cr-face-seo-and-geo);
+}
+.cr-face--dj {
+  --cr-face-color: var(--cr-face-dj);
 }
 /* Hover label for a face: fixed to the viewport so no container clips it. */
 .cr-tip {

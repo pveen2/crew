@@ -43,16 +43,23 @@
   --cr-green-50: #e6f4ec;
   --cr-green-600: #29845a;
 
-  /* Agent faces, bold colour (v5 option B) */
-  --cr-face-gm: #1f1f1f;
-  --cr-face-store-manager: #1f9d57;
-  --cr-face-creative-strategist: #d6336c;
-  --cr-face-paid-media: #6e4be0;
-  --cr-face-data-analyst: #e8682a;
-  --cr-face-seo: #0e9f8f;
-  --cr-face-customer-care: #2477e3;
+  /* Agent faces (crew-icons): disc colour per agent, ring and mouth in ink */
+  --cr-face-gm: #f0531f;
+  --cr-face-developer: #2f5bea;
+  --cr-face-store-manager: #1fae5b;
+  --cr-face-data-analyst: #f7c31c;
+  --cr-face-paid-media: #23a8f0;
+  --cr-face-creative-strategist: #f2408c;
+  --cr-face-creative-producer: #9acd2a;
+  --cr-face-brand-reviewer: #e0262e;
+  --cr-face-email-and-retention: #ff85b3;
+  --cr-face-customer-care: #10b0a3;
+  --cr-face-social-and-community: #d94fd3;
+  --cr-face-finance-and-operations: #c07f2c;
+  --cr-face-seo-and-geo: #138a4e;
+  --cr-face-dj: #8b4cf0;
   --cr-face-neutral: #8f8f8f;
-  --cr-face-eyes: #ffffff;
+  --cr-face-ink: #151515;
 
   /* ---------------------------------------------------------------- semantic: light panel surface */
   --cr-color-bg-app: var(--cr-gray-950);

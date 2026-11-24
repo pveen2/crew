@@ -65,10 +65,9 @@ Primitives
 - Accents: `--cr-red-500` #E5484D, `--cr-blue-600` #005BD3, `--cr-green-600`
   #29845A, `--cr-amber-*`, `--cr-red-50/700` (state colours for interrupted and
   failed, not in v5 but needed by real data)
-- Agent faces (sizes `--cr-size-face-xs` 18 … `-2xl` 36): `--cr-face-gm` #1F1F1F, `--cr-face-store-manager` #1F9D57,
-  `--cr-face-creative-strategist` #D6336C, `--cr-face-paid-media` #6E4BE0,
-  `--cr-face-data-analyst` #E8682A, `--cr-face-seo` #0E9F8F,
-  `--cr-face-customer-care` #2477E3, `--cr-face-neutral` #8F8F8F
+- Agent faces (sizes `--cr-size-face-xs` 18 … `-2xl` 36): one disc colour per agent,
+  `--cr-face-gm` #F0531F, `--cr-face-developer` #2F5BEA, `--cr-face-store-manager` #1FAE5B, `--cr-face-data-analyst` #F7C31C, `--cr-face-paid-media` #23A8F0, `--cr-face-creative-strategist` #F2408C, `--cr-face-creative-producer` #9ACD2A, `--cr-face-brand-reviewer` #E0262E, `--cr-face-email-and-retention` #FF85B3, `--cr-face-customer-care` #10B0A3, `--cr-face-social-and-community` #D94FD3, `--cr-face-finance-and-operations` #C07F2C, `--cr-face-seo-and-geo` #138A4E, `--cr-face-dj` #8B4CF0,
+  `--cr-face-neutral` #8F8F8F; ring and mouth `--cr-face-ink` #151515
 
 Semantic, white panel surface
 - Background: `--cr-color-bg-app`, `-bg-surface`, `-bg-surface-secondary`
@@ -116,7 +115,7 @@ Scales
 | `Icon` | The v5 line icons (Lucide-style, 1.6 stroke) |
 | `Badge` | Status chips ("Working · 3m", "Queued", "Interrupted") |
 | `Dot`, `Spinner`, `Shimmer` | Unread dot, notification dot, working spinner, shimmering "Thinking" text |
-| `Face`, `FaceStack` | Agent "little faces": one colour and eye shape per role, neutral fallback |
+| `Face`, `FaceStack` | Agent faces: colour disc, ink ring and one mouth per role; `state` (idle, working, thinking, needs-you, done) swaps the mouth; neutral fallback |
 | `Card`, `CardHeader`, `CardRow`, `CardRowButton`, `CardDetails`, `CardFooter` | Grouped subagent card, approval card, list cards |
 | `Panel`, `PanelHeader`, `PanelBody` | The white rounded panes and their 44/56px headers (headers drag the window) |
 | `Tabs` | Preview pane tabs |
