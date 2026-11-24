@@ -6,7 +6,9 @@
   "description": "Crew design system: tokens, layout primitives and components. Source-only; Vite compiles it.",
   "exports": {
     ".": "./src/index.ts",
-    "./styles.css": "./src/styles.css"
+    "./styles.css": "./src/styles.css",
+    "./tokens.css": "./src/tokens.css",
+    "./document.css": "./src/document.css"
   },
   "sideEffects": [
     "*.css"

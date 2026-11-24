@@ -79,6 +79,24 @@ function call(tool: string, args: Record<string, unknown>): Promise<string> {
   });
 }
 
+/**
+ * How an HTML document should be written. The app adds Crew's look (packages/ui/src/document.css)
+ * and turns attachments/ image paths into the images; keep this in step with that file.
+ */
+const HTML_GUIDE =
+  'HTML documents get the Crew app look automatically: write plain semantic HTML (h1, p.crew-lede, h2, table) ' +
+  'with no fonts, colours or page background of your own, unless the owner asked for a specific design or it is a mock-up of an ad or page. ' +
+  'Ready-made parts: <div class="crew-grid"> of <div class="crew-card">, each with <div class="crew-card-media"> (4:5) ' +
+  'holding an <img> or <span class="crew-placeholder">why there is no image</span>, then <div class="crew-card-body"> with ' +
+  '<p class="crew-card-title">, <div class="crew-tags"> of <span class="crew-tag">, <p class="crew-muted"> and ' +
+  '<div class="crew-actions"> with <a class="crew-button">. Variants are added next to the base class: ' +
+  'crew-card-media--square, crew-card-media--story (9:16), crew-card-media--wide (16:9), crew-card-media--contain (whole screenshot, not cropped); ' +
+  'crew-tag--strong, crew-tag--success, crew-tag--caution, crew-tag--critical; crew-button--primary. ' +
+  'Example: <div class="crew-card-media crew-card-media--contain">. Also <p class="crew-lede"> under the title, ' +
+  '<div class="crew-note"> for a caveat, and <div class="crew-stats"> of <div class="crew-stat"><b>83</b><span>days live</span></div>. ' +
+  'Images: use https URLs, or thread images by path: <img src="attachments/<file>">, which covers images the owner attached ' +
+  'and screenshots kept with the browser (agent_browser_screenshot with keep: true). No scripts: they do not run.';
+
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const fail = (err: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: String((err as Error)?.message ?? err) }] });
 
@@ -143,7 +161,9 @@ server.registerTool(
   {
     description:
       "Show a document in the owner's preview panel. Pass artifactId to show an artifact as it is (preferred for anything long), " +
-      'or content for something short. Markdown by default; html for layouts. Keep your chat reply short and refer to the preview.',
+      'or content for something short. Markdown by default; html for layouts and for anything with images (Markdown shows no images). ' +
+      'Keep your chat reply short and refer to the preview.\n\n' +
+      HTML_GUIDE,
     inputSchema: {
       title: z.string().optional().describe('Defaults to the artifact title'),
       artifactId: z.string().optional(),
@@ -161,7 +181,9 @@ if (CAN_SAVE_ARTIFACTS) {
     {
       description:
         'Save long work (a draft, table, audit, brief) and get an id back. Return the id with a short summary instead of the full text; ' +
-        'the GM shows it to the owner as it is or passes it to a colleague.',
+        'the GM shows it to the owner as it is or passes it to a colleague. Markdown by default; html for anything visual or with images ' +
+        '(Markdown shows no images).\n\n' +
+        HTML_GUIDE,
       inputSchema: {
         title: z.string().min(1),
         content: z.string().min(1),

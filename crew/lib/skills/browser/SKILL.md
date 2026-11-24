@@ -15,7 +15,13 @@ slower and costs more.
 3. Act on a ref (`click`, `fill`, `select`, `press`), then take a new
    snapshot. Refs change after every page update; never reuse old ones.
 4. Dismiss cookie banners with the "reject" or "necessary only" option.
-5. Close the session with `agent_browser_close` when you are done.
+5. To show the owner what a page shows (an ad, a product photo), take
+   `agent_browser_screenshot` with `keep: true` and a `selector` for just
+   that element. You get back `attachments/shot-….png`; list those paths in
+   your report so an HTML document can show them with
+   `<img src="attachments/shot-….png">`. Image URLs from a page often expire
+   or are blocked; a kept screenshot does not.
+6. Close the session with `agent_browser_close` when you are done.
 
 ## Rules
 

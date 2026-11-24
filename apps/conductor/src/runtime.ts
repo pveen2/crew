@@ -4,7 +4,7 @@
 // Specialists do not delegate further (one level, like eve).
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import type {
@@ -113,10 +113,15 @@ function syncAttachments(threadId: string, workdir: string): void {
   const src = join(paths.attachments, threadId);
   if (!existsSync(src)) return;
   const dest = join(workdir, 'attachments');
+  // The folder is the conductor's: anything else in its place (a link an agent made) is replaced.
+  const found = lstatSync(dest, { throwIfNoEntry: false });
+  if (found && !found.isDirectory()) rmSync(dest, { force: true });
   mkdirSync(dest, { recursive: true });
   for (const f of readdirSync(src)) {
+    // Dot files are images still being written (guard.ts).
+    if (f.startsWith('.')) continue;
     const to = join(dest, f);
-    if (existsSync(to)) continue;
+    if (lstatSync(to, { throwIfNoEntry: false })) continue;
     copyFileSync(join(src, f), to);
     chmodSync(to, 0o444);
   }
@@ -707,6 +712,11 @@ export class Runtime {
       }
       // Codex and Grok sessions run with their own HOME; MCP servers like the Shopify CLI need the real one.
       env.HOME = REAL_HOME;
+      // Where a connection may keep images for this thread (the browser's screenshot keep: true).
+      // They sit with the owner's attachments, so every agent's attachments/ folder gets them.
+      env.CREW_IMAGES_DIR = join(paths.attachments, session.threadId);
+      // Keeps each session's browser tabs to itself (guard.ts suffixes the browser session names).
+      env.CREW_BROWSER_SCOPE = session.id;
       servers[name] = {
         command: c.command,
         args: c.args ?? [],
@@ -1111,6 +1121,8 @@ export class Runtime {
 
     const started = Date.now();
     const outcome = await this.enqueueTurn(child.id, prompt, { turnId: childTurnId, callerSessionId: caller.id, signal });
+    // Images the specialist kept (attachments/shot-…) are needed by the caller in this same turn.
+    syncAttachments(caller.threadId, caller.workdir);
 
     this.emit(caller, callerTurnId, {
       type: 'subagent_done',

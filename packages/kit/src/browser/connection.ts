@@ -9,12 +9,15 @@ import { defineConnection } from '@crew/sdk/define';
 // - The allow-list below: no JavaScript eval, no saved logins or profiles, no
 //   uploads, no files on disk, no network or cookie tools. Screenshots are
 //   allowed: the image comes back inline, so the agent can see what a page
-//   shows (ad references, product photos) instead of only its text.
+//   shows (ad references, product photos) instead of only its text. With
+//   keep: true guard.ts also saves it for the thread, so it can be shown to
+//   the owner in a document.
 // - config.json: page text comes back wrapped in boundary markers and capped
 //   in size, so a page is harder to mistake for instructions.
 // - guard.ts: cuts any result over 30,000 characters (raw reads ignore the
 //   config cap), strips the screenshot path arguments so nothing is written
-//   where the agent chooses, and deletes agent-browser's own temp copy.
+//   where the agent chooses, deletes agent-browser's own temp copy, and
+//   saves kept screenshots in the thread's image folder (CREW_IMAGES_DIR).
 // - Who gets it: never an agent that also holds store or customer data. A page
 //   could talk such an agent into sending that data out.
 //
@@ -37,7 +40,7 @@ const READ = [
   'agent_browser_forward',
   'agent_browser_reload',
   'agent_browser_close',
-  // Inline image only; guard.ts keeps it off disk.
+  // Inline image; guard.ts keeps it off disk unless the agent asks to keep it for the thread.
   'agent_browser_screenshot',
 ];
 
