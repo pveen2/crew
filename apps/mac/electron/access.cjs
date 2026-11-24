@@ -137,4 +137,7 @@ async function ensureAccess(conductorUrl, home) {
   }
 }
 
-module.exports = { ensureAccess };
+/** The current Access login, for requests the main process makes itself. */
+const accessToken = () => token;
+
+module.exports = { ensureAccess, accessToken };

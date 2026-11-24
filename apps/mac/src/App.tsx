@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { Banner, IconButton } from '@crew/ui';
 import { navigate, openUrl, toggleSidebar, useApp } from './store';
 import { Sidebar } from './components/Sidebar';
+import { ServerLoginDialog } from './components/ServerLoginDialog';
 import { ThreadView } from './components/ThreadView';
 import { InboxView } from './components/InboxView';
 import { AgentsView } from './components/AgentsView';
@@ -48,6 +49,7 @@ export function App() {
           onClick={() => toggleSidebar()}
         />
       </header>
+      <ServerLoginDialog />
       <div className="app-body">
       <Sidebar />
       <div className="workspace">

@@ -10,6 +10,8 @@ import { paths, sharedEngineHome } from './config.ts';
 import { engines } from './engines/index.ts';
 
 import { readScopes, writeScopes } from '@crew/kit/shopify';
+import type { ServerLogin } from '@crew/protocol';
+import { startLogin } from './server-login.ts';
 
 /** No Terminal to open for sign-ins: a conductor on a (Linux) server. */
 const onServer = process.platform !== 'darwin';
@@ -100,7 +102,8 @@ const defs: Def[] = [
     id: 'codex',
     label: 'Codex',
     install: 'npm install -g @openai/codex',
-    signIn: engineSignIn('codex'),
+    // A server has no browser to return to: Codex's device sign-in (a link and a code).
+    signIn: () => `${engineSignIn('codex')()}${onServer ? ' --device-auth' : ''}`,
     async check() {
       const r = await run('codex', ['login', 'status'], { CODEX_HOME: paths.engines.codex });
       const c = common(r, 'Codex');
@@ -200,8 +203,9 @@ export function connections(refresh = false): Promise<ConnectionStatus[]> {
       const now = Date.now();
       cache = active.map((d, i) => {
         const c = checks[i]!;
-        // A server has no Terminal to open: its admin signs engines in over ssh.
-        const canSignIn = !onServer && (d.id !== 'shopify' || Boolean(store)) &&
+        // On a server only admins may (see server.ts); the sign-in then runs there.
+        // Antigravity signs in through its interactive app, which a server cannot show.
+        const canSignIn = !(onServer && d.id === 'antigravity') && (d.id !== 'shopify' || Boolean(store)) &&
           (c.status === 'missing' ? Boolean(d.install) : c.status !== 'connected' && Boolean(d.signIn));
         return { id: d.id, label: d.label, ...c, usedBy: users[d.id], canSignIn, ...(onServer ? { onServer } : {}), checkedAt: now };
       });
@@ -218,7 +222,11 @@ export function connections(refresh = false): Promise<ConnectionStatus[]> {
  * missing). The command is built here from fixed pieces; the app only names
  * which connection.
  */
-export async function signIn(id: string): Promise<void> {
+/**
+ * Opens the sign-in (or install) in Terminal on a Mac. On a server it runs
+ * there instead and returns what the app shows the person (server-login.ts).
+ */
+export async function signIn(id: string): Promise<ServerLogin | null> {
   const d = defs.find((x) => x.id === id);
   if (!d) throw new Error(`No such connection: ${id}`);
   let store = '';
@@ -243,7 +251,10 @@ export async function signIn(id: string): Promise<void> {
     `set -o pipefail; cd ~ && ${steps.join(' && ')} ` +
     `&& { echo; echo 'Done. You can close this window.'; } || { echo; echo 'That did not work. See the messages above.'; }`;
 
-  if (onServer) throw new Error('Engines sign in on the server, not from the app.');
+  if (onServer) {
+    cache = null;
+    return startLogin(id, d.label, script);
+  }
   const r = await run('osascript', [
     '-e', 'on run argv',
     '-e', 'tell application "Terminal"',
@@ -255,4 +266,5 @@ export async function signIn(id: string): Promise<void> {
   ]);
   if (!r.ok) throw new Error(`Could not open Terminal: ${r.out}`);
   cache = null;
+  return null;
 }

@@ -278,6 +278,25 @@ export const DEFAULT_PORT = 4317;
 /** An outside tool Crew depends on: an engine CLI or a service the agents reach. */
 export type ConnectionId = 'claude' | 'codex' | 'grok' | 'antigravity' | 'shopify' | 'browser';
 
+/** A sign-in running on a server, started from the app (admins only). */
+export interface ServerLogin {
+  id: string;
+  connection: string;
+  label: string;
+  /** The page to open in the browser. */
+  url?: string;
+  /** A one-time code to enter on that page (device sign-in). */
+  code?: string;
+  /** The CLI waits for a code the person copies from the page. */
+  needsInput: boolean;
+  /** The page sends the browser back to 127.0.0.1 on this port; the app passes it on. */
+  callbackPort?: number;
+  /** The last lines the CLI printed, for when something goes wrong. */
+  output?: string;
+  done: boolean;
+  ok?: boolean;
+}
+
 export interface ConnectionStatus {
   id: ConnectionId;
   label: string;

@@ -15,7 +15,8 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
-const { ensureAccess } = require('./access.cjs');
+const { ensureAccess, accessToken } = require('./access.cjs');
+const { createServer } = require('node:http');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
 const APP_FILE = join(__dirname, '..', 'dist', 'index.html');
@@ -215,6 +216,42 @@ ipcMain.handle('crew:team-apply', async () => {
   } catch (err) {
     return String(err.message || err);
   }
+});
+
+// A sign-in running on a server (an engine or Shopify) may send the browser back
+// to 127.0.0.1:<port>, where the CLI listens, but on the server. Listen on
+// that port on this Mac for a while and pass the address on to the server.
+const relays = new Map();
+ipcMain.handle('crew:login-relay', async (event, port, loginId) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url)) return 'Not allowed.';
+  if (!Number.isInteger(port) || port < 1024 || port > 65535 || typeof loginId !== 'string') return 'Bad sign-in.';
+  const info = conductorInfo();
+  if (!info) return 'Not connected to the server.';
+  relays.get(port)?.close();
+  const server = createServer(async (req, res) => {
+    const text = `http://127.0.0.1:${port}${req.url}`;
+    let ok = false;
+    try {
+      const token = accessToken();
+      const r = await fetch(`${info.url}/api/logins/${encodeURIComponent(loginId)}/input`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${info.token}`, ...(token ? { 'cf-access-token': token } : {}) },
+        body: JSON.stringify({ text }),
+      });
+      ok = r.ok;
+    } catch {}
+    res.writeHead(ok ? 200 : 502, { 'content-type': 'text/html; charset=utf-8' });
+    res.end(`<!doctype html><meta charset="utf-8"><title>Crew</title><body style="font:16px -apple-system,system-ui,sans-serif;display:grid;place-items:center;height:90vh"><div style="text-align:center"><h2>${ok ? 'Done' : 'That did not work'}</h2><p>${ok ? 'You can close this tab and go back to Crew.' : 'Go back to Crew and try again.'}</p></div>`);
+    if (ok) setTimeout(() => server.close(), 1000);
+  });
+  relays.set(port, server);
+  setTimeout(() => server.close(), 15 * 60_000).unref();
+  server.on('close', () => relays.get(port) === server && relays.delete(port));
+  return await new Promise((resolve) => {
+    server.once('error', (err) => resolve(`Could not listen on port ${port} for the sign-in: ${err.message}`));
+    server.listen(port, '127.0.0.1', () => resolve(null));
+  });
 });
 
 // Where Crew runs: on this Mac (its own conductor) or on a server.
