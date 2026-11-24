@@ -239,7 +239,15 @@ export async function signIn(id: string): Promise<void> {
     `set -o pipefail; cd ~ && ${steps.join(' && ')} ` +
     `&& { echo; echo 'Done. You can close this window.'; } || { echo; echo 'That did not work. See the messages above.'; }`;
 
-  if (process.platform !== 'darwin') throw new Error(`Run this in a terminal: ${script}`);
+  if (process.platform !== 'darwin') {
+    // A conductor on a server: the button cannot open a terminal there.
+    const login = { claude: 'claude', codex: 'codex', grok: 'grok', antigravity: 'antigravity' }[id as string];
+    throw new Error(
+      login
+        ? `${d.label} signs in on the server, once: ssh in, then run \`sudo -iu crew\`, \`cd crew-app\` and \`pnpm crew login ${login}\`.`
+        : `${d.label} is set up on the server, once: ssh in as the server admin and run, as the crew user: ${script}`,
+    );
+  }
   const r = await run('osascript', [
     '-e', 'on run argv',
     '-e', 'tell application "Terminal"',
