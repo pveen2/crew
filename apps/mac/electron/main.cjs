@@ -334,6 +334,9 @@ const releaseUpdates = (() => {
     ({ autoUpdater: updater } = require('electron-updater'));
     updater.autoDownload = signed;
     updater.autoInstallOnAppQuit = signed;
+    // Releases are plain versions (v0.1.7). A local build such as 0.1.6-local.1 would otherwise
+    // look only for "local" pre-releases and never offer an update.
+    updater.allowPrerelease = false;
     // Errors are logged once, by the 'error' handler below.
     updater.logger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
     updater.on('update-available', (info) => {
