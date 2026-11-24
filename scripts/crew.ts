@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
 import type { ConductorInfo, CrewEvent, Engine, ServerMessage, StateResponse, Thread, ThreadDetailResponse } from '@crew/protocol';
@@ -320,7 +320,7 @@ async function main() {
       }
       const evals = listEvalFiles();
       console.log(`${bold('Evals')} ${dim(`(${evals.length})`)}  ${evals.map((e) => e.id).join(', ') || dim('none')}`);
-      console.log(dim(`\nEngine sign-in: ${sharedEngineHome ? 'shared with your personal setup (dev mode)' : `Crew's own, in ${join(paths.home, 'engines')}`}`));
+      console.log(dim(`\nEngine sign-in: ${sharedEngineHome ? 'shared with your personal setup (dev mode)' : `Crew's own, in ${dirname(paths.engines.claude)}`}`));
       return;
     }
 

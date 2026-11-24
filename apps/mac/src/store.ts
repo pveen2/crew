@@ -134,6 +134,15 @@ export interface AppState {
   inboxRead: Record<string, true>;
   /** Threads that could not be loaded (missing or failed), with the reason. */
   loadErrors: Record<string, string>;
+  /** What the New thread screen opens with once ("Run again" from a thread). */
+  newDraft: NewThreadDraft | null;
+}
+
+export interface NewThreadDraft {
+  text: string;
+  role?: string;
+  /** Specialists switched off. */
+  benched: string[];
 }
 
 function viewFromHash(): View {
@@ -218,6 +227,7 @@ let state: AppState = {
   inboxFilter: 'all',
   inboxRead: loadRead(),
   loadErrors: {},
+  newDraft: null,
 };
 
 const listeners = new Set<() => void>();
@@ -564,8 +574,9 @@ export function attachmentUrl(threadId: string, file: string): Promise<string> {
   return p;
 }
 
-export async function createThread(text: string, role?: string, files?: File[]): Promise<void> {
-  const t = await api<Thread>('POST', '/api/threads', { text, role, attachments: await toUploads(files) });
+/** `benched`: specialists switched off for this thread; the lead cannot call them. */
+export async function createThread(text: string, role?: string, files?: File[], benched: string[] = []): Promise<void> {
+  const t = await api<Thread>('POST', '/api/threads', { text, role, attachments: await toUploads(files), benched });
   set((s) => ({ threads: { ...s.threads, [t.id]: t } }));
   navigate({ name: 'thread', threadId: t.id });
 }
@@ -583,6 +594,27 @@ export async function editQueuedMessage(messageId: number, text: string): Promis
 /** Take back a queued message before the agent has it. */
 export async function removeQueuedMessage(messageId: number): Promise<void> {
   await api('POST', `/api/messages/${messageId}/remove`);
+}
+
+/**
+ * Open New thread with this thread's first question and team, to try it again
+ * with other specialists switched off. Attached images are not carried over.
+ */
+export function runAgain(threadId: string): void {
+  const thread = state.threads[threadId] ?? state.done[threadId];
+  const detail = state.details[threadId];
+  if (!thread || !detail) return;
+  const root = detail.sessions[thread.rootSessionId];
+  const first = detail.events.find((e) => e.type === 'message' && e.role === 'user' && e.sessionId === thread.rootSessionId);
+  set({ newDraft: { text: first?.type === 'message' ? first.text : thread.title, role: root?.role, benched: thread.benched ?? [] } });
+  navigate({ name: 'new', role: root?.role });
+}
+
+/** The New thread screen takes its draft once. */
+export function takeNewDraft(): NewThreadDraft | null {
+  const d = state.newDraft;
+  if (d) set({ newDraft: null });
+  return d;
 }
 
 export async function resumeThread(threadId: string): Promise<void> {

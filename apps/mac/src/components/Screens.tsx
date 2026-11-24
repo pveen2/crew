@@ -9,12 +9,13 @@ import {
   Composer,
   Icon,
   IconButton,
+  InlineStack,
   ListItem,
   Panel,
   PanelHeader,
   Text,
 } from '@crew/ui';
-import { createThread, navigate, useApp } from '../store';
+import { createThread, navigate, takeNewDraft, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
 import { RoleFace, RoleFaces, age, useNow } from './common';
 
@@ -23,9 +24,16 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
   // Example questions come from the team (suggestions in crew.config.ts).
   const suggestions = useApp((s) => s.suggestions);
   const online = useApp((s) => s.connection === 'online');
-  const [text, setText] = useState('');
+  // "Run again" from a thread opens this screen with its question and team.
+  const [draft] = useState(takeNewDraft);
+  const [text, setText] = useState(draft?.text ?? '');
   const images = useAttachments();
-  const [role, setRole] = useState(initialRole ?? 'gm');
+  const lead = roles.find((r) => r.isLead)?.name ?? 'gm';
+  const [role, setRole] = useState(draft?.role ?? initialRole ?? lead);
+  const [benched, setBenched] = useState<string[]>(draft?.benched ?? []);
+  // Only the lead calls specialists, so the team row is for threads it owns.
+  const specialists = role === lead ? roles.filter((r) => !r.isLead) : [];
+  const toggle = (name: string) => setBenched((b) => (b.includes(name) ? b.filter((n) => n !== name) : [...b, name]));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -35,9 +43,10 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
     setBusy(true);
     setError('');
     try {
-      await createThread(text.trim(), role, images.files);
+      await createThread(text.trim(), role, images.files, role === lead ? benched.filter((n) => specialists.some((s) => s.name === n)) : []);
       setText('');
       images.clear();
+      setBenched([]);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -82,6 +91,29 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
                 <IconButton tone="primary" icon="arrowUp" label="Start thread" disabled={(!text.trim() && !images.files.length) || busy || !online} onClick={() => void submit()} />
               }
             />
+            {specialists.length > 0 && (
+              <InlineStack gap="100" wrap className="team-toggles" role="group" aria-label="Specialists in this thread">
+                <Text as="span" variant="bodySm" tone="secondary" className="to-label">
+                  Team
+                </Text>
+                {specialists.map((r) => {
+                  const off = benched.includes(r.name);
+                  return (
+                    <button
+                      key={r.name}
+                      type="button"
+                      className={`team-toggle${off ? ' team-toggle--off' : ''}`}
+                      aria-pressed={!off}
+                      title={off ? `${r.label} is off for this thread. Click to switch on.` : `Switch ${r.label} off for this thread`}
+                      onClick={() => toggle(r.name)}
+                    >
+                      <RoleFace role={r.name} size="xs" decorative />
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </InlineStack>
+            )}
             {error || images.error ? (
               <Text variant="bodySm" tone="critical">
                 {error || images.error}

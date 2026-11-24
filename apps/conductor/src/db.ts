@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS threads (
   root_session_id TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
-  archived INTEGER NOT NULL DEFAULT 0
+  archived INTEGER NOT NULL DEFAULT 0,
+  benched TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -131,7 +132,17 @@ function toThread(r: Row): Omit<Thread, 'roles' | 'statusText'> {
     createdAt: Number(r.created_at),
     updatedAt: Number(r.updated_at),
     archived: Boolean(r.archived),
+    benched: parseList(r.benched),
   };
+}
+
+function parseList(v: SQLInputValue | undefined): string[] {
+  try {
+    const list = JSON.parse(String(v ?? '[]')) as unknown;
+    return Array.isArray(list) ? list.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 export interface SessionRow extends Session {
@@ -229,6 +240,7 @@ export class Store {
       'ALTER TABLE turns ADD COLUMN pid INTEGER',
       "ALTER TABLE inbox ADD COLUMN role TEXT NOT NULL DEFAULT ''",
       'ALTER TABLE inbox ADD COLUMN preview_id TEXT',
+      "ALTER TABLE threads ADD COLUMN benched TEXT NOT NULL DEFAULT '[]'",
     ]) {
       try {
         this.db.exec(sql);
@@ -252,8 +264,8 @@ export class Store {
 
   insertThread(t: Omit<Thread, 'roles' | 'statusText'>): void {
     this.run(
-      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived) VALUES (?,?,?,?,?,?,?)',
-      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0,
+      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched) VALUES (?,?,?,?,?,?,?,?)',
+      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched),
     );
   }
   thread(id: string): Omit<Thread, 'roles' | 'statusText'> | undefined {

@@ -22,6 +22,8 @@ export interface Thread {
   roles: string[];
   /** One line for the sidebar: what is happening now ("Needs you", "Store manager: using shopify_query", …). */
   statusText: string;
+  /** Specialists switched off for this thread: the lead cannot call them. */
+  benched: string[];
 }
 
 export interface Session {
@@ -174,6 +176,8 @@ export interface RoleSummary {
   engine: Engine;
   model: string;
   permissions: Permissions;
+  /** The lead (agent/agent.ts). Every other agent is a specialist it can call. */
+  isLead: boolean;
 }
 
 export interface AgentActivity {
@@ -214,6 +218,8 @@ export interface CreateThreadRequest {
   attachments?: AttachmentUpload[];
   /** Agent that owns the thread. Defaults to the lead (agent/agent.ts). */
   role?: string;
+  /** Specialists to switch off for this thread (agent names). */
+  benched?: string[];
 }
 
 export interface SendMessageRequest {

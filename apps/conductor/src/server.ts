@@ -89,7 +89,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (req.method === 'POST' && !id) {
           const body = await readJson<CreateThreadRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments));
+          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : []));
         }
         if (req.method === 'GET' && id && !action) {
           const detail = runtime.threadDetail(id);
