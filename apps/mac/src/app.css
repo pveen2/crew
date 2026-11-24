@@ -811,3 +811,39 @@ body,
 .working-line {
   min-height: 24px;
 }
+
+/* Browser tab in the preview panel */
+.doc-frame webview {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.web-address {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.web-address input {
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--cr-space-300);
+  border: 0;
+  border-radius: var(--cr-radius-300);
+  background: var(--cr-color-bg-fill-hover);
+  color: var(--cr-color-text);
+  font: inherit;
+  outline: none;
+}
+.web-address input:focus {
+  box-shadow: 0 0 0 2px var(--cr-color-border-focus);
+}
+.web-tab {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.web-tab[hidden] {
+  display: none;
+}

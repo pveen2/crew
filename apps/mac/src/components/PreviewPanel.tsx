@@ -1,6 +1,6 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { IconButton, InlineStack, Panel, PanelHeader, SegmentedControl, Tabs, Text } from '@crew/ui';
-import { closePreview, selectPreview, setPreviewDevice, togglePreview, useApp, type PreviewDoc } from '../store';
+import { closePreview, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
 import { Markdown, RoleFace, ago, useRoleLabel } from './common';
 
 /** show_preview documents plus subagent results opened from a card, oldest first. */
@@ -35,12 +35,117 @@ export function DocSourceBar({ doc, children }: { doc: PreviewDoc; children?: Re
   );
 }
 
-/** Renders one document: Markdown, or HTML in a sandboxed frame. */
-export function DocView({ doc, device = 'desktop' }: { doc: PreviewDoc; device?: 'desktop' | 'phone' }) {
+/** The Electron <webview> methods the browser tab uses. */
+interface WebviewElement extends HTMLWebViewElement {
+  getURL(): string;
+  canGoBack(): boolean;
+  canGoForward(): boolean;
+  goBack(): void;
+  goForward(): void;
+  reload(): void;
+  loadURL(url: string): Promise<void>;
+}
+
+/** "ads.meta.com", "https://…" or "glossier ads" → a URL to load. */
+function toUrl(input: string): string {
+  const text = input.trim();
+  if (/^https?:\/\//i.test(text)) return text;
+  if (/^[^\s]+\.[a-z]{2,}(\/|$)/i.test(text)) return `https://${text}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(text)}`;
+}
+
+/** A browser tab: back, forward, reload, the address and "open in browser", above the page. */
+function WebDoc({ doc, threadId, hidden = false }: { doc: PreviewDoc; threadId: string; hidden?: boolean }) {
+  const ref = useRef<WebviewElement>(null);
+  // Load the first URL once; later navigation is the page's own, and `content` only remembers it.
+  const [src] = useState(doc.content);
+  const [address, setAddress] = useState(doc.content);
+  const [nav, setNav] = useState({ back: false, forward: false, loading: true });
+
+  useEffect(() => {
+    const view = ref.current;
+    if (!view) return;
+    const sync = () => {
+      const url = view.getURL();
+      setAddress(url);
+      setNav((n) => ({ ...n, back: view.canGoBack(), forward: view.canGoForward() }));
+      if (/^https?:/.test(url)) updateWebPreview(threadId, doc.id, { content: url });
+    };
+    const title = (e: Event) => updateWebPreview(threadId, doc.id, { title: (e as Event & { title: string }).title });
+    const start = () => setNav((n) => ({ ...n, loading: true }));
+    const stop = () => setNav((n) => ({ ...n, loading: false }));
+    view.addEventListener('did-navigate', sync);
+    view.addEventListener('did-navigate-in-page', sync);
+    view.addEventListener('page-title-updated', title);
+    view.addEventListener('did-start-loading', start);
+    view.addEventListener('did-stop-loading', stop);
+    return () => {
+      view.removeEventListener('did-navigate', sync);
+      view.removeEventListener('did-navigate-in-page', sync);
+      view.removeEventListener('page-title-updated', title);
+      view.removeEventListener('did-start-loading', start);
+      view.removeEventListener('did-stop-loading', stop);
+    };
+  }, [threadId, doc.id]);
+
+  return (
+    <div className="web-tab" hidden={hidden}>
+      <InlineStack gap="100" paddingBlock="200" paddingInline="400" className="preview-bar">
+        <IconButton icon="chevronLeft" label="Back" iconSize={14} disabled={!nav.back} onClick={() => ref.current?.goBack()} />
+        <IconButton icon="chevronRight" label="Forward" iconSize={14} disabled={!nav.forward} onClick={() => ref.current?.goForward()} />
+        <IconButton icon={nav.loading ? 'close' : 'reload'} label="Reload" iconSize={14} onClick={() => ref.current?.reload()} />
+        <form
+          className="web-address"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const url = toUrl(address);
+            setAddress(url);
+            void ref.current?.loadURL(url);
+          }}
+        >
+          <input aria-label="Address" value={address} spellCheck={false} onChange={(e) => setAddress(e.target.value)} onFocus={(e) => e.target.select()} />
+        </form>
+        <IconButton
+          icon="arrowUpRight"
+          label="Open in browser"
+          iconSize={14}
+          onClick={() => void window.crewHost?.openExternal?.(ref.current?.getURL() || doc.content)}
+        />
+      </InlineStack>
+      <div className="doc-frame">
+        {/* allowpopups as a string: React drops `true` on an attribute it does not know. Popups become new tabs (main.cjs). */}
+        <webview ref={ref} src={src} partition="persist:crew-browser" {...({ allowpopups: 'true' } as object)} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Web links in an HTML document open as new tabs (the browser tab in the panel), never inside the
+ * frame: most sites refuse to be framed and the preview would go blank. Links within the report
+ * (#section) are left alone.
+ */
+function withLinksInNewTabs(html: string): string {
+  const parsed = new DOMParser().parseFromString(html, 'text/html');
+  for (const a of parsed.querySelectorAll('a[href], area[href]')) {
+    if (/^https?:\/\//i.test(a.getAttribute('href') ?? '')) a.setAttribute('target', '_blank');
+  }
+  const dt = parsed.doctype;
+  const doctype = dt
+    ? `<!DOCTYPE ${dt.name}${dt.publicId ? ` PUBLIC "${dt.publicId}"` : ''}${dt.systemId ? `${dt.publicId ? '' : ' SYSTEM'} "${dt.systemId}"` : ''}>`
+    : '';
+  return doctype + parsed.documentElement.outerHTML;
+}
+
+/** Renders one document: Markdown, HTML in a sandboxed frame, or a web page. */
+export function DocView({ doc, device = 'desktop', threadId }: { doc: PreviewDoc; device?: 'desktop' | 'phone'; threadId?: string }) {
+  const html = useMemo(() => (doc.format === 'html' ? withLinksInNewTabs(doc.content) : ''), [doc.format, doc.content]);
+  if (doc.format === 'web' && threadId) return <WebDoc key={doc.id} doc={doc} threadId={threadId} />;
   return (
     <div className={`doc-frame doc-frame--${device}`}>
       {doc.format === 'html' ? (
-        <iframe title={doc.title} sandbox="" srcDoc={doc.content} />
+        // Popups are allowed only so target="_blank" links reach the window-open handler, which opens them in the browser.
+        <iframe title={doc.title} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={html} />
       ) : (
         <div className="doc-scroll">
           <Markdown text={doc.content} className="md--doc" />
@@ -71,7 +176,7 @@ export function PreviewPanel({ threadId, docs }: { threadId: string; docs: Previ
         {doc ? (
           <IconButton
             icon={copied ? 'check' : 'copy'}
-            label={copied ? 'Copied' : 'Copy document'}
+            label={copied ? 'Copied' : doc.format === 'web' ? 'Copy link' : 'Copy document'}
             iconSize={14}
             onClick={() => {
               void navigator.clipboard.writeText(doc.content);
@@ -82,7 +187,13 @@ export function PreviewPanel({ threadId, docs }: { threadId: string; docs: Previ
         ) : null}
         <IconButton icon="close" label="Close preview" iconSize={14} onClick={() => togglePreview(false)} />
       </PanelHeader>
-      {doc ? (
+      {/* Every browser tab stays mounted, hidden when another tab is selected, so its page and history survive. */}
+      {docs
+        .filter((d) => d.format === 'web')
+        .map((d) => (
+          <WebDoc key={d.id} doc={d} threadId={threadId} hidden={d.id !== doc?.id} />
+        ))}
+      {doc && doc.format !== 'web' ? (
         <>
           <DocSourceBar doc={doc}>
             {/* Desktop/Phone only matters for layouts; a Markdown document just reads at full width. */}

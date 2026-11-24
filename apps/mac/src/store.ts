@@ -63,6 +63,8 @@ declare global {
       /** New commits for a GitHub team, or null. */
       teamCheck?: () => Promise<UpdateInfo | null>;
       teamApply?: () => Promise<string | null>;
+      openExternal?: (url: string) => Promise<void>;
+      onOpenUrl?: (cb: (url: string) => void) => () => void;
     };
   }
 }
@@ -87,7 +89,8 @@ export type View =
 export interface PreviewDoc {
   id: string;
   title: string;
-  format: 'markdown' | 'html';
+  /** 'web' is a browser tab: `content` is its current URL. */
+  format: 'markdown' | 'html' | 'web';
   content: string;
   from: string;
   ts: number;
@@ -640,6 +643,30 @@ export function openAsPreview(threadId: string, doc: PreviewDoc): void {
       previewOpen: true,
     };
   });
+}
+
+/** Opens a web link in a browser tab of the open thread's preview panel, or in the system browser. */
+export function openUrl(url: string): void {
+  const view = state.view;
+  if (view.name !== 'thread') {
+    void window.crewHost?.openExternal?.(url);
+    return;
+  }
+  let title = url;
+  try {
+    title = new URL(url).hostname.replace(/^www\./, '');
+  } catch {}
+  openAsPreview(view.threadId, { id: `web-${Date.now()}`, title, format: 'web', content: url, from: '', ts: Date.now() });
+}
+
+/** A browser tab moved to another page or got its title; keeps its place in the tab order. */
+export function updateWebPreview(threadId: string, id: string, patch: { title?: string; content?: string }): void {
+  set((s) => ({
+    extraPreviews: {
+      ...s.extraPreviews,
+      [threadId]: (s.extraPreviews[threadId] ?? []).map((d) => (d.id === id ? { ...d, ...patch } : d)),
+    },
+  }));
 }
 
 export function togglePreview(open?: boolean): void {

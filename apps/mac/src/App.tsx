@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Banner, IconButton } from '@crew/ui';
-import { navigate, toggleSidebar, useApp } from './store';
+import { navigate, openUrl, toggleSidebar, useApp } from './store';
 import { Sidebar } from './components/Sidebar';
 import { ThreadView } from './components/ThreadView';
 import { InboxView } from './components/InboxView';
@@ -13,6 +13,8 @@ export function App() {
   const connection = useApp((s) => s.connection);
   const startError = useApp((s) => s.conductorStartError);
   const collapsed = useApp((s) => s.sidebarCollapsed);
+
+  useEffect(() => window.crewHost?.onOpenUrl?.(openUrl), []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
