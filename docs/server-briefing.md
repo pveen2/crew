@@ -125,7 +125,7 @@ something here can't be done, stop and ask instead of loosening it.
 
 - `nmap -Pn -p- <server IPv4>` and the IPv6 address from outside: everything
   filtered.
-- `crew.<domain>` without Access login → Cloudflare login page; signed in
+- `crew.paul.studio` without Access login → Cloudflare login page; signed in
   without the token → 401.
 - `ssh.<domain>` works for the owner, is refused for a teammate's email.
 - Hetzner console login works (break-glass).
@@ -295,9 +295,9 @@ header too; test that through the tunnel.)
 
 - Install `cloudflared`, create a remotely managed tunnel, and run it with its
   token (`cloudflared service install <token>`). Public hostnames:
-  `crew.<domain>` → `http://127.0.0.1:4317` and `ssh.<domain>` → `ssh://localhost:22`.
+  `crew.paul.studio` → `http://127.0.0.1:4317` and `ssh.<domain>` → `ssh://localhost:22`.
   WebSockets work through tunnels by default.
-- Zero Trust → Access → Applications → self-hosted app on `crew.<domain>` for
+- Zero Trust → Access → Applications → self-hosted app on `crew.paul.studio` for
   the team and a separate one on `ssh.<domain>` for the owner only, with the
   policies from the Security baseline (MFA identity provider, no PIN-only,
   binding cookie). Copy the app's **AUD tag**
@@ -347,9 +347,9 @@ days, on top of Hetzner backups.
 Give each teammate:
 
 1. Crew.app (DMG from Releases).
-2. Team screen → Server: `https://crew.<domain>` and the `CREW_TOKEN` (share it
+2. Team screen → Server: `https://crew.paul.studio` and the `CREW_TOKEN` (share it
    through a password manager). Before A4's Server field ships:
-   `~/.crew/app.json` → `{ "conductorUrl": "https://crew.<domain>", "token": "…" }`.
+   `~/.crew/app.json` → `{ "conductorUrl": "https://crew.paul.studio", "token": "…" }`.
 3. First launch opens the Cloudflare sign-in.
 
 Teammates don't install or sign in to any engine CLI themselves; the server does
