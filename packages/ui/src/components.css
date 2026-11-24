@@ -591,8 +591,8 @@
 .cr-card__row--spacious {
   padding: var(--cr-space-300) var(--cr-space-350);
 }
+/* Details belong to the row above them, so no divider between the two. */
 .cr-card__row + .cr-card__row,
-.cr-card__row + .cr-card__details,
 .cr-card__details + .cr-card__row {
   border-top: 1px solid var(--cr-color-border-faint);
 }

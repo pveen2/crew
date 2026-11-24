@@ -10,6 +10,9 @@ import { defineConnection } from '@crew/sdk/define';
 //   uploads, no screenshots or files on disk, no network or cookie tools.
 // - config.json: page text comes back wrapped in boundary markers and capped
 //   in size, so a page is harder to mistake for instructions.
+// - guard.ts: cuts any result over 30,000 characters (raw reads ignore the
+//   config cap) and strips screenshot file paths, so nothing is written where
+//   the agent chooses.
 // - Who gets it: never an agent that also holds store or customer data. A page
 //   could talk such an agent into sending that data out.
 //
@@ -59,9 +62,17 @@ export const browserConnection = (opts: BrowserOptions) =>
     description:
       'Headless browser for pages that web fetch cannot read (forms, calculators, JavaScript-only pages)' +
       (opts.allowedDomains?.length ? `, limited to ${opts.allowedDomains.join(', ')}` : ''),
-    command: 'agent-browser',
-    args: ['mcp', '--config', fileURLToPath(new URL('./config.json', import.meta.url))],
+    // guard.ts sits in front of agent-browser: it caps result size and keeps screenshots off disk.
+    command: process.execPath,
+    args: [
+      fileURLToPath(new URL('./guard.ts', import.meta.url)),
+      'mcp',
+      '--config',
+      fileURLToPath(new URL('./config.json', import.meta.url)),
+    ],
     env: {
+      // In the installed Mac app process.execPath is the Crew binary (Electron).
+      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENT_BROWSER_SESSION: `crew-${opts.session}`,
       ...(opts.allowedDomains?.length
         ? { AGENT_BROWSER_ALLOWED_DOMAINS: opts.allowedDomains.flatMap((d) => [d, `*.${d}`]).join(',') }
