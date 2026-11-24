@@ -10,6 +10,13 @@ export const REPO_ROOT = resolve(CONDUCTOR_SRC, '../../..');
 
 export const CREW_HOME = process.env.CREW_HOME ?? join(homedir(), '.crew');
 
+/**
+ * Engine sign-ins live here. CREW_ENGINES_DIR lets a second conductor with its own
+ * CREW_HOME (an eval run, a dev build) reuse the owner's sign-ins: Claude Code keys its
+ * keychain entry by this exact path, so a symlink is not enough.
+ */
+const ENGINES = process.env.CREW_ENGINES_DIR?.trim() || join(CREW_HOME, 'engines');
+
 export const paths = {
   home: CREW_HOME,
   db: join(CREW_HOME, 'crew.db'),
@@ -23,15 +30,15 @@ export const paths = {
   attachments: join(CREW_HOME, 'attachments'),
   /** Separate engine configuration folders, signed in once with `pnpm crew login`. */
   engines: {
-    claude: join(CREW_HOME, 'engines', 'claude'),
-    codex: join(CREW_HOME, 'engines', 'codex'),
+    claude: join(ENGINES, 'claude'),
+    codex: join(ENGINES, 'codex'),
     /** Codex reads ~/.agents/skills whatever CODEX_HOME says; its Crew sessions get their own HOME. */
-    codexHome: join(CREW_HOME, 'engines', 'codex', 'home'),
-    grok: join(CREW_HOME, 'engines', 'grok'),
+    codexHome: join(ENGINES, 'codex', 'home'),
+    grok: join(ENGINES, 'grok'),
     /** Grok also reads ~/.claude, ~/.cursor and ~/.agents; its Crew sessions get their own HOME. */
-    grokHome: join(CREW_HOME, 'engines', 'grok', 'home'),
+    grokHome: join(ENGINES, 'grok', 'home'),
     /** HOME for Antigravity (agy keeps settings in ~/.gemini; its sign-in is in the OS keyring). */
-    antigravityHome: join(CREW_HOME, 'engines', 'antigravity', 'home'),
+    antigravityHome: join(ENGINES, 'antigravity', 'home'),
   },
   bridge: join(CONDUCTOR_SRC, 'mcp-bridge.ts'),
 };
@@ -130,7 +137,7 @@ export function denyPaths(): string[] {
     paths.engines.claude,
     paths.engines.codex,
     paths.engines.grok,
-    join(paths.home, 'engines', 'antigravity'),
+    dirname(paths.engines.antigravityHome),
     paths.run,
     paths.attachments,
     paths.info,

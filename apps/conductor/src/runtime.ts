@@ -616,8 +616,16 @@ export class Runtime {
         approve: 'read-only',
         allowTools: c.tools.allow,
       };
+      // The agent's own tools/*.ts run in the crew bridge and may call the same
+      // service (studio_generate next to the Studio connection): same secrets.
+      if (agent.tools.length) Object.assign(servers.crew!.secretEnv, secretEnv);
     }
     return servers;
+  }
+
+  /** Specialists the owner switched off for this thread. */
+  private benchedIn(threadId: string): string[] {
+    return this.store.thread(threadId)?.benched ?? [];
   }
 
   private recallMemories(agent: LoadedAgent): MemoryRecall[] {
