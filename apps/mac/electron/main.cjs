@@ -298,6 +298,19 @@ ipcMain.handle('crew:where-set', async (event, next) => {
 const BROWSER_PARTITION = 'persist:crew-browser';
 const isWebUrl = (url) => /^https?:\/\//i.test(url);
 
+// Sites where the owner signs in go to their own browser, which has their password manager
+// and passkeys; Google also refuses sign-in in embedded browsers. Everything else opens in
+// the browser tab.
+const SIGN_IN_HOSTS = ['twombly.app', 'accounts.google.com'];
+function needsOwnBrowser(url) {
+  try {
+    const { hostname } = new URL(url);
+    return SIGN_IN_HOSTS.some((h) => hostname === h || hostname.endsWith(`.${h}`));
+  } catch {
+    return false;
+  }
+}
+
 ipcMain.handle('crew:open-external', (event, url) => {
   const frame = event.senderFrame;
   if (!frame || frame.parent || !isAppUrl(frame.url)) return;
@@ -336,7 +349,7 @@ function createWindow() {
 
   // Web links open in the browser tab of the preview panel, as in T3 Code. Cmd-click (a background
   // tab) still opens the system browser, and so does a link when no thread is on screen.
-  const openUrl = (url) => win.webContents.send('crew:open-url', url);
+  const openUrl = (url) => (needsOwnBrowser(url) ? shell.openExternal(url) : win.webContents.send('crew:open-url', url));
   win.webContents.setWindowOpenHandler(({ url, disposition }) => {
     if (/^https?:/.test(url)) {
       if (disposition === 'background-tab') shell.openExternal(url);
@@ -400,6 +413,12 @@ function createWindow() {
       if (/^mailto:/i.test(e.url)) shell.openExternal(e.url);
     };
     guest.on('will-frame-navigate', onlyWeb);
+    // A sign-in page reached from inside the tab also goes to the owner's own browser.
+    guest.on('will-navigate', (e) => {
+      if (!needsOwnBrowser(e.url)) return;
+      e.preventDefault();
+      shell.openExternal(e.url);
+    });
     guest.on('will-redirect', onlyWeb);
   });
 
