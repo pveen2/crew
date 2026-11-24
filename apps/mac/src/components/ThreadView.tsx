@@ -247,7 +247,7 @@ function SubagentRow({ threadId, start, data }: { threadId: string; start: Ev<'s
             {line}
           </Text>
         </button>
-        <Badge tone={badge.tone} title={usageTitle(childUsage) || undefined}>
+        <Badge tone={badge.tone} title={showSpend ? usageTitle(childUsage) || undefined : undefined}>
           {badge.label}
           {time ? ` · ${time}` : ''}
           {spent ? ` · ${spent}` : ''}

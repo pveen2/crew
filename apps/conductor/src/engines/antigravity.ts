@@ -22,7 +22,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate } from './process.ts';
-import { readUsage, type EngineAdapter, type EngineEvent, type EngineResult, type EngineRunOptions } from './types.ts';
+import { addUsage, readUsage, type EngineAdapter, type EngineEvent, type EngineResult, type EngineRunOptions } from './types.ts';
 import type { Usage } from '@crew/protocol';
 
 function agyEnv(): Record<string, string> {
@@ -98,6 +98,7 @@ export const antigravity: EngineAdapter = {
     let failure: string | undefined;
     let done = false;
     let usage: Usage | undefined;
+    const stepUsage = new Map<number, Usage>();
     const emit = (e: EngineEvent) => opts.onEvent(e);
 
     const announce = (id: unknown) => {
@@ -121,6 +122,9 @@ export const antigravity: EngineAdapter = {
         switch (raw.event) {
           case 'step_update': {
             const step = Number(msg.step_index);
+            // Per-step usage, kept for a run that stops before its result.
+            const su = readUsage(msg.usage) ?? readUsage(msg.usage_metadata);
+            if (su) stepUsage.set(step, su);
             const state = String(msg.state ?? '').toUpperCase();
             const type = String(msg.step_type ?? '');
             if (type === 'agent_response') {
@@ -172,6 +176,8 @@ export const antigravity: EngineAdapter = {
 
     const durationMs = Date.now() - started;
     const text = finalText || lastText;
+    // No usage on a result (or no result): fall back to what the steps reported.
+    if (!usage) for (const u of stepUsage.values()) usage = addUsage(usage, u);
     if (run.aborted) return { ok: false, engineSessionId, finalText: text, error: 'Stopped', durationMs, usage };
     if (!done || failure || run.exitCode !== 0) {
       const error = failure ?? (run.stderrTail || `agy exited with code ${run.exitCode}`);

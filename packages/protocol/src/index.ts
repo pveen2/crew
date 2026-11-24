@@ -38,6 +38,11 @@ export interface Usage {
   /** All input tokens, cached ones included. */
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Thread totals only: tokens from turns that reported no cost (Codex, for one).
+   * When this is above 0 and costUsd is set, costUsd covers only part of the work.
+   */
+  unpricedTokens?: number;
 }
 
 export interface Session {

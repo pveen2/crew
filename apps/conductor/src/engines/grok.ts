@@ -191,11 +191,12 @@ export const grok: EngineAdapter = {
           case 'error':
             flush();
             failure = String(msg.message ?? 'Grok error');
+            usage = grokUsage(msg) ?? usage;
             break;
           case 'end':
             flush();
             ended = true;
-            usage = readUsage(msg.usage) ?? usage;
+            usage = grokUsage(msg) ?? usage;
             if (typeof msg.sessionId === 'string' && msg.sessionId) {
               engineSessionId = msg.sessionId;
               if (!announced) emit({ kind: 'session', engineSessionId });
@@ -220,6 +221,14 @@ export const grok: EngineAdapter = {
     return { ok: true, engineSessionId, finalText: lastText, durationMs, usage };
   },
 };
+
+/** Usage from an end or error frame: tokens in `usage`, the cost beside it in total_cost_usd. */
+function grokUsage(msg: Record<string, unknown>): Usage | undefined {
+  const u = readUsage(msg.usage);
+  const cost = typeof msg.total_cost_usd === 'number' ? msg.total_cost_usd : null;
+  if (!u) return cost === null ? undefined : { costUsd: cost, inputTokens: 0, outputTokens: 0 };
+  return { ...u, costUsd: u.costUsd ?? cost };
+}
 
 function notSignedInHint(error: string): string {
   if (/not (signed|logged) in|login|unauthori[sz]ed|401|auth/i.test(error)) {

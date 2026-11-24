@@ -112,9 +112,11 @@ export const claudeCode: EngineAdapter = {
     let lastText = '';
     let resultError: string | undefined;
     let gotResult = false;
-    // Tokens add up per result; total_cost_usd is already a running total for the process.
+    // What this run used, added up per result. total_cost_usd is a running total for the
+    // whole Claude session, earlier runs included when resumed, so it is not used.
     let usage: Usage | undefined;
-    let costUsd: number | null = null;
+    // Assistant messages since the last result, by message id: what a stopped run used.
+    const unsettled = new Map<string, Usage>();
     const emit = (e: EngineEvent) => opts.onEvent(e);
 
     // Owner messages written in mid-turn that the agent has not read yet.
@@ -168,6 +170,9 @@ export const claudeCode: EngineAdapter = {
         if (msg.parent_tool_use_id) return;
 
         if (type === 'assistant') {
+          const m = msg.message as { id?: string; usage?: unknown } | undefined;
+          const u = readUsage(m?.usage);
+          if (u && m?.id) unsettled.set(m.id, { ...u, costUsd: null });
           const content = (msg.message as { content?: Array<Record<string, unknown>> })?.content ?? [];
           for (const block of content) {
             if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) {
@@ -200,8 +205,8 @@ export const claudeCode: EngineAdapter = {
           gotResult = true;
           if (typeof msg.session_id === 'string') engineSessionId = msg.session_id;
           const u = readUsage(msg.usage);
-          if (u) usage = addUsage(usage, { ...u, costUsd: null });
-          if (typeof msg.total_cost_usd === 'number') costUsd = Math.max(costUsd ?? 0, msg.total_cost_usd);
+          if (u) usage = addUsage(usage, { ...u, costUsd: costSinceLastResult(msg) });
+          unsettled.clear();
           if (msg.is_error || msg.subtype !== 'success') {
             resultError = String(msg.result ?? (msg.errors as unknown) ?? msg.subtype ?? 'Claude Code reported an error');
           } else {
@@ -218,7 +223,8 @@ export const claudeCode: EngineAdapter = {
     unread.clear();
 
     const durationMs = Date.now() - started;
-    if (costUsd !== null) usage = { inputTokens: 0, outputTokens: 0, ...usage, costUsd };
+    // Stopped or crashed before a result: keep what the assistant messages reported (tokens only).
+    for (const u of unsettled.values()) usage = addUsage(usage, u);
     if (run.aborted) {
       return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs, usage };
     }
@@ -230,6 +236,18 @@ export const claudeCode: EngineAdapter = {
     return { ok: true, engineSessionId, finalText: finalText || lastText, durationMs, usage };
   },
 };
+
+/**
+ * This result's own cost: model_usage_since_last_result has a costUSD per model.
+ * Null when the CLI does not report it (older versions).
+ */
+function costSinceLastResult(msg: Record<string, unknown>): number | null {
+  const per = msg.model_usage_since_last_result as Record<string, { costUSD?: unknown }> | undefined;
+  if (!per || typeof per !== 'object') return null;
+  let sum: number | null = null;
+  for (const m of Object.values(per)) if (typeof m?.costUSD === 'number') sum = (sum ?? 0) + m.costUSD;
+  return sum;
+}
 
 function notSignedInHint(error: string): string {
   if (/not logged in|login|authenticate|invalid api key|oauth/i.test(error)) {

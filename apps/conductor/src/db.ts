@@ -375,13 +375,16 @@ export class Store {
   /** Everything the thread's turns used, all agents together. */
   usageOfThread(threadId: string): Usage {
     const r = this.get(
-      'SELECT SUM(cost_usd) AS cost, SUM(input_tokens) AS input, SUM(output_tokens) AS output FROM turns WHERE thread_id = ?',
+      `SELECT SUM(cost_usd) AS cost, SUM(input_tokens) AS input, SUM(output_tokens) AS output,
+        SUM(CASE WHEN cost_usd IS NULL THEN COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) ELSE 0 END) AS unpriced
+       FROM turns WHERE thread_id = ?`,
       threadId,
     );
     return {
       costUsd: r?.cost == null ? null : Number(r.cost),
       inputTokens: Number(r?.input ?? 0),
       outputTokens: Number(r?.output ?? 0),
+      unpricedTokens: Number(r?.unpriced ?? 0),
     };
   }
 
