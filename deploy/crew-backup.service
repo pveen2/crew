@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up the Crew database
+
+[Service]
+Type=oneshot
+User=crew
+ExecStart=/usr/local/sbin/crew-backup
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full

@@ -47,6 +47,10 @@ declare global {
   interface Window {
     crewHost?: {
       platform: string;
+      serverOrigin: string;
+      onServerError: (cb: (message: string) => void) => void;
+      serverInfo: () => Promise<{ url: string; managed: boolean }>;
+      serverSet: (url: string, token: string) => Promise<void>;
       startConductor?: () => Promise<void>;
       conductorInfo: () => Promise<{ url: string; token: string } | null>;
       /**
@@ -253,6 +257,7 @@ export const getState = () => state;
 // Connection
 
 let conn: { url: string; token: string } | null = null;
+window.crewHost?.onServerError?.(message => set({ conductorStartError: message, connection: 'offline' }));
 
 async function resolveConductor(): Promise<{ url: string; token: string } | null> {
   if (window.crewHost) return window.crewHost.conductorInfo();
@@ -263,11 +268,18 @@ async function resolveConductor(): Promise<{ url: string; token: string } | null
   return { url: q.get('conductor') ?? 'http://127.0.0.1:4317', token };
 }
 
+// Electron adds the remote credentials after Chromium's CORS checks. A simple request avoids an unauthenticated preflight.
+function requestHeaders(token: string, json = false): Record<string, string> {
+  if (window.crewHost?.serverOrigin) return {};
+  return { authorization: `Bearer ${token}`, ...(json ? { 'content-type': 'application/json' } : {}) };
+}
+
 async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
   if (!conn) throw new Error('Not connected to the conductor');
   const res = await fetch(conn.url + path, {
     method,
-    headers: { authorization: `Bearer ${conn.token}`, 'content-type': 'application/json' },
+    headers: requestHeaders(conn.token, true),
+    redirect: 'error',
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json = (await res.json()) as T & { error?: string };
@@ -390,7 +402,7 @@ function retry(ms: number): void {
  * flight is buffered and replayed on top of it, so nothing is lost.
  */
 export async function connect(): Promise<void> {
-  conn = await resolveConductor();
+  conn = await resolveConductor().catch(() => null);
   if (!conn) return retry(2000);
 
   const socket = new WebSocket(conn.url.replace(/^http/, 'ws') + `/ws?token=${encodeURIComponent(conn.token)}`);
@@ -563,7 +575,8 @@ export function attachmentUrl(threadId: string, file: string): Promise<string> {
     p = (async () => {
       if (!conn) throw new Error('Not connected to the conductor');
       const res = await fetch(`${conn.url}/api/attachments/${encodeURIComponent(threadId)}/${encodeURIComponent(file)}`, {
-        headers: { authorization: `Bearer ${conn.token}` },
+        headers: requestHeaders(conn.token),
+        redirect: 'error',
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return URL.createObjectURL(await res.blob());

@@ -10,6 +10,7 @@ export type SessionStatus = 'idle' | 'running' | 'queued' | 'interrupted' | 'err
 export type TurnStatus = 'running' | 'done' | 'interrupted' | 'error' | 'cancelled';
 
 export interface Thread {
+  byEmail: string | null;
   id: string;
   title: string;
   status: ThreadStatus;
@@ -62,6 +63,7 @@ export interface Turn {
 // the thread purely from its events.
 
 export interface EventBase {
+  byEmail?: string | null;
   id: number;
   threadId: string;
   sessionId: string;
@@ -152,6 +154,7 @@ export type CrewEventType = CrewEventBody['type'];
 export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft';
 
 export interface InboxItem {
+  byEmail: string | null;
   id: string;
   threadId: string;
   sessionId: string;

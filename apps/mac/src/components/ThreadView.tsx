@@ -469,6 +469,7 @@ function OwnerMessage({ threadId, event, session }: { threadId: string; event: E
   const dropped = events ? deliveryOf(event, events, session).state === 'dropped' : false;
   return (
     <div className="owner-message">
+      {event.byEmail && <Text variant="caption" tone="secondary">{event.byEmail}</Text>}
       <div className="bubble">
         {event.attachments?.length ? <MessageImages threadId={threadId} attachments={event.attachments} /> : null}
         <Markdown text={event.text} />
@@ -543,7 +544,7 @@ function WaitingChip({ event, info, label }: { event: Ev<'message'>; info: Deliv
           </Text>
         )}
         <Text as="span" variant="caption" tone={error ? 'critical' : 'secondary'}>
-          {error || status}
+          {event.byEmail && `${event.byEmail} · `}{error || status}
         </Text>
       </BlockStack>
       {canChange ? (
@@ -585,6 +586,8 @@ function EventRow({ threadId, event, session }: { threadId: string; event: CrewE
     case 'message':
       if (event.role === 'user') return <OwnerMessage threadId={threadId} event={event} session={session} />;
       return <Markdown text={event.text} />;
+    case 'approval_done':
+      return <Text variant="bodySm" tone="secondary">{event.approved ? 'Approved' : 'Denied'} {event.toolName}{event.byEmail && ` by ${event.byEmail}`}</Text>;
     case 'needs_you':
       return <NeedsYouCard threadId={threadId} event={event} role={session.role} />;
     case 'preview':
@@ -887,7 +890,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
               </Text>
               <Text variant="caption" tone="secondary" leading="tight" truncate>
                 {thread.roles.map((r) => labels[r] ?? r).join(', ')}
-                {thread.benched?.length ? ` · without ${thread.benched.map((r) => labels[r] ?? r).join(', ')}` : ''} · started {ago(thread.createdAt, now)}
+                {thread.benched?.length ? ` · without ${thread.benched.map((r) => labels[r] ?? r).join(', ')}` : ''} · started {ago(thread.createdAt, now)}{thread.byEmail && ` by ${thread.byEmail}`}
               </Text>
             </BlockStack>
           )}

@@ -141,6 +141,7 @@ export function denyPaths(): string[] {
     paths.run,
     paths.attachments,
     paths.info,
+    join(paths.home, 'app.json'),
     paths.db,
     `${paths.db}-wal`,
     `${paths.db}-shm`,

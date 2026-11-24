@@ -6,7 +6,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
-import type { Runtime } from './runtime.ts';
+import type { AccessIdentity } from './access.ts';
+import { UpdateInProgress, type Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 
 function sameToken(a: string, b: string): boolean {
@@ -38,14 +39,15 @@ function corsHeaders(res: ServerResponse): void {
   res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
 }
 
-export function startServer(runtime: Runtime, opts: { port: number; token: string }) {
+export function startServer(runtime: Runtime, opts: { port: number; token: string; identity?: AccessIdentity }) {
   const server = createServer(async (req, res) => {
     corsHeaders(res);
-    if (req.method === 'OPTIONS') {
+    if (req.method === 'OPTIONS' && !opts.identity) {
       res.writeHead(204).end();
       return;
     }
-    const url = new URL(req.url ?? '/', 'http://localhost');
+    const url = URL.parse(req.url ?? '/', 'http://localhost');
+    if (!url) return send(res, 400, { error: 'Invalid request URL' });
     const parts = url.pathname.split('/').filter(Boolean);
 
     try {
@@ -68,8 +70,15 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
 
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
-      const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
-      if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
+      const auth = /^Bearer (.+)$/i.exec(req.headers.authorization ?? '')?.[1] ?? '';
+      if (!sameToken(auth, opts.token)) {
+        res.setHeader('www-authenticate', 'Bearer realm="Crew"');
+        return send(res, 401, { error: 'Unauthorized' });
+      }
+      const user = await opts.identity?.(req.headers['cf-access-jwt-assertion']);
+      const byEmail = user?.email ?? null;
+      if (opts.identity && !byEmail) return send(res, 401, { error: 'Invalid Access identity' });
+      if (req.method === 'OPTIONS') return res.writeHead(204).end();
 
       if (parts[0] !== 'api') return send(res, 404, { error: 'Not found' });
       const [, a, id, action] = parts;
@@ -78,8 +87,12 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
 
       if (a === 'connections') {
-        if (req.method === 'GET' && !id) return send(res, 200, await connections(url.searchParams.has('refresh')));
+        if (req.method === 'GET' && !id) {
+          const items = await connections(url.searchParams.has('refresh'));
+          return send(res, 200, opts.identity ? items.map(item => ({ ...item, canSignIn: false })) : items);
+        }
         if (req.method === 'POST' && id && action === 'sign-in') {
+          if (opts.identity) return send(res, 409, { error: 'The server admin manages engine sign-ins.' });
           await signIn(id);
           return send(res, 200, { ok: true });
         }
@@ -89,7 +102,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (req.method === 'POST' && !id) {
           const body = await readJson<CreateThreadRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : []));
+          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : [], byEmail));
         }
         if (req.method === 'GET' && id && !action) {
           const detail = runtime.threadDetail(id);
@@ -98,7 +111,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (req.method === 'POST' && id && action === 'messages') {
           const body = await readJson<SendMessageRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments));
+          return send(res, 200, runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments, byEmail));
         }
         if (req.method === 'POST' && id && action === 'resume') {
           runtime.resumeThread(id);
@@ -144,14 +157,15 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
 
       if (a === 'inbox' && id && action === 'resolve' && req.method === 'POST') {
-        return send(res, 200, runtime.resolveInbox(id) ?? { error: 'No such item' });
+        return send(res, 200, runtime.resolveInbox(id, byEmail) ?? { error: 'No such item' });
       }
       if (a === 'inbox' && id && (action === 'approve' || action === 'deny') && req.method === 'POST') {
-        return send(res, 200, runtime.decideApproval(id, action === 'approve'));
+        return send(res, 200, runtime.decideApproval(id, action === 'approve', byEmail));
       }
 
       return send(res, 404, { error: 'Not found' });
     } catch (err) {
+      if (err instanceof UpdateInProgress) return send(res, 503, { error: err.message });
       console.error('[server]', err);
       return send(res, 500, { error: (err as Error).message });
     }
@@ -165,17 +179,23 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
 
-  server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== '/ws' || !sameToken(url.searchParams.get('token') ?? '', opts.token)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-      socket.destroy();
+  server.on('upgrade', async (req, socket, head) => {
+    socket.on('error', () => socket.destroy());
+    const url = URL.parse(req.url ?? '/', 'http://localhost');
+    if (url?.pathname !== '/ws' || !sameToken(url.searchParams.get('token') ?? '', opts.token)) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer realm="Crew"\r\nConnection: close\r\n\r\n');
+      return;
+    }
+    const user = await opts.identity?.(req.headers['cf-access-jwt-assertion']);
+    if (opts.identity && !user) {
+      socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       clients.add(ws);
       ws.send(JSON.stringify({ kind: 'hello', version: 1 } satisfies ServerMessage));
-      ws.on('close', () => clients.delete(ws));
+      const expiry = user && setTimeout(() => ws.close(1008, 'Access session expired'), Math.min(2_147_483_647, Math.max(1, user.expiresAt - Date.now()))).unref();
+      ws.on('close', () => { if (expiry) clearTimeout(expiry); clients.delete(ws); });
       ws.on('error', () => clients.delete(ws));
     });
   });

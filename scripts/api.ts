@@ -4,6 +4,14 @@ import { readFileSync } from 'node:fs';
 import type { ConductorInfo } from '@crew/protocol';
 import { paths } from '@crew/conductor/config';
 
+let assertion: string | undefined;
+export function accessHeaders(): Record<string, string> {
+  if (!process.argv.includes('--access-stdin')) return {};
+  assertion ??= readFileSync(0, 'utf8').trim();
+  if (!assertion) throw new Error('Expected a Cloudflare Access assertion on stdin.');
+  return { 'cf-access-jwt-assertion': assertion };
+}
+
 export function conductor(): ConductorInfo {
   try {
     return JSON.parse(readFileSync(paths.info, 'utf8')) as ConductorInfo;
@@ -17,7 +25,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
   const info = conductor();
   const res = await fetch(`http://127.0.0.1:${info.port}${path}`, {
     method,
-    headers: { authorization: `Bearer ${info.token}`, 'content-type': 'application/json' },
+    headers: { ...accessHeaders(), authorization: `Bearer ${info.token}`, 'content-type': 'application/json' },
     body: body ? JSON.stringify(body) : undefined,
   });
   const json = (await res.json()) as T & { error?: string };

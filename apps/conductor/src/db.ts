@@ -127,6 +127,7 @@ function toThread(r: Row): Omit<Thread, 'roles' | 'statusText'> {
   return {
     id: r.id as string,
     title: r.title as string,
+    byEmail: r.by_email as string | null,
     status: r.status as ThreadStatus,
     rootSessionId: r.root_session_id as string,
     createdAt: Number(r.created_at),
@@ -186,6 +187,7 @@ function toEvent(r: Row): CrewEvent {
   const body = JSON.parse(r.body as string) as CrewEventBody;
   return {
     ...body,
+    byEmail: r.by_email as string | null,
     id: Number(r.id),
     threadId: r.thread_id as string,
     sessionId: r.session_id as string,
@@ -203,6 +205,7 @@ function toInbox(r: Row): InboxItem {
     role: (r.role as string | null) ?? '',
     previewId: (r.preview_id as string | null) ?? undefined,
     title: r.title as string,
+    byEmail: r.by_email as string | null,
     body: r.body as string,
     status: r.status as InboxItem['status'],
     createdAt: Number(r.created_at),
@@ -237,6 +240,9 @@ export class Store {
     this.db.exec(SCHEMA);
     // Small forward-only migrations for databases created by earlier builds.
     for (const sql of [
+      'ALTER TABLE threads ADD COLUMN by_email TEXT',
+      'ALTER TABLE events ADD COLUMN by_email TEXT',
+      'ALTER TABLE inbox ADD COLUMN by_email TEXT',
       'ALTER TABLE turns ADD COLUMN pid INTEGER',
       "ALTER TABLE inbox ADD COLUMN role TEXT NOT NULL DEFAULT ''",
       'ALTER TABLE inbox ADD COLUMN preview_id TEXT',
@@ -264,8 +270,8 @@ export class Store {
 
   insertThread(t: Omit<Thread, 'roles' | 'statusText'>): void {
     this.run(
-      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched) VALUES (?,?,?,?,?,?,?,?)',
-      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched),
+      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, by_email) VALUES (?,?,?,?,?,?,?,?,?)',
+      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.byEmail,
     );
   }
   thread(id: string): Omit<Thread, 'roles' | 'statusText'> | undefined {
@@ -361,11 +367,11 @@ export class Store {
   // Events -------------------------------------------------------------------
 
   insertEvent(e: CrewEventBody & Omit<EventBase, 'id'>): CrewEvent {
-    const { threadId, sessionId, turnId, ts, ...body } = e;
+    const { threadId, sessionId, turnId, ts, byEmail = null, ...body } = e;
     const res = this.db
-      .prepare('INSERT INTO events (thread_id, session_id, turn_id, type, body, ts) VALUES (?,?,?,?,?,?)')
-      .run(threadId, sessionId, turnId, body.type, JSON.stringify(body), ts);
-    return { ...e, id: Number(res.lastInsertRowid) } as CrewEvent;
+      .prepare('INSERT INTO events (thread_id, session_id, turn_id, type, body, ts, by_email) VALUES (?,?,?,?,?,?,?)')
+      .run(threadId, sessionId, turnId, body.type, JSON.stringify(body), ts, byEmail);
+    return { ...e, byEmail, id: Number(res.lastInsertRowid) } as CrewEvent;
   }
   eventsOfThread(threadId: string): CrewEvent[] {
     return this.all('SELECT * FROM events WHERE thread_id = ? ORDER BY id', threadId).map(toEvent);
@@ -397,8 +403,8 @@ export class Store {
     const rows = this.all("SELECT * FROM inbox WHERE status = 'open' AND thread_id = ? ORDER BY created_at", threadId).map(toInbox);
     return kinds ? rows.filter((r) => kinds.includes(r.kind)) : rows;
   }
-  resolveInbox(id: string): InboxItem | undefined {
-    this.run("UPDATE inbox SET status = 'resolved' WHERE id = ?", id);
+  resolveInbox(id: string, byEmail: string | null = null): InboxItem | undefined {
+    this.run("UPDATE inbox SET status = 'resolved', by_email = ? WHERE id = ? AND status = 'open'", byEmail, id);
     return this.inboxItem(id);
   }
 

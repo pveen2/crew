@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld('crewHost', {
   ...(process.argv.includes('--crew-local-conductor') && {
     startConductor: () => ipcRenderer.invoke('crew:start-conductor'),
   }),
+  serverOrigin: process.argv.find(arg => arg.startsWith('--crew-server='))?.slice('--crew-server='.length) || '',
+  onServerError: (cb) => { ipcRenderer.on('crew:server-error', (_event, message) => cb(message)); },
+  serverInfo: () => ipcRenderer.invoke('crew:server-info'),
+  serverSet: (url, token) => ipcRenderer.invoke('crew:server-set', url, token),
   conductorInfo: () => ipcRenderer.invoke('crew:info'),
   updateCheck: () => ipcRenderer.invoke('crew:update-check'),
   updateApply: () => ipcRenderer.invoke('crew:update-apply'),

@@ -8,10 +8,18 @@ import { loadCrew } from '@crew/sdk/load';
 import { ensureDirs, paths, port, sharedEngineHome } from './config.ts';
 import { Store } from './db.ts';
 import { Runtime } from './runtime.ts';
+import { accessIdentity } from './access.ts';
 import { startServer } from './server.ts';
 
 // The team may sit in another repo without Crew's packages installed.
 resolveTeamImportsFrom(import.meta.url);
+
+const token = process.env.CREW_TOKEN ?? randomBytes(24).toString('base64url');
+if (token.length < 32) throw new Error('CREW_TOKEN must contain at least 32 characters.');
+const identity = accessIdentity();
+if (process.env.CREW_REQUIRE_ACCESS === '1' && (!identity || !process.env.CREW_TOKEN)) {
+  throw new Error('The shared server requires CREW_TOKEN, CREW_ACCESS_TEAM_DOMAIN and CREW_ACCESS_AUD.');
+}
 
 ensureDirs();
 
@@ -22,8 +30,7 @@ const store = new Store(paths.db);
 const runtime = new Runtime(store);
 const interrupted = runtime.recover();
 
-const token = randomBytes(24).toString('base64url');
-const server = await startServer(runtime, { port, token });
+const server = await startServer(runtime, { port, token, identity });
 
 const info: ConductorInfo = { port, token, pid: process.pid, startedAt: Date.now() };
 writeFileSync(paths.info, JSON.stringify(info, null, 2), { mode: 0o600 });

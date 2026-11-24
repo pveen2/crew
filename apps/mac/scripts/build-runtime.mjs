@@ -17,7 +17,7 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const out = resolve(repo, 'apps/mac/build/runtime');
 
 const copies = ['apps/conductor', 'packages/protocol', 'packages/sdk', 'packages/kit', 'crew'];
-const skip = /(^|\/)(node_modules|\.turbo|dist|tsconfig\.json)$/;
+const skip = /(^|\/)(node_modules|\.turbo|dist|test|tsconfig\.json)$/;
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });

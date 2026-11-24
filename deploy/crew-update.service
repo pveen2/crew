@@ -1,0 +1,12 @@
+[Unit]
+Description=Update the Crew product and team checkouts
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/crew-update
+StateDirectory=crew-update
+RuntimeDirectory=crew-update
+RuntimeDirectoryMode=0755
+TimeoutStartSec=60min

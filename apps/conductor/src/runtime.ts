@@ -29,6 +29,14 @@ import type { SessionRow, Store } from './db.ts';
 import { engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
 
+export class UpdateInProgress extends Error {}
+
+function acceptOwnerWork() {
+  if (process.env.CREW_UPDATE_GATE && existsSync(process.env.CREW_UPDATE_GATE)) {
+    throw new UpdateInProgress('Crew is installing an update. Retry after it reconnects.');
+  }
+}
+
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
 
 interface RunningTurn {
@@ -189,7 +197,7 @@ export class Runtime {
     }
   }
 
-  private emit(session: SessionRow, turnId: string | null, body: CrewEventBody): CrewEvent {
+  private emit(session: SessionRow, turnId: string | null, body: CrewEventBody & { byEmail?: string | null }): CrewEvent {
     const event = this.store.insertEvent({ ...body, threadId: session.threadId, sessionId: session.id, turnId, ts: Date.now() });
     this.broadcast({ kind: 'event', event });
     return event;
@@ -228,6 +236,7 @@ export class Runtime {
   private addInbox(session: SessionRow, kind: InboxKind, title: string, body: string, previewId?: string): InboxItem {
     const item: InboxItem = {
       id: newId('i'),
+      byEmail: null,
       threadId: session.threadId,
       sessionId: session.id,
       kind,
@@ -243,14 +252,14 @@ export class Runtime {
     return item;
   }
 
-  resolveInbox(id: string): InboxItem | undefined {
-    // Dismissing an approval without deciding counts as a deny.
+  resolveInbox(id: string, byEmail: string | null = null, approved = false): InboxItem | undefined {
+    // Record the decision before releasing the tool call. Dismissing an approval denies it.
+    const item = this.store.resolveInbox(id, byEmail);
     const waiter = this.approvals.get(id);
     if (waiter) {
       this.approvals.delete(id);
-      waiter(false);
+      waiter(approved);
     }
-    const item = this.store.resolveInbox(id);
     if (item) {
       this.broadcast({ kind: 'inbox', item });
       this.refreshThread(item.threadId);
@@ -375,8 +384,9 @@ export class Runtime {
     return session;
   }
 
-  async createThread(text: string, roleName?: string, uploads?: AttachmentUpload[], benchedNames: string[] = []): Promise<Thread> {
+  async createThread(text: string, roleName?: string, uploads?: AttachmentUpload[], benchedNames: string[] = [], byEmail: string | null = null): Promise<Thread> {
     const crew = await loadCrew();
+    acceptOwnerWork();
     const role = roleName ?? crew.lead;
     if (!crew.agents[role]) throw new Error(`Unknown agent "${role}". Agents: ${Object.keys(crew.agents).join(', ')}`);
     const benched = [...new Set(benchedNames)];
@@ -389,7 +399,7 @@ export class Runtime {
     const rootId = 'pending';
     const attachments = saveAttachments(threadId, uploads);
     text = text.trim() || (attachments.length ? 'See the attached image.' : text);
-    const thread = { id: threadId, title: titleFrom(text), status: 'running' as const, rootSessionId: rootId, createdAt: now, updatedAt: now, archived: false, benched };
+    const thread = { id: threadId, title: titleFrom(text), status: 'running' as const, rootSessionId: rootId, createdAt: now, updatedAt: now, archived: false, benched, byEmail };
     // Insert the thread first (sessions reference it), then point it at its root.
     this.store.insertThread(thread);
     const root = this.createSession(crew, threadId, role, null);
@@ -397,12 +407,13 @@ export class Runtime {
     const saved = this.withMeta(this.store.thread(threadId)!);
     this.broadcast({ kind: 'thread', thread: saved });
 
-    this.emit(root, null, { type: 'message', role: 'user', text, from: 'owner', ...(attachments.length ? { attachments } : {}) });
+    this.emit(root, null, { type: 'message', role: 'user', text, from: 'owner', byEmail, ...(attachments.length ? { attachments } : {}) });
     void this.enqueueTurn(root.id, text + attachmentNote(attachments), { images: attachments.map((a) => a.file) });
     return saved;
   }
 
-  sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, uploads?: AttachmentUpload[]): { sessionId: string } {
+  sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, uploads?: AttachmentUpload[], byEmail: string | null = null): { sessionId: string } {
+    acceptOwnerWork();
     const thread = this.store.thread(threadId);
     if (!thread) throw new Error(`No thread ${threadId}`);
     if (thread.archived) throw new Error('This thread is closed.');
@@ -430,7 +441,7 @@ export class Runtime {
     const promptOf = (t: string) => (session.depth === 0 ? t : `Message from the owner, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
     const prompt = promptOf(text);
     const images = attachments.map((a) => a.file);
-    const message = { type: 'message', role: 'user', text, from: 'owner', ...(attachments.length ? { attachments } : {}) } as const;
+    const message = { type: 'message', role: 'user', text, from: 'owner', byEmail, ...(attachments.length ? { attachments } : {}) } as const;
 
     // Steer: the agent is working and its engine can take the message into the
     // running turn, so it reads it at its next step. Not when other messages
@@ -497,6 +508,7 @@ export class Runtime {
 
   /** Continue an interrupted or failed session through the CLI's own resume. */
   resumeSession(sessionId: string): void {
+    acceptOwnerWork();
     const session = this.store.session(sessionId);
     if (!session) throw new Error(`No session ${sessionId}`);
     if (this.store.thread(session.threadId)?.archived) throw new Error('This thread is closed.');
@@ -954,7 +966,7 @@ export class Runtime {
     });
     if (this.approvals.get(item.id)) this.approvals.delete(item.id);
     if (this.store.inboxItem(item.id)?.status === 'open') this.resolveInbox(item.id);
-    this.emit(session, turnId, { type: 'approval_done', inboxId: item.id, toolName, approved });
+    this.emit(session, turnId, { type: 'approval_done', inboxId: item.id, toolName, approved, byEmail: this.store.inboxItem(item.id)?.byEmail ?? null });
     this.refreshThread(session.threadId);
     if (!approved) {
       throw new Error(`The owner denied ${toolName}. Do not try again another way; carry on without it or explain what is blocked.`);
@@ -962,7 +974,7 @@ export class Runtime {
   }
 
   /** The owner's decision on an approval item. */
-  decideApproval(inboxId: string, approved: boolean): InboxItem {
+  decideApproval(inboxId: string, approved: boolean, byEmail: string | null = null): InboxItem {
     const item = this.store.inboxItem(inboxId);
     if (!item || item.kind !== 'approval') throw new Error('No such approval');
     const waiter = this.approvals.get(inboxId);
@@ -970,9 +982,7 @@ export class Runtime {
       if (item.status === 'open') this.resolveInbox(inboxId);
       throw new Error('This approval is no longer waiting: the turn that asked for it has ended.');
     }
-    this.approvals.delete(inboxId);
-    waiter(approved);
-    return this.resolveInbox(inboxId) ?? item;
+    return this.resolveInbox(inboxId, byEmail, approved) ?? item;
   }
 
   private async callSubagent(crew: LoadedCrew, caller: SessionRow, sub: LoadedAgent, brief: string, signal: AbortSignal): Promise<string> {

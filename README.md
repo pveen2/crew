@@ -10,7 +10,7 @@ This repo is the product. A team (its agents, instructions, skills and evals)
 is a folder you keep with the business, for example `crew/` in the brand's own
 monorepo. `crew/` here is a small example team: a GM and a Web researcher.
 
-Status: early. Read and draft only; everything runs on your own machine.
+Run Crew locally on a Mac or use a shared conductor behind Cloudflare Access. See the [server setup](deploy/README.md).
 
 ```
 apps/conductor   local server: sessions, subagent calls, approvals, events, SQLite, WebSocket
@@ -93,13 +93,14 @@ first:
    and drag Crew to Applications.
 2. Open Crew. Until releases are signed by Apple, macOS asks once: System
    Settings → Privacy & Security → **Open Anyway**.
-3. In the sidebar, install and sign in to the engines your agents use
+3. For a shared team, open **Team > Server**, enter the HTTPS URL and token from your admin, then sign in through Cloudflare. The server runs the engines. For a local team, install and sign in to the engines your agents use
    (Claude Code at least). Each opens Terminal with the right command.
 
 The app brings its own conductor and runs it on its built-in Node; it starts
 and stops with the app. Choose the team on the **Team** screen (click the team
 name at the top of the sidebar):
 
+- **Server**: enter the shared URL and conductor token. **Use this Mac** switches back.
 - **From GitHub**: a repo, the team folder in it and a branch, for example
   `askphill/wakey`, `crew`, `main`. Crew keeps its own copy in `~/.crew/teams`
   (made with your git sign-in) and shows **Update team** in the sidebar when
@@ -111,7 +112,7 @@ name at the top of the sidebar):
 A team needs nothing installed: when its files import `@crew/sdk`, `@crew/kit`
 or `zod` and its repo lacks them, Crew supplies its own. The settings live in
 `~/.crew/app.json`, which also takes extra environment for the conductor
-(`"env": { "SHOPIFY_STORE": "…" }`) or at a conductor elsewhere with `{ "conductorUrl": "https://…", "token": "…" }`.
+(`"env": { "SHOPIFY_STORE": "…" }`). **Team > Server** saves a remote conductor as `{ "conductorUrl": "https://…", "token": "…" }`.
 A conductor that is already running (`pnpm conductor`) is used as it is.
 
 Updates come from GitHub Releases, checked at start and every four hours. When
@@ -291,7 +292,7 @@ Close thread also drop queued turns, and say so in the thread.
   tools on Codex run only when marked read-only.
 - The local API binds to 127.0.0.1 and needs the token from `conductor.json`
   as a header (the WebSocket takes it as `?token=`). The Electron window only
-  ever loads the app itself, and only that page can ask for the token.
+  ever loads the app itself, and only that page can ask for the token. A separate sandboxed sign-in window handles Cloudflare Access. Remote requests also require a verified Access identity when configured.
 - Known gap: Grok has no way to pass an MCP server's env by name, so the
   per-session bridge token sits in that session's own `.grok/config.toml`. It
   works for that session only.

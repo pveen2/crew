@@ -1,0 +1,4 @@
+-w /etc/ssh/ -p wa -k crew_ssh
+-w /etc/sudoers -p wa -k crew_sudo
+-w /etc/sudoers.d/ -p wa -k crew_sudo
+-w /etc/cloudflared/ -p wa -k crew_tunnel

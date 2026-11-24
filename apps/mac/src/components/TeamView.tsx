@@ -67,6 +67,7 @@ export function TeamView() {
         )}
       </BlockStack>
 
+      <ServerSettings />
       <Card>
         <BlockStack gap="400" className="team-form">
           <SegmentedControl<Kind>
@@ -134,6 +135,47 @@ export function TeamView() {
       </Card>
     </Page>
   );
+}
+
+function ServerSettings() {
+  const host = window.crewHost!;
+  const [current, setCurrent] = useState('');
+  const [url, setUrl] = useState('');
+  const [token, setToken] = useState('');
+  const [managed, setManaged] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    void host.serverInfo().then(info => {
+      setCurrent(info.url);
+      setUrl(info.url);
+      setManaged(info.managed);
+    });
+  }, [host]);
+
+  async function save(local = false) {
+    setBusy(true);
+    setError('');
+    try { await host.serverSet(local ? '' : url.trim(), local ? '' : token); }
+    catch (err) { setError((err as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  return <Card>
+    <BlockStack gap="300" className="team-form">
+      <Text variant="headingMd">Server</Text>
+      <Text variant="bodySm" tone="secondary">{managed ? 'The launch environment sets this server.' : current || 'Using the conductor on this Mac.'}</Text>
+      {!managed && <>
+        <TextField showLabel label="Server URL" placeholder="https://crew.example.com" value={url} onChange={setUrl} />
+        <TextField showLabel label="Conductor token" type="password" autoComplete="off" value={token} onChange={setToken} />
+        {error && <Banner tone="critical">{error}</Banner>}
+        <InlineStack gap="200">
+          <Button variant="primary" disabled={busy || !url.trim() || !token.trim()} onClick={() => void save()}>Connect to server</Button>
+          {current && <Button disabled={busy} onClick={() => void save(true)}>Use this Mac</Button>}
+        </InlineStack>
+      </>}
+    </BlockStack>
+  </Card>;
 }
 
 function describe(info: TeamInfo | null): string {

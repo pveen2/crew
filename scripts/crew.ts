@@ -26,9 +26,9 @@ import { TEAM_ROOT, listEvalFiles, loadCrew, subagentToolName } from '@crew/sdk/
 import { ensureDirs, paths, sharedEngineHome } from '@crew/conductor/config';
 import { engines } from '@crew/conductor/engines';
 import { crewTools, translateAgent } from '@crew/conductor/translate';
-import { api, bold, conductor, cyan, dim, fmtDuration, green, red, yellow } from './api.ts';
+import { accessHeaders, api, bold, conductor, cyan, dim, fmtDuration, green, red, yellow } from './api.ts';
 
-const argv = process.argv.slice(2);
+const argv = process.argv.slice(2).filter(arg => arg !== '--access-stdin');
 const cmd = argv.shift();
 
 function flag(name: string): string | undefined {
@@ -112,7 +112,7 @@ async function follow(threadId: string, sinceId = 0): Promise<void> {
   const started = Date.now();
 
   await new Promise<void>((resolve) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${info.port}/ws?token=${info.token}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${info.port}/ws?token=${encodeURIComponent(info.token)}`, { headers: accessHeaders() });
     let finished = false;
     const finish = async (t: Thread) => {
       if (finished) return;
@@ -226,10 +226,11 @@ async function main() {
       }
       try {
         const info = JSON.parse(readFileSync(paths.info, 'utf8')) as ConductorInfo;
-        await fetch(`http://127.0.0.1:${info.port}/api/state`, { headers: { authorization: `Bearer ${info.token}` } });
+        await api<StateResponse>('GET', '/api/state');
         console.log(`${green('✓')} Conductor running on port ${info.port}`);
-      } catch {
-        console.log(`${yellow('!')} Conductor not running (pnpm conductor)`);
+      } catch (error) {
+        console.log(`${red('✗')} Conductor check failed: ${(error as Error).message}`);
+        process.exitCode = 1;
       }
       return;
     }

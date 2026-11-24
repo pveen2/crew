@@ -9,10 +9,11 @@
 
 const { app, BrowserWindow, dialog, ipcMain, net, session, shell, nativeTheme } = require('electron');
 const { execFile, execFileSync, spawn } = require('node:child_process');
-const { closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
+const { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } = require('node:fs');
 const { homedir } = require('node:os');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
+const { createAccess, serverOrigin } = require('./access.cjs');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
 
@@ -54,8 +55,9 @@ function readSettings() {
 }
 
 function writeSettings(settings) {
-  mkdirSync(CREW_HOME, { recursive: true });
+  mkdirSync(CREW_HOME, { recursive: true, mode: 0o700 });
   writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 });
+  chmodSync(SETTINGS_FILE, 0o600);
 }
 
 function conductorInfo() {
@@ -231,7 +233,18 @@ function hardenBrowserSession() {
   ses.setPermissionCheckHandler(() => false);
 }
 
+let appWindow = null;
+let access = null;
+
 function createWindow() {
+  const info = conductorInfo();
+  let remote = '';
+  if (info) {
+    try {
+      const server = serverOrigin(info.url);
+      if (server.remote) remote = server.origin;
+    } catch { /* The Server form stays available for invalid settings. */ }
+  }
   const win = new BrowserWindow({
     icon: ICON,
     width: 1440,
@@ -246,12 +259,18 @@ function createWindow() {
     backgroundColor: '#00000000',
     webPreferences: {
       preload: PRELOAD,
-      additionalArguments: ownsConductor() ? ['--crew-local-conductor'] : [],
+      additionalArguments: remote ? ['--crew-server=' + remote] : ownsConductor() ? ['--crew-local-conductor'] : [],
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
       webviewTag: true, // the browser tab in the preview panel
     },
+  });
+
+  appWindow = win;
+  if (remote) access = createAccess(win, remote, info.token);
+  win.once('closed', () => {
+    if (appWindow === win) { access?.close(); access = null; appWindow = null; }
   });
 
   // Web links open in the browser tab of the preview panel, as in T3 Code. Cmd-click (a background
@@ -460,10 +479,46 @@ ipcMain.handle('crew:update-check', () => updates.check());
 ipcMain.handle('crew:update-apply', () => updates.apply());
 
 // The conductor token is handed only to the app's own top-level document.
-ipcMain.handle('crew:info', (event) => {
-  const frame = event.senderFrame;
-  if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
-  return conductorInfo();
+function fromApp(event) {
+  return appWindow && event.sender === appWindow.webContents && event.senderFrame === event.sender.mainFrame && isAppUrl(event.senderFrame.url);
+}
+
+ipcMain.handle('crew:info', async (event) => {
+  if (!fromApp(event)) return null;
+  const info = conductorInfo();
+  if (!info) return null;
+  const { origin, remote } = serverOrigin(info.url);
+  if (remote && !await access?.ready()) return null;
+  return { url: origin, token: info.token };
+});
+
+ipcMain.handle('crew:server-info', (event) => {
+  if (!fromApp(event)) return null;
+  return { url: process.env.CREW_CONDUCTOR_URL || readSettings().conductorUrl || '', managed: Boolean(process.env.CREW_CONDUCTOR_URL) };
+});
+
+ipcMain.handle('crew:server-set', async (event, value, token) => {
+  if (!fromApp(event) || process.env.CREW_CONDUCTOR_URL) throw new Error('The server is managed outside the app.');
+  const settings = readSettings();
+  if (value) {
+    const { origin } = serverOrigin(value);
+    if (typeof token !== 'string' || !token.trim()) throw new Error('Enter the conductor token.');
+    settings.conductorUrl = origin;
+    settings.token = token.trim();
+  } else {
+    delete settings.conductorUrl;
+    delete settings.token;
+  }
+  writeSettings(settings);
+  await launchInFlight;
+  if (value) await stopConductor();
+  else await startConductor();
+  // A fresh renderer drops the old server's threads, token and CSP.
+  const previous = appWindow;
+  access?.close();
+  access = null;
+  createWindow();
+  previous?.close();
 });
 
 ipcMain.handle('crew:start-conductor', async (event) => {
