@@ -137,6 +137,8 @@ export interface AppState {
   closedPreviews: Record<string, Record<string, true>>;
   /** Sidebar folded down to the icon rail. Remembered across launches. */
   sidebarCollapsed: boolean;
+  /** On a phone: the sidebar is open over the page. */
+  navOpen: boolean;
   /** Show what threads and agents spent (Settings). On unless switched off; kept on this Mac. */
   showSpend: boolean;
   previewDevice: 'desktop' | 'phone';
@@ -218,6 +220,20 @@ function loadFlag(key: string, fallback = false): boolean {
   }
 }
 
+/** The app in a phone-sized window (the web app on an iPhone): one pane at a time. */
+export function isPhone(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches;
+}
+
+/** Served by a conductor behind Cloudflare Access (no Electron, no ?token= for development). */
+export const webApp = !window.crewHost && !new URLSearchParams(location.search).has('token');
+
+/** Opens a link outside the app: the system browser on the Mac, a new tab on the web. */
+export function openExternal(url: string): void {
+  if (window.crewHost) void window.crewHost.openExternal?.(url);
+  else window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 let state: AppState = {
   connection: 'connecting',
   conductorStarting: false,
@@ -236,10 +252,12 @@ let state: AppState = {
   details: {},
   view: viewFromHash(),
   preview: {},
-  previewOpen: true,
+  // On a phone the preview covers the thread, so it opens only when asked.
+  previewOpen: !isPhone(),
   extraPreviews: {},
   closedPreviews: {},
   sidebarCollapsed: loadFlag(SIDEBAR_KEY),
+  navOpen: false,
   showSpend: loadFlag(SHOW_SPEND_KEY, true),
   previewDevice: 'desktop',
   previewWidth: loadWidth(PREVIEW_WIDTH_KEY),
@@ -276,6 +294,9 @@ let conn: { url: string; token: string } | null = null;
 
 async function resolveConductor(): Promise<{ url: string; token: string } | null> {
   if (window.crewHost) return window.crewHost.conductorInfo();
+  // The web app: the conductor that served this page, signed in through Cloudflare
+  // Access (its cookie goes along with every request); no app token.
+  if (webApp) return { url: location.origin, token: '' };
   // Plain browser (development): ?conductor=http://127.0.0.1:4317&token=...
   const q = new URLSearchParams(location.search);
   const token = q.get('token');
@@ -287,7 +308,7 @@ async function api<T>(method: string, path: string, body?: unknown): Promise<T> 
   if (!conn) throw new Error('Not connected to the conductor');
   const res = await fetch(conn.url + path, {
     method,
-    headers: { authorization: `Bearer ${conn.token}`, 'content-type': 'application/json' },
+    headers: { ...(conn.token && { authorization: `Bearer ${conn.token}` }), 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const json = (await res.json()) as T & { error?: string };
@@ -363,7 +384,8 @@ function onMessage(msg: ServerMessage): void {
         // A new preview becomes the selected one, and opens the pane.
         if (e.type === 'preview') {
           patch.preview = { ...s.preview, [e.threadId]: e.previewId };
-          patch.previewOpen = true;
+          // On a phone it would cover the thread: the card in the chat opens it.
+          if (!isPhone()) patch.previewOpen = true;
         }
         return patch;
       });
@@ -400,6 +422,27 @@ export async function startConductor(): Promise<void> {
   }
 }
 
+/**
+ * The web app: when the Cloudflare Access login has run out, Access answers with a
+ * redirect to its sign-in page, which a fetch or WebSocket cannot follow. Reload
+ * the page so the browser goes through the sign-in. At most once a minute, so a
+ * conductor that is simply down does not reload the page in a loop.
+ */
+async function accessExpired(): Promise<void> {
+  try {
+    const res = await fetch('/api/state', { redirect: 'manual', cache: 'no-store' });
+    if (res.type !== 'opaqueredirect' && res.status !== 401 && res.status !== 403) return;
+  } catch {
+    return; // offline: keep retrying quietly
+  }
+  const KEY = 'crew.access.reloadedAt';
+  try {
+    if (Date.now() - Number(sessionStorage.getItem(KEY) ?? 0) < 60_000) return;
+    sessionStorage.setItem(KEY, String(Date.now()));
+  } catch {}
+  location.reload();
+}
+
 function retry(ms: number): void {
   set({ connection: 'offline' });
   setTimeout(() => void connect(), ms);
@@ -424,7 +467,10 @@ export async function connect(): Promise<void> {
     socket.onopen = () => resolve(true);
     socket.onerror = () => resolve(false);
   });
-  if (!opened) return;
+  if (!opened) {
+    if (webApp) void accessExpired();
+    return;
+  }
 
   try {
     // Keep only the thread on screen; everything else reloads when it is opened again.
@@ -492,7 +538,7 @@ window.addEventListener('hashchange', () => {
 });
 
 export function navigate(view: View): void {
-  set({ view });
+  set({ view, navOpen: false });
   if (location.hash !== hashOf(view)) history.replaceState(null, '', hashOf(view));
   if (view.name === 'thread') {
     if (!state.details[view.threadId]) void loadThread(view.threadId);
@@ -504,6 +550,11 @@ export function navigate(view: View): void {
     const item = state.inbox[view.itemId];
     if (item && !state.details[item.threadId]) void loadThread(item.threadId);
   }
+}
+
+/** On a phone: opens or closes the sidebar over the page. */
+export function toggleNav(open = !state.navOpen): void {
+  set({ navOpen: open });
 }
 
 export function toggleSidebar(collapsed = !state.sidebarCollapsed): void {
@@ -709,8 +760,9 @@ export function openAsPreview(threadId: string, doc: PreviewDoc): void {
 /** Opens a web link in a browser tab of the open thread's preview panel, or in the system browser. */
 export function openUrl(url: string): void {
   const view = state.view;
-  if (view.name !== 'thread') {
-    void window.crewHost?.openExternal?.(url);
+  // The browser tab in the preview is Electron's <webview>; the web app opens a real tab.
+  if (view.name !== 'thread' || !window.crewHost) {
+    openExternal(url);
     return;
   }
   let title = url;
@@ -829,7 +881,7 @@ function followServerLogin(login: ServerLogin): void {
     }
     if (next.url && !opened.has(next.id)) {
       opened.add(next.id);
-      void window.crewHost?.openExternal?.(next.url);
+      openExternal(next.url);
     }
     set({ serverLogin: next });
     if (next.done) {
