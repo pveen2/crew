@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { existsSync, lstatSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { homedir, userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_PORT } from '@crew/protocol';
@@ -70,6 +70,27 @@ export function ensureDirs(): void {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
   writeGrokConfig();
+  linkKeychains();
+}
+
+/**
+ * Antigravity keeps its sign-in in the macOS keychain, and macOS finds the
+ * login keychain under $HOME/Library/Keychains. Crew runs agy with its own
+ * HOME, so without this link every sign-in ends in "A keychain cannot be
+ * found to store antigravity". Only the keychain folder is shared; the rest
+ * of the real home stays out.
+ */
+function linkKeychains(): void {
+  if (process.platform !== 'darwin') return;
+  const real = join(userInfo().homedir, 'Library', 'Keychains');
+  const link = join(paths.engines.antigravityHome, 'Library', 'Keychains');
+  try {
+    lstatSync(link);
+    return;
+  } catch {}
+  if (!existsSync(real)) return;
+  mkdirSync(dirname(link), { recursive: true, mode: 0o700 });
+  symlinkSync(real, link);
 }
 
 /**
