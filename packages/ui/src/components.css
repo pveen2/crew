@@ -516,6 +516,15 @@
 .cr-face--dj {
   --cr-face-color: var(--cr-face-dj);
 }
+.cr-face--copywriter {
+  --cr-face-color: var(--cr-face-copywriter);
+}
+.cr-face--designer {
+  --cr-face-color: var(--cr-face-designer);
+}
+.cr-face--web-researcher {
+  --cr-face-color: var(--cr-face-web-researcher);
+}
 /* Hover label for a face: fixed to the viewport so no container clips it. */
 .cr-tip {
   position: fixed;
