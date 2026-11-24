@@ -68,6 +68,23 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         }
       }
 
+      // App sign-in through the person's own browser (behind Cloudflare Access):
+      // hand the Access login to the app waiting on this Mac, and only there.
+      if (url.pathname === '/auth/app-login' && req.method === 'GET') {
+        if (!accessEnabled) return send(res, 404, { error: 'Not found' });
+        if (!(await accessEmail(req))) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
+        const appPort = Number(url.searchParams.get('port'));
+        const state = url.searchParams.get('state') ?? '';
+        if (!Number.isInteger(appPort) || appPort < 1024 || appPort > 65535 || !/^[A-Za-z0-9_-]{32,128}$/.test(state)) {
+          return send(res, 400, { error: 'Bad sign-in request' });
+        }
+        const jwt = String(req.headers['cf-access-jwt-assertion']);
+        const back = `http://127.0.0.1:${appPort}/callback?state=${state}&token=${encodeURIComponent(jwt)}`;
+        res.writeHead(302, { location: back, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+        res.end();
+        return;
+      }
+
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
       const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
       if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });

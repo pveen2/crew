@@ -466,7 +466,7 @@ ipcMain.handle('crew:info', async (event) => {
   if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
   const info = conductorInfo();
   // A conductor on a server sits behind Cloudflare Access: sign in first.
-  if (info && !(await ensureAccess(info.url, BrowserWindow.fromWebContents(event.sender)))) return null;
+  if (info && !(await ensureAccess(info.url, CREW_HOME))) return null;
   return info;
 });
 
