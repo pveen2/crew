@@ -282,7 +282,9 @@ Close thread also drop queued turns, and say so in the thread.
   fetch, so store and customer data cannot be sent out.
 - The browser (`@crew/kit/browser`, agent-browser) goes only to agents without
   store or customer data. Its allow-list leaves out JavaScript eval, saved
-  logins and profiles, uploads, screenshots and network tools; page text
+  logins and profiles, uploads and network tools; `guard.ts` hides those from
+  the agent and refuses them. Screenshots come back inline, and are saved
+  only with `keep: true`, under a name the guard picks; page text
   comes back in boundary markers and capped in size. agent-browser's own
   action policy is not relied on: it did not block eval when tested (v0.43.0).
 - Grok agents with web access can also search X (`x_search`). The web

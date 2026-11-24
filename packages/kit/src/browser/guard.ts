@@ -1,6 +1,10 @@
 // A thin stdio filter in front of `agent-browser mcp`. It passes every
 // JSON-RPC message through unchanged, except:
 //
+// - Tools: only the ones named in CREW_BROWSER_TOOLS (the connection's
+//   allow-list) are listed, and a call to any other is refused here. Claude
+//   Code otherwise shows the agent every tool and only denies the call, so an
+//   agent kept reaching for agent_browser_eval.
 // - Screenshots: the `path` and `screenshotDir` arguments are removed (from the
 //   tool's schema and from every call). agent-browser runs with the owner's
 //   real HOME, so a chosen path could overwrite any of the owner's files.
@@ -50,6 +54,10 @@ const IMAGES_DIR = process.env.CREW_IMAGES_DIR?.trim() || '';
 const MAX_KEEP_BYTES = 10 * 1024 * 1024;
 /** Where agent-browser saves a screenshot when it is given no path. */
 const SHOT_DIR = join(homedir(), '.agent-browser', 'tmp', 'screenshots');
+
+/** The tools the agent may see and call. Unset: all of them (outside Crew). */
+const ALLOWED = new Set((process.env.CREW_BROWSER_TOOLS ?? '').split(',').map((t) => t.trim()).filter(Boolean));
+const allowed = (name: unknown) => !ALLOWED.size || (typeof name === 'string' && ALLOWED.has(name));
 
 type Msg = { id?: unknown; method?: string; params?: any; result?: any };
 type Kind = 'list' | 'call' | 'shot' | 'keep';
@@ -139,6 +147,18 @@ function keepShot(msg: Msg, files: string[]): string {
   return `Kept as attachments/${name}. Show it in an HTML document with <img src="attachments/${name}" alt="…">.`;
 }
 
+/** A tool outside the allow-list: answer here, never reach agent-browser. */
+function refuse(msg: Msg): boolean {
+  if (msg.method !== 'tools/call' || allowed(msg.params?.name)) return false;
+  if (msg.id !== undefined) {
+    const text =
+      `${String(msg.params?.name)} is not available in Crew. ` +
+      'To show the owner a page\'s images, use agent_browser_screenshot with keep: true and a selector for each image.';
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text }] } }) + '\n');
+  }
+  return true;
+}
+
 function fromClient(msg: Msg): Msg {
   const isShot = msg.method === 'tools/call' && msg.params?.name === SCREENSHOT;
   const keep = isShot && msg.params.arguments?.[KEEP] === true;
@@ -163,6 +183,7 @@ function fromServer(msg: Msg): Msg {
   pending.delete(key(msg.id));
   if (!msg.result) return msg;
   if (kind === 'list') {
+    if (Array.isArray(msg.result.tools)) msg.result.tools = msg.result.tools.filter((t: any) => allowed(t?.name));
     for (const tool of msg.result.tools ?? []) {
       if (tool.name !== SCREENSHOT) continue;
       for (const a of PATH_ARGS) delete tool.inputSchema?.properties?.[a];
@@ -193,12 +214,14 @@ function fromServer(msg: Msg): Msg {
   return msg;
 }
 
-function pipe(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, fn: (m: Msg) => Msg) {
+function pipe(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, fn: (m: Msg) => Msg | null) {
   createInterface({ input, crlfDelay: Infinity }).on('line', (line) => {
     if (!line.trim()) return;
     let out = line;
     try {
-      out = JSON.stringify(fn(JSON.parse(line)));
+      const msg = fn(JSON.parse(line));
+      if (!msg) return;
+      out = JSON.stringify(msg);
     } catch {
       // Not JSON: pass it through as is.
     }
@@ -206,6 +229,6 @@ function pipe(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, fn: (
   });
 }
 
-pipe(process.stdin, child.stdin!, fromClient);
+pipe(process.stdin, child.stdin!, (m) => (refuse(m) ? null : fromClient(m)));
 pipe(child.stdout!, process.stdout, fromServer);
 process.stdin.on('end', () => child.stdin!.end());
