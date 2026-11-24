@@ -1,0 +1,28 @@
+# /etc/systemd/system/crew-conductor.service
+# The conductor on a team server, as user `crew`. Reached only through the
+# Cloudflare Tunnel (it listens on 127.0.0.1). See docs/server-briefing.md.
+[Unit]
+Description=Crew conductor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=crew
+WorkingDirectory=/home/crew/crew-app
+Environment=SHELL=/bin/bash
+ExecStart=/usr/bin/env bash -lc 'exec node --env-file=.env.local apps/conductor/src/main.ts'
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutStopSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

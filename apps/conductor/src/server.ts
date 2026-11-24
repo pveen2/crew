@@ -8,6 +8,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
 import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
+import { accessEmail, accessEnabled } from './access.ts';
 
 function sameToken(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -70,6 +71,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
       const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
       if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
+      if (accessEnabled && !(await accessEmail(req))) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
 
       if (parts[0] !== 'api') return send(res, 404, { error: 'Not found' });
       const [, a, id, action] = parts;
@@ -165,9 +167,13 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
   const wss = new WebSocketServer({ noServer: true });
   const clients = new Set<WebSocket>();
 
-  server.on('upgrade', (req, socket, head) => {
+  server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (url.pathname !== '/ws' || !sameToken(url.searchParams.get('token') ?? '', opts.token)) {
+    if (
+      url.pathname !== '/ws' ||
+      !sameToken(url.searchParams.get('token') ?? '', opts.token) ||
+      (accessEnabled && !(await accessEmail(req)))
+    ) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;

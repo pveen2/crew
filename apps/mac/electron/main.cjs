@@ -15,6 +15,7 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
+const { ensureAccess } = require('./access.cjs');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
 const APP_FILE = join(__dirname, '..', 'dist', 'index.html');
@@ -460,10 +461,13 @@ ipcMain.handle('crew:update-check', () => updates.check());
 ipcMain.handle('crew:update-apply', () => updates.apply());
 
 // The conductor token is handed only to the app's own top-level document.
-ipcMain.handle('crew:info', (event) => {
+ipcMain.handle('crew:info', async (event) => {
   const frame = event.senderFrame;
   if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
-  return conductorInfo();
+  const info = conductorInfo();
+  // A conductor on a server sits behind Cloudflare Access: sign in first.
+  if (info && !(await ensureAccess(info.url, BrowserWindow.fromWebContents(event.sender)))) return null;
+  return info;
 });
 
 ipcMain.handle('crew:start-conductor', async (event) => {
