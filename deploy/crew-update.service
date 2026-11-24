@@ -1,0 +1,9 @@
+# /etc/systemd/system/crew-update.service
+# Runs as root so `crew` never needs sudo; git, pnpm and the API call run as crew.
+[Unit]
+Description=Update Crew and the team from GitHub
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/crew-update

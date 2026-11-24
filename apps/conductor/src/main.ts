@@ -9,6 +9,7 @@ import { ensureDirs, paths, port, sharedEngineHome } from './config.ts';
 import { Store } from './db.ts';
 import { Runtime } from './runtime.ts';
 import { startServer } from './server.ts';
+import { accessEnabled } from './access.ts';
 
 // The team may sit in another repo without Crew's packages installed.
 resolveTeamImportsFrom(import.meta.url);
@@ -22,7 +23,10 @@ const store = new Store(paths.db);
 const runtime = new Runtime(store);
 const interrupted = runtime.recover();
 
-const token = randomBytes(24).toString('base64url');
+// A server keeps one token across restarts (CREW_TOKEN); on a Mac it is new every start.
+const fixedToken = process.env.CREW_TOKEN?.trim();
+if (fixedToken !== undefined && fixedToken.length < 32) throw new Error('CREW_TOKEN must be at least 32 characters.');
+const token = fixedToken || randomBytes(24).toString('base64url');
 const server = await startServer(runtime, { port, token });
 
 const info: ConductorInfo = { port, token, pid: process.pid, startedAt: Date.now() };
@@ -30,6 +34,7 @@ writeFileSync(paths.info, JSON.stringify(info, null, 2), { mode: 0o600 });
 
 console.log(`Crew conductor on http://127.0.0.1:${port}`);
 console.log(`  data:   ${paths.home}`);
+if (accessEnabled) console.log('  access: Cloudflare Access login required on every request');
 console.log(`  agents: ${Object.values(crew.agents).map((a) => `${a.name}${a.isLead ? ' (lead)' : ''} ${a.engine}/${a.model}`).join(', ')}`);
 console.log(`  engine sign-in: ${sharedEngineHome ? 'SHARED with your personal ~/.claude and ~/.codex (dev mode)' : 'Crew\'s own (pnpm crew login claude|codex)'}`);
 if (interrupted) console.log(`  marked ${interrupted} running turn(s) as interrupted after the restart`);

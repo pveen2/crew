@@ -11,6 +11,9 @@ import { engines } from './engines/index.ts';
 
 import { readScopes, writeScopes } from '@crew/kit/shopify';
 
+/** No Terminal to open for sign-ins: a conductor on a (Linux) server. */
+const onServer = process.platform !== 'darwin';
+
 const shopifyScopes = `${readScopes},${writeScopes}`;
 
 interface Run {
@@ -197,9 +200,10 @@ export function connections(refresh = false): Promise<ConnectionStatus[]> {
       const now = Date.now();
       cache = active.map((d, i) => {
         const c = checks[i]!;
-        const canSignIn = (d.id !== 'shopify' || Boolean(store)) &&
+        // A server has no Terminal to open: its admin signs engines in over ssh.
+        const canSignIn = !onServer && (d.id !== 'shopify' || Boolean(store)) &&
           (c.status === 'missing' ? Boolean(d.install) : c.status !== 'connected' && Boolean(d.signIn));
-        return { id: d.id, label: d.label, ...c, usedBy: users[d.id], canSignIn, checkedAt: now };
+        return { id: d.id, label: d.label, ...c, usedBy: users[d.id], canSignIn, ...(onServer ? { onServer } : {}), checkedAt: now };
       });
       return cache;
     } finally {
@@ -239,7 +243,7 @@ export async function signIn(id: string): Promise<void> {
     `set -o pipefail; cd ~ && ${steps.join(' && ')} ` +
     `&& { echo; echo 'Done. You can close this window.'; } || { echo; echo 'That did not work. See the messages above.'; }`;
 
-  if (process.platform !== 'darwin') throw new Error(`Run this in a terminal: ${script}`);
+  if (onServer) throw new Error('Engines sign in on the server, not from the app.');
   const r = await run('osascript', [
     '-e', 'on run argv',
     '-e', 'tell application "Terminal"',

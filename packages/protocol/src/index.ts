@@ -292,5 +292,7 @@ export interface ConnectionStatus {
   usedBy: string[];
   /** The app can open a sign-in for it. */
   canSignIn: boolean;
+  /** The conductor runs on a server: sign-ins happen there, not from the app. */
+  onServer?: boolean;
   checkedAt: number;
 }

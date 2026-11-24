@@ -78,6 +78,8 @@ export const browserConnection = (opts: BrowserOptions) =>
       // In the installed Mac app process.execPath is the Crew binary (Electron).
       ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENT_BROWSER_SESSION: `crew-${opts.session}`,
+      // A server (Linux ARM has no Chrome for Testing) points at its own Chromium.
+      ...(process.env.AGENT_BROWSER_EXECUTABLE_PATH ? { AGENT_BROWSER_EXECUTABLE_PATH: process.env.AGENT_BROWSER_EXECUTABLE_PATH } : {}),
       ...(opts.allowedDomains?.length
         ? { AGENT_BROWSER_ALLOWED_DOMAINS: opts.allowedDomains.flatMap((d) => [d, `*.${d}`]).join(',') }
         : {}),
