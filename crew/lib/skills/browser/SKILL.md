@@ -17,10 +17,15 @@ slower and costs more.
 4. Dismiss cookie banners with the "reject" or "necessary only" option.
 5. To show the owner what a page shows (an ad, a product photo), take
    `agent_browser_screenshot` with `keep: true` and a `selector` for just
-   that element. You get back `attachments/shot-….png`; list those paths in
-   your report so an HTML document can show them with
-   `<img src="attachments/shot-….png">`. Image URLs from a page often expire
-   or are blocked; a kept screenshot does not.
+   that element: one kept screenshot per item, never a whole screen with
+   several items on it. Use a snapshot ref (`@e12`) or a CSS selector that
+   matches that item first on the page (`img[alt*="…"]`). A selector with
+   `/` (XPath) is refused. Look at the image you get back and retry if it
+   is the wrong item; if no selector isolates the item, keep the screen and
+   say which part of it shows the item. You get back
+   `attachments/shot-….png`; list those paths in your report so an HTML
+   document can show them with `<img src="attachments/shot-….png">`. Image
+   URLs from a page often expire or are blocked; a kept screenshot does not.
 6. Close the session with `agent_browser_close` when you are done.
 
 ## Rules
