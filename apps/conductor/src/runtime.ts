@@ -439,6 +439,9 @@ export class Runtime {
     const run = this.running.get(session.id);
     const queued = (this.pending.get(session.id) ?? 0) > 0;
     if (steeringEnabled && run?.steer && !queued && !(answered && session.depth > 0)) {
+      // The images must be in the agent's folder before it reads the message;
+      // a new turn copies them at its start, a steered message has to do it here.
+      if (images.length) syncAttachments(threadId, session.workdir);
       const read = run.steer(prompt, images.map((f) => join(session.workdir, 'attachments', f)));
       const event = this.emit(session, run.turnId, { ...message, delivery: 'steer' });
       read.then(
