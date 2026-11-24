@@ -90,7 +90,8 @@ function signIn(origin) {
     server.on('error', (err) => finish(err));
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
-      void shell.openExternal(`${origin}/auth/app-login?port=${port}&state=${state}`);
+      console.log(`[access] opening browser sign-in for ${origin} (callback port ${port})`);
+      shell.openExternal(`${origin}/auth/app-login?port=${port}&state=${state}`).catch((err) => console.error('[access] could not open the browser:', err.message));
     });
   });
 }
@@ -129,7 +130,8 @@ async function ensureAccess(conductorUrl, home) {
     token = await signingIn;
     writeStored(host, token);
     return true;
-  } catch {
+  } catch (err) {
+    console.error('[access] sign-in failed:', err.message);
     declinedUntil = Date.now() + 30_000;
     return false;
   }
