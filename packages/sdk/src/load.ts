@@ -159,11 +159,15 @@ async function loadSkills(root: string, dir: string): Promise<SkillDir[]> {
   return skills.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Crew's own tools (MCP server `crew`). A team tool or subagent with one of these names would clash with it. */
+export const CREW_TOOL_NAMES = ['rename_thread', 'ask_owner', 'show_preview', 'save_artifact', 'read_artifact', 'approve'];
+
 async function loadTools(dir: string): Promise<LoadedTool[]> {
   const tools: LoadedTool[] = [];
   for (const file of listModules(dir)) {
     const name = basename(file, '.ts');
     if (!TOOL_NAME.test(name)) throw new Error(`${file}: tool file names are snake_case`);
+    if (CREW_TOOL_NAMES.includes(name)) throw new Error(`${file}: "${name}" is one of Crew's own tools; pick another name`);
     const def = (await importDefault(file)) as ToolDefinition;
     if (kindOf(def) !== 'tool') throw new Error(`${file}: export default defineTool({...})`);
     tools.push({ name, file, description: def.description, approval: def.approval });
@@ -250,6 +254,7 @@ export async function loadCrew(root: string = TEAM_ROOT): Promise<LoadedCrew> {
   for (const name of listDirs(join(leadDir, 'subagents'))) {
     if (!NAME.test(name)) throw new Error(`agent/subagents/${name}: folder names are kebab-case`);
     if (name === leadName) throw new Error(`agent/subagents/${name}: has the same name as the lead`);
+    if (CREW_TOOL_NAMES.includes(subagentToolName(name))) throw new Error(`agent/subagents/${name}: its tool name clashes with one of Crew's own tools; rename the folder`);
     agents[name] = await loadAgent(root, join(leadDir, 'subagents', name), name, false);
   }
 

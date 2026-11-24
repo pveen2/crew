@@ -4,7 +4,7 @@
 // Specialists do not delegate further (one level, like eve).
 
 import { execFileSync } from 'node:child_process';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { join } from 'node:path';
 import type {
@@ -13,6 +13,7 @@ import type {
   AttachmentUpload,
   CrewEvent,
   CrewEventBody,
+  Engine,
   InboxItem,
   InboxKind,
   RoleSummary,
@@ -146,6 +147,27 @@ function titleFrom(text: string): string {
   return line.length > 64 ? line.slice(0, 61).trimEnd() + '…' : line || 'New thread';
 }
 
+/** Cleans a title a model wrote: one line, no quotes or trailing period, at most 64 characters. */
+export function cleanTitle(raw: string): string {
+  let t = raw.trim().split('\n').map((l) => l.trim()).find(Boolean) ?? '';
+  t = t.replace(/^(title|thread title)\s*:\s*/i, '').replace(/^[#*\s]+|[*\s]+$/g, '');
+  t = t.replace(/^["'“‘`]+|["'”’`]+$/g, '').replace(/\.$/, '').replace(/\s+/g, ' ').trim();
+  return t.length > 64 ? t.slice(0, 61).trimEnd() + '…' : t;
+}
+
+/**
+ * The cheapest model per engine for the one-line thread title. Undefined: use the
+ * lead's own model, which is also the fallback when the small one is not available.
+ */
+const TITLE_MODELS: Partial<Record<Engine, string>> = { 'claude-code': 'haiku', codex: 'gpt-6-luna' };
+
+const TITLE_PROMPT = (text: string) =>
+  'Write a short title (3 to 6 words) for a work thread that starts with the message below. ' +
+  'Name the subject, not the request: "Rhode competitor research", not "Please research Rhode". ' +
+  'Keep names and products as written. Same language as the message. ' +
+  'Reply with the title only: no quotes, no period, no explanation. Do not use any tools.\n\n' +
+  `<message>\n${text.slice(0, 4000)}\n</message>`;
+
 function snippet(text: string, max = 120): string {
   const s = text.replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -153,6 +175,8 @@ function snippet(text: string, max = 120): string {
 
 export class Runtime {
   private readonly running = new Map<string, RunningTurn>();
+  /** Background title runs, by thread. */
+  private readonly titleJobs = new Map<string, AbortController>();
   /** Owner messages still waiting for their turn, by message event id. */
   private readonly queuedMessages = new Map<number, QueuedMessage>();
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -400,8 +424,78 @@ export class Runtime {
 
     this.emit(root, null, { type: 'message', role: 'user', text, from: 'owner', ...(attachments.length ? { attachments } : {}) });
     void this.enqueueTurn(root.id, text + attachmentNote(attachments), { images: attachments.map((a) => a.file) });
+    void this.autoTitle(crew.agents[crew.lead] ?? crew.agents[role]!, threadId, text);
     return saved;
   }
+
+  /**
+   * Replaces the first-line placeholder title with a short one from a small model,
+   * on the lead's engine and the owner's subscription. Best effort: on any failure
+   * the placeholder stays. Cancelled when the thread is renamed or closed first.
+   */
+  private async autoTitle(lead: LoadedAgent, threadId: string, text: string): Promise<void> {
+    if (!text.trim() || this.shuttingDown) return;
+    const dir = join(paths.run, `title-${threadId}`);
+    const controller = new AbortController();
+    this.titleJobs.set(threadId, controller);
+    const timer = setTimeout(() => controller.abort(), 60_000);
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      const run = (model: string) => engines[lead.engine].run({
+        workdir: dir,
+        runDir: dir,
+        model,
+        reasoning: lead.engine === 'codex' ? 'low' : undefined,
+        permissions: 'read-only',
+        prompt: TITLE_PROMPT(text),
+        resumeId: null,
+        mcpServers: {},
+        denyPaths: denyPaths(),
+        webAccess: false,
+        oneShot: true,
+        signal: controller.signal,
+        onEvent: () => {},
+      });
+      const small = TITLE_MODELS[lead.engine];
+      let result = await run(small ?? lead.model);
+      if (!result.ok && small && small !== lead.model && !controller.signal.aborted) result = await run(lead.model);
+      const title = result.ok ? cleanTitle(result.finalText) : '';
+      const current = this.store.thread(threadId);
+      if (controller.signal.aborted || !title || !current || current.archived) return;
+      this.setTitle(threadId, title);
+    } catch {
+      // Keep the placeholder.
+    } finally {
+      clearTimeout(timer);
+      if (this.titleJobs.get(threadId) === controller) this.titleJobs.delete(threadId);
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // Left for the next start; harmless.
+      }
+    }
+  }
+
+  private cancelAutoTitle(threadId: string): void {
+    this.titleJobs.get(threadId)?.abort();
+    this.titleJobs.delete(threadId);
+  }
+
+  /** Changes the title only: a rename is not activity, so the sidebar order stays. */
+  private setTitle(threadId: string, title: string): void {
+    this.broadcast({ kind: 'thread', thread: this.withMeta(this.store.setThreadTitle(threadId, title)) });
+  }
+
+  private renameThread(session: SessionRow, raw: string): string {
+    if (session.depth !== 0) throw new Error('Only the agent that owns the thread can rename it.');
+    if (this.store.thread(session.threadId)?.archived) throw new Error('This thread is closed.');
+    const title = cleanTitle(raw);
+    if (!title) throw new Error('Give the thread a title.');
+    this.cancelAutoTitle(session.threadId);
+    this.setTitle(session.threadId, title);
+    return `Renamed the thread to "${title}".`;
+  }
+
 
   sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, uploads?: AttachmentUpload[]): { sessionId: string } {
     const thread = this.store.thread(threadId);
@@ -545,6 +639,7 @@ export class Runtime {
     const thread = this.store.thread(threadId);
     if (!thread) return;
     this.stopSession(thread.rootSessionId);
+    this.cancelAutoTitle(threadId);
     this.resolveInboxOf(threadId, ['needs_you', 'approval', 'interrupted', 'error', 'draft']);
     this.broadcast({ kind: 'thread', thread: this.withMeta(this.store.updateThread(threadId, { archived: true })) });
   }
@@ -592,6 +687,7 @@ export class Runtime {
           CREW_THREAD_ID: session.threadId,
           CREW_AGENT: agent.name,
           CREW_CAN_SAVE_ARTIFACTS: agent.isLead ? '0' : '1',
+          CREW_CAN_RENAME_THREAD: agent.isLead && session.depth === 0 ? '1' : '0',
           CREW_TOOL_FILES: JSON.stringify(agent.tools.map((t) => t.file)),
           CREW_SUBAGENTS: JSON.stringify(subagents),
           CREW_MEMORIES: JSON.stringify(agent.memories.map((m) => ({ name: m.name, description: m.def.description }))),
@@ -910,6 +1006,9 @@ export class Runtime {
     }
 
     switch (tool) {
+      case 'rename_thread':
+        if (!agent.isLead) throw new Error('Only the lead renames threads.');
+        return this.renameThread(session, String(args.title ?? ''));
       case 'ask_owner':
         return this.askOwner(session, String(args.question ?? ''));
       case 'show_preview':
@@ -1163,6 +1262,7 @@ export class Runtime {
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;
     this.shuttingDown = true;
+    for (const c of this.titleJobs.values()) c.abort();
     const pending = [...this.running.values()];
     for (const r of pending) r.controller.abort('shutdown' satisfies AbortReason);
     await Promise.race([Promise.allSettled(pending.map((r) => r.done)), new Promise((r) => setTimeout(r, 8000))]);
