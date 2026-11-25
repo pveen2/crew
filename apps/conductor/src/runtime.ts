@@ -86,6 +86,8 @@ interface QueuedMessage {
   removed: boolean;
   /** The question this message answers: reopened when the message is taken back. */
   replyTo?: string;
+  /** Held messages this one releases: held again when it is taken back. */
+  held?: number[];
 }
 
 const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
@@ -479,6 +481,7 @@ export class Runtime {
   releaseHeld(threadId: string, by: string | null): { sessionId: string } {
     const thread = this.store.thread(threadId);
     if (!thread) throw new Error(`No thread ${threadId}`);
+    if (thread.archived) throw new Error('This thread is closed.');
     const session = this.store.session(thread.rootSessionId)!;
     const held = this.store.heldMessages(threadId, session.id);
     if (!held.length) return { sessionId: session.id };
@@ -533,6 +536,17 @@ export class Runtime {
     return !members || members.includes(email.toLowerCase());
   }
 
+  /**
+   * The thread a resource belongs to, to check DM membership before anyone reads or
+   * changes it: a message (event id), session, Inbox item or doc. Undefined: no such thing.
+   */
+  threadOf(kind: 'message' | 'session' | 'inbox' | 'doc', id: string): string | undefined {
+    if (kind === 'message') return Number.isInteger(Number(id)) ? this.store.event(Number(id))?.threadId : undefined;
+    if (kind === 'session') return this.store.session(id)?.threadId;
+    if (kind === 'inbox') return this.store.inboxItem(id)?.threadId;
+    return this.doc(id)?.threadId;
+  }
+
   /** The state for one person: DMs they are not in are left out. */
   async stateFor(email: string | null): Promise<StateResponse> {
     const s = await this.state();
@@ -556,10 +570,13 @@ export class Runtime {
     by = by.toLowerCase();
     const members = [...new Set([by, ...others.map((o) => String(o).toLowerCase().trim())])].filter((e) => /^[^@\s]+@[^@\s]+$/.test(e));
     if (members.length < 2) throw new Error('Pick someone to message.');
-    const existing = this.store.dmBetween(members);
-    let threadId = existing;
+    // Load first: from the check to the insert nothing awaits, so two requests
+    // for the same people cannot both make a DM.
+    const crew = await loadCrew();
+    let threadId = this.store.dmBetween(members);
+    // A closed DM with the same people opens again, with its history.
+    if (threadId && this.store.thread(threadId)?.archived) this.store.updateThread(threadId, { archived: false });
     if (!threadId) {
-      const crew = await loadCrew();
       const now = Date.now();
       threadId = newId('t');
       const title = members.filter((m) => m !== by).map((e) => this.nameOf(e)).join(', ');
@@ -823,7 +840,11 @@ export class Runtime {
 
     by = by?.toLowerCase() ?? null;
     // People tagged in the message (team server). Tagging adds them to the thread.
-    const mentions = [...new Set((opts.mentions ?? []).map((m) => String(m).toLowerCase().trim()))].filter((m) => /^[^@\s]+@[^@\s]+$/.test(m) && m !== by);
+    // In a DM only its members can be tagged: tagging never lets someone into it.
+    const members = this.store.dmMembers(threadId);
+    const mentions = [...new Set((opts.mentions ?? []).map((m) => String(m).toLowerCase().trim()))].filter(
+      (m) => /^[^@\s]+@[^@\s]+$/.test(m) && m !== by && (!members || members.includes(m)),
+    );
     if (by) {
       const before = this.store.peopleOfThread(threadId).length;
       this.store.addThreadPerson(threadId, by);
@@ -876,13 +897,15 @@ export class Runtime {
     const multi = Boolean(by) && this.store.peopleOfThread(threadId).length > 1;
     const sender = multi && by ? this.nameOf(by) : 'The owner';
     const held = session.depth === 0 ? this.store.heldMessages(threadId, session.id) : [];
-    const heldNote = held.length ? `${this.heldSummary(held)}\n\nThen ${multi ? sender : 'the owner'} wrote:\n\n` : multi ? `${sender} wrote:\n\n` : '';
+    // What it held off on comes first, for an answer to its question too.
+    const heldNote = held.length ? `${this.heldSummary(held)}\n\nThen ` : '';
+    const wrote = heldNote ? `${multi ? sender : 'the owner'} wrote:\n\n` : multi ? `${sender} wrote:\n\n` : '';
     const quietNote = multi && !question ? `\n\n(Several people work in this thread. If this is people talking to each other and nothing is asked of you, answer with exactly ${QUIET} and nothing else.)` : '';
     const promptOf = (t: string) =>
       (question
-        ? `${sender} answered your question "${snippet(question.body, 300)}":\n\n${t}`
+        ? `${heldNote}${heldNote ? sender.charAt(0).toLowerCase() + sender.slice(1) : sender} answered your question "${snippet(question.body, 300)}":\n\n${t}`
         : session.depth === 0
-          ? heldNote + t + quietNote
+          ? heldNote + wrote + t + quietNote
           : `Message from ${multi ? sender : 'the owner'}, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
     for (const h of held) this.emit(session, null, { type: 'message_delivery', messageId: h.id, state: 'released' });
     const prompt = promptOf(text);
@@ -933,7 +956,7 @@ export class Runtime {
     const turnId = newId('u');
     const event = this.emit(session, busy ? turnId : null, busy ? { ...message, delivery: 'queue' } : message);
     const queuedMessage: QueuedMessage | undefined = busy
-      ? { eventId: event.id, sessionId: session.id, prompt: promptOf, text, removed: false, replyTo: answers }
+      ? { eventId: event.id, sessionId: session.id, prompt: promptOf, text, removed: false, replyTo: answers, held: held.map((h) => h.id) }
       : undefined;
     if (queuedMessage) this.queuedMessages.set(event.id, queuedMessage);
     void this.enqueueTurn(session.id, prompt, { turnId, notifyParent: answered && session.depth > 0, images, queuedMessage });
@@ -956,6 +979,9 @@ export class Runtime {
     this.queuedMessages.delete(eventId);
     const session = this.store.session(q.sessionId)!;
     this.emit(session, null, { type: 'message_delivery', messageId: eventId, state: 'removed' });
+    // It carried held messages to the agent: they wait again.
+    for (const id of q.held ?? []) this.emit(session, null, { type: 'message_delivery', messageId: id, state: 'rehold' });
+    if (q.held?.length) this.refreshThread(session.threadId);
     // The answer was taken back: the question is open again.
     if (q.replyTo) {
       const item = this.store.reopenInbox(q.replyTo);
@@ -1406,6 +1432,10 @@ export class Runtime {
     if (mem) {
       const memory = agent.memories.find((m) => m.name === mem[1]);
       if (!memory) throw new Error(`You have no memory called ${mem[1]}`);
+      // Memories are shared with the whole team: nothing from a private DM goes in.
+      if (mem[2] === 'save' && this.store.thread(session.threadId)?.dm) {
+        throw new Error('This is a private direct message: nothing from it is saved to memory, which the whole team shares.');
+      }
       return mem[2] === 'save'
         ? this.saveMemory(session, agent, memory.name, memory.def.maxEntries ?? 50, String(args.text ?? ''))
         : this.removeMemory(session, agent, memory.name, String(args.id ?? ''));

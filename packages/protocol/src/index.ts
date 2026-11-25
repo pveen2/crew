@@ -155,7 +155,7 @@ export type CrewEventBody =
    * and read), requeued (missed the turn, waits for nextTurnId), edited (new
    * text, before the agent had it) or removed (taken back by the owner).
    */
-  | { type: 'message_delivery'; messageId: number; state: 'read' | 'requeued' | 'edited' | 'removed' | 'released'; nextTurnId?: string; text?: string }
+  | { type: 'message_delivery'; messageId: number; state: 'read' | 'requeued' | 'edited' | 'removed' | 'released' | 'rehold'; nextTurnId?: string; text?: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; callId: string; name: string; input: unknown }
   | { type: 'tool_result'; callId: string; output: string; isError: boolean }

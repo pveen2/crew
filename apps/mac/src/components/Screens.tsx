@@ -15,7 +15,7 @@ import {
   PanelHeader,
   Text,
 } from '@crew/ui';
-import { createThread, inScope, navigate, takeNewDraft, useApp } from '../store';
+import { createThread, dmTitle, inScope, navigate, takeNewDraft, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
 import { isPhoneTouch } from '../swipe';
 import { PersonFace, RoleFace, RoleFaces, ScopeToggle, age, useNow, usePersonName } from './common';
@@ -160,12 +160,14 @@ export function ThreadsView({ done = false }: { done?: boolean }) {
   const threads = useApp((s) => (done ? s.done : s.threads));
   const me = useApp((s) => s.me);
   const scope = useApp((s) => s.scope);
+  const people = useApp((s) => s.people);
   const now = useNow(30_000);
   const list = useMemo(
-    () => Object.values(threads).filter((t) => !t.dm && inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
+    // Open DMs are under Messages; closed ones are here in Done, so they stay findable.
+    () => Object.values(threads).filter((t) => (done || !t.dm) && inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
     [threads, me, scope],
   );
-  const hidden = Object.values(threads).filter((t) => !t.dm).length - list.length;
+  const hidden = Object.values(threads).filter((t) => done || !t.dm).length - list.length;
   return (
     <Panel as="main" className="pane-main">
       <PanelHeader>
@@ -189,7 +191,7 @@ export function ThreadsView({ done = false }: { done?: boolean }) {
           {list.map((t) => (
             <ListItem
               key={t.id}
-              title={t.title}
+              title={t.dm ? `Message · ${dmTitle(t, me, people)}` : t.title}
               tooltip={t.title}
               unread={!done && (t.status === 'needs_you' || t.status === 'interrupted' || t.status === 'error')}
               onClick={() => navigate({ name: 'thread', threadId: t.id })}

@@ -29,6 +29,7 @@ import {
   editQueuedMessage,
   isPhone,
   dmTitle,
+  leadingPerson,
   markDmSeen,
   mentionedPeople,
   navigate,
@@ -828,7 +829,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const me = useApp((s) => s.me);
   const people = useApp((s) => s.people);
   // A DM before anyone called an agent: messages go to people only.
-  const dmQuiet = Boolean(data.thread.dm) && !Object.values(data.turns).some((t) => t.sessionId === rootId);
+  // From the events, which arrive live (turns are only loaded with the thread).
+  const dmQuiet = Boolean(data.thread.dm) && !data.events.some((e) => e.type === 'turn_started' && e.sessionId === rootId);
   const picker = useMentionPicker(text, setText, ref, options, me ? people.filter((p) => p.email !== me) : []);
 
   const submit = async () => {
@@ -842,9 +844,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
     if (body.startsWith('@')) {
       const resolved = resolveMention(body, options, session.id);
       if ('error' in resolved) {
-        // "@Juliette, …" starts with a person, not an agent: that is fine.
-        const first = (/^@([^\s,.:;!?]+)/.exec(body)?.[1] ?? '').toLowerCase();
-        if (!people.some((p) => p.email !== me && p.name.toLowerCase() === first)) {
+        // "@Juliette, …" or "@Paul Veen, …" starts with a person, not an agent: that is fine.
+        if (!leadingPerson(body, people, me)) {
           setError(resolved.error);
           return;
         }
@@ -1038,9 +1039,13 @@ function HeldLine({ threadId, data, session, label }: { threadId: string; data: 
   const online = useApp((s) => s.connection === 'online');
   const [busy, setBusy] = useState(false);
   const waiting = useMemo(() => {
-    const done = new Set<number>();
-    for (const e of data.events) if (e.type === 'message_delivery' && e.sessionId === session.id) done.add(e.messageId);
-    const held = data.events.filter((e): e is Ev<'message'> => e.type === 'message' && e.sessionId === session.id && e.delivery === 'held' && !done.has(e.id));
+    // Released or taken back by the last delivery event, unless that put it back ('rehold').
+    const last = new Map<number, string>();
+    for (const e of data.events) if (e.type === 'message_delivery' && e.sessionId === session.id) last.set(e.messageId, e.state);
+    const held = data.events.filter(
+      (e): e is Ev<'message'> =>
+        e.type === 'message' && e.sessionId === session.id && e.delivery === 'held' && (!last.has(e.id) || last.get(e.id) === 'rehold'),
+    );
     return [...new Set(held.flatMap((e) => e.mentions ?? []))];
   }, [data.events, session.id]);
   if (!waiting.length) return null;

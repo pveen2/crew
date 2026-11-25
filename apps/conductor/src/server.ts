@@ -169,6 +169,12 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         }
         const token = parts[1] ?? '';
         if (!SHARE_TOKEN.test(token)) return send(res, 404, { error: 'Not found' });
+        // /s/<token>/ would load the page's code from /s/<token>/assets: send it to /s/<token>.
+        if (parts.length === 2 && url.pathname.endsWith('/')) {
+          res.writeHead(301, { location: `/s/${token}`, 'cache-control': 'no-store' });
+          res.end();
+          return;
+        }
         if (parts.length === 2) {
           if (await serveWeb('/index.html', res, { fallback: false })) return;
           return send(res, 404, { error: 'Not found' });
@@ -254,8 +260,13 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         return send(res, 200, await runtime.createDm(email, others, typeof body.text === 'string' ? body.text : undefined));
       }
 
-      // A DM is only for the people in it: to anyone else it does not exist.
-      if ((a === 'threads' || a === 'attachments') && id && !runtime.canSee(id, email)) return send(res, 404, { error: 'No such thread' });
+      // A DM is only for the people in it: to anyone else it, and everything in it, does not exist.
+      if (id && email) {
+        const kinds = { messages: 'message', sessions: 'session', inbox: 'inbox', docs: 'doc' } as const;
+        const kind = kinds[a as keyof typeof kinds];
+        const threadId = a === 'threads' || a === 'attachments' ? id : kind ? runtime.threadOf(kind, id) : undefined;
+        if (threadId && !runtime.canSee(threadId, email)) return send(res, 404, { error: 'Not found' });
+      }
 
       if (a === 'threads') {
         if (req.method === 'POST' && !id) {

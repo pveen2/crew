@@ -458,15 +458,27 @@ export class Store {
     const r = this.get('SELECT dm FROM threads WHERE id = ?', threadId);
     return r?.dm ? this.peopleOfThread(threadId) : null;
   }
-  /** The DM between exactly these people, if there is one. */
+  /** The DM between exactly these people, if there is one (closed ones too). */
   dmBetween(emails: string[]): string | undefined {
     const want = [...new Set(emails.map((e) => e.toLowerCase()))].sort().join(',');
-    const rows = this.all('SELECT id FROM threads WHERE dm = 1 AND archived = 0 ORDER BY updated_at DESC');
+    const rows = this.all('SELECT id FROM threads WHERE dm = 1 ORDER BY archived, updated_at DESC');
     return rows.map((r) => r.id as string).find((id) => [...this.peopleOfThread(id)].sort().join(',') === want);
   }
+  /** The last message as people see it: edits applied, taken-back messages skipped. */
   lastMessageOfThread(threadId: string): CrewEvent | undefined {
-    const r = this.get("SELECT * FROM events WHERE thread_id = ? AND type = 'message' ORDER BY id DESC LIMIT 1", threadId);
-    return r && toEvent(r);
+    const rows = this.all("SELECT * FROM events WHERE thread_id = ? AND type IN ('message', 'message_delivery') ORDER BY id DESC LIMIT 200", threadId).map(toEvent);
+    const removed = new Set<number>();
+    const edited = new Map<number, string>();
+    for (const e of rows) {
+      if (e.type === 'message_delivery') {
+        if (e.state === 'removed') removed.add(e.messageId);
+        // Newest first: the first edit seen is the latest.
+        if (e.state === 'edited' && e.text !== undefined && !edited.has(e.messageId)) edited.set(e.messageId, e.text);
+        continue;
+      }
+      if (e.type === 'message' && !removed.has(e.id)) return edited.has(e.id) ? { ...e, text: edited.get(e.id)! } : e;
+    }
+    return undefined;
   }
   peopleOfThread(threadId: string): string[] {
     return this.all('SELECT email FROM thread_people WHERE thread_id = ? ORDER BY rowid', threadId).map((r) => r.email as string);
@@ -720,12 +732,26 @@ export class Store {
    * Not yet released (by a reply, a message to the agent, or Go ahead) or taken back.
    */
   heldMessages(threadId: string, sessionId: string): CrewEvent[] {
-    return this.all(
-      `SELECT * FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message' AND json_extract(body, '$.delivery') = 'held'
-         AND id NOT IN (SELECT json_extract(body, '$.messageId') FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message_delivery')
-       ORDER BY id`,
-      threadId, sessionId, threadId, sessionId,
+    const held = this.all(
+      `SELECT * FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message' AND json_extract(body, '$.delivery') = 'held' ORDER BY id`,
+      threadId, sessionId,
     ).map(toEvent);
+    if (!held.length) return [];
+    // A held message is released (or taken back) by a later delivery event; 'rehold'
+    // puts it back when the message that carried it to the agent was taken back.
+    const last = new Map<number, string>();
+    for (const e of this.all("SELECT * FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message_delivery' ORDER BY id", threadId, sessionId).map(toEvent)) {
+      if (e.type === 'message_delivery') last.set(e.messageId, e.state);
+    }
+    return held.filter((e) => {
+      const state = last.get(e.id);
+      return state === undefined || state === 'rehold';
+    });
+  }
+  /** The event a queued message is, to find its thread. */
+  event(id: number): CrewEvent | undefined {
+    const r = this.get('SELECT * FROM events WHERE id = ?', id);
+    return r && toEvent(r);
   }
   inboxItem(id: string): InboxItem | undefined {
     const r = this.get('SELECT * FROM inbox WHERE id = ?', id);

@@ -1045,15 +1045,38 @@ export async function releaseThread(threadId: string): Promise<void> {
   await api('POST', `/api/threads/${threadId}/release`);
 }
 
-/** The people (by email) a message tags: "@Juliette" for each colleague, not yourself. */
+/**
+ * The people (by email) a message tags: "@Juliette" for each colleague, not yourself.
+ * Longest names first, and each "@…" counts once: "@Paul Veen" is Paul Veen, never
+ * also a "Paul". A name that two people share tags nobody.
+ */
 export function mentionedPeople(text: string, people: Person[] = state.people, me: string | null = state.me): string[] {
   const out: string[] = [];
+  const byName = new Map<string, Person[]>();
   for (const p of people) {
     if (p.email === me) continue;
-    const re = new RegExp(`(^|[^\\w@])@${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'i');
-    if (re.test(text)) out.push(p.email);
+    const key = p.name.toLowerCase();
+    byName.set(key, [...(byName.get(key) ?? []), p]);
+  }
+  let rest = text;
+  for (const name of [...byName.keys()].sort((a, b) => b.length - a.length)) {
+    const re = new RegExp(`(^|[^\\w@])@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'gi');
+    if (!re.test(rest)) continue;
+    const who = byName.get(name)!;
+    if (who.length === 1) out.push(who[0]!.email);
+    // Used up, so a shorter name cannot match inside it.
+    rest = rest.replace(re, '$1');
   }
   return out;
+}
+
+/** The colleague a message starts with ("@Paul Veen, …"), if any. */
+export function leadingPerson(text: string, people: Person[] = state.people, me: string | null = state.me): Person | undefined {
+  const lower = text.toLowerCase();
+  return people
+    .filter((p) => p.email !== me)
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((p) => lower.startsWith('@' + p.name.toLowerCase()) && !/[\w]/.test(lower.charAt(p.name.length + 1)));
 }
 
 /** Whether an Inbox item is for whoever is signed in: tags are only for the person tagged. */

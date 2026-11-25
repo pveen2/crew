@@ -215,6 +215,10 @@ export function ScopeToggle({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
 /** "@Juliette" in a message, marked, for colleagues the conductor knows. */
 export function markMentions(text: string, names: string[]): string {
   if (!names.length || !text.includes('@')) return text;
-  const alt = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  // Longest first: "@Paul Veen" is marked whole, not as "@Paul".
+  const alt = [...names]
+    .sort((a, b) => b.length - a.length)
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|');
   return text.replace(new RegExp(`(^|[^\\w@])@(${alt})(?![\\w])`, 'gi'), '$1<mark>@$2</mark>');
 }
