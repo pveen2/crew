@@ -568,7 +568,7 @@ function WaitingChip({ event, info, label }: { event: Ev<'message'>; info: Deliv
               if (draft.trim()) void act(() => editQueuedMessage(event.id, draft.trim()));
             }}
           >
-            <TextField label="Edit message" value={draft} onChange={setDraft} disabled={busy} />
+            <TextField variant="message" label="Edit message" value={draft} onChange={setDraft} disabled={busy} />
           </form>
         ) : (
           <Text as="span" variant="bodySm" truncate>

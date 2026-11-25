@@ -114,6 +114,7 @@ export function QuestionAnswer({
         }}
       >
         <TextField
+          variant="message"
           label={hasOptions ? 'Another answer' : 'Your answer'}
           placeholder={multi ? 'Add something else…' : hasOptions ? 'Or type something else…' : 'Your answer…'}
           value={text}
@@ -122,7 +123,7 @@ export function QuestionAnswer({
           disabled={!online || busy}
         />
         {actions}
-        <Button variant={hasOptions && !multi ? 'secondary' : 'primary'} type="submit" disabled={!answer || busy || !online}>
+        <Button size="large" variant={hasOptions && !multi ? 'secondary' : 'primary'} type="submit" disabled={!answer || busy || !online}>
           Send
         </Button>
       </form>

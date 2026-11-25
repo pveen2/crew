@@ -9,14 +9,16 @@ export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElemen
   icon?: IconName;
   /** Show the label visually (otherwise it is only for screen readers). */
   showLabel?: boolean;
+  /** "message": for writing a message, at the size of message text (like the composer). */
+  variant?: 'default' | 'message';
 }
 
 export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextField(
-  { label, value, onChange, icon, showLabel, className, disabled, ...rest },
+  { label, value, onChange, icon, showLabel, variant = 'default', className, disabled, ...rest },
   ref,
 ) {
   return (
-    <label className={cx('cr-text-field', disabled && 'cr-text-field--disabled', className)}>
+    <label className={cx('cr-text-field', variant === 'message' && 'cr-text-field--message', disabled && 'cr-text-field--disabled', className)}>
       <span className={showLabel ? undefined : 'cr-visually-hidden'}>{label}</span>
       {icon ? <Icon name={icon} size={14} /> : null}
       <input ref={ref} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} {...rest} />
