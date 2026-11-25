@@ -131,11 +131,13 @@ export async function graphql(
           `shopify store auth --store ${store} --scopes ${scopes}`,
       );
     }
-    const missing = /Required access: `?(\w+)`?/i.exec(detail)?.[1];
-    if (missing && !requests(missing)) {
+    // "Required access: `write_x` or `write_y` access scope. Also: …" names one or more alternative scopes.
+    const required = /Required access:([^\n.]*)/i.exec(detail)?.[1].match(/\b(?:unauthenticated_)?(?:read|write)_\w+/g) ?? [];
+    const missing = required.join(' or ') || undefined;
+    if (required.length && !required.some(requests)) {
       throw new Error(
         `Shopify refused: it needs ${missing}, which Crew's Shopify sign-in does not ask for, so signing in again will not help. ` +
-          `Add ${missing} to the scopes in packages/kit/src/shopify/cli.ts first, then sign in again.\n${detail.slice(0, 1500)}`,
+          `Add ${required.length > 1 ? "one of them" : missing} to the scopes in packages/kit/src/shopify/cli.ts first, then sign in again.\n${detail.slice(0, 1500)}`,
       );
     }
     if (!opts.allowMutations && missing) {

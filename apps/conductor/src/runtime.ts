@@ -89,6 +89,8 @@ const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 
 const ATTACHMENT_TYPES: Record<string, string> = { ...IMAGE_TYPES, 'video/mp4': 'mp4', 'video/webm': 'webm' };
 const MAX_IMAGES = 8;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+/** The most an ask-every-time approval shows; bigger inputs are refused, never cut off. */
+const MAX_ALWAYS_ASK_SHOWN = 50_000;
 
 /** Store uploaded images in the thread's attachments folder. */
 function saveAttachments(threadId: string, uploads: AttachmentUpload[] | undefined): Attachment[] {
@@ -1264,7 +1266,14 @@ export class Runtime {
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
-    if (shown.length > 3000) shown = shown.slice(0, 2999) + '…';
+    // A tool that asks every time changes things outside Crew: the owner sees every character
+    // they approve, and a change too big to show is refused instead of cut off.
+    if (alwaysAsk && shown.length > MAX_ALWAYS_ASK_SHOWN) {
+      throw new Error(
+        `${toolName} input is ${shown.length} characters, more than the ${MAX_ALWAYS_ASK_SHOWN} the owner can review in one approval. Split it into smaller changes.`,
+      );
+    }
+    if (!alwaysAsk && shown.length > 3000) shown = `${shown.slice(0, 2999)}…\n(cut off: 3000 of ${shown.length} characters shown)`;
     let title = `${agent.label} wants to run ${toolName}`;
     try {
       const custom = tool?.approvalTitle?.(input)?.replace(/\s+/g, ' ').trim();
