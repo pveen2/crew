@@ -212,6 +212,7 @@ function toInbox(r: Row): InboxItem {
     kind: r.kind as InboxKind,
     role: (r.role as string | null) ?? '',
     previewId: (r.preview_id as string | null) ?? undefined,
+    ...(r.choices ? (JSON.parse(r.choices as string) as Pick<InboxItem, 'options' | 'recommended' | 'multiSelect'>) : {}),
     title: r.title as string,
     body: r.body as string,
     status: r.status as InboxItem['status'],
@@ -250,6 +251,7 @@ export class Store {
       'ALTER TABLE turns ADD COLUMN pid INTEGER',
       "ALTER TABLE inbox ADD COLUMN role TEXT NOT NULL DEFAULT ''",
       'ALTER TABLE inbox ADD COLUMN preview_id TEXT',
+      'ALTER TABLE inbox ADD COLUMN choices TEXT',
       "ALTER TABLE threads ADD COLUMN benched TEXT NOT NULL DEFAULT '[]'",
     'ALTER TABLE turns ADD COLUMN cost_usd REAL',
     'ALTER TABLE turns ADD COLUMN input_tokens INTEGER',
@@ -419,8 +421,10 @@ export class Store {
 
   insertInbox(i: InboxItem): void {
     this.run(
-      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null, i.title, i.body, i.status, i.createdAt,
+      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, choices, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+      i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null,
+      i.options?.length ? JSON.stringify({ options: i.options, recommended: i.recommended, multiSelect: i.multiSelect }) : null,
+      i.title, i.body, i.status, i.createdAt,
     );
   }
   inboxItem(id: string): InboxItem | undefined {
@@ -433,6 +437,10 @@ export class Store {
   openInboxOfThread(threadId: string, kinds?: InboxKind[]): InboxItem[] {
     const rows = this.all("SELECT * FROM inbox WHERE status = 'open' AND thread_id = ? ORDER BY created_at", threadId).map(toInbox);
     return kinds ? rows.filter((r) => kinds.includes(r.kind)) : rows;
+  }
+  reopenInbox(id: string): InboxItem | undefined {
+    this.run("UPDATE inbox SET status = 'open' WHERE id = ?", id);
+    return this.inboxItem(id);
   }
   resolveInbox(id: string): InboxItem | undefined {
     this.run("UPDATE inbox SET status = 'resolved' WHERE id = ?", id);

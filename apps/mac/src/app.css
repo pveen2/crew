@@ -1019,7 +1019,109 @@ body,
 .answer-stack {
   display: flex;
   flex-direction: column;
+  gap: var(--cr-space-200);
+}
+.answer-options {
+  display: flex;
+  flex-direction: column;
   gap: var(--cr-space-150);
+}
+.answer-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--cr-space-050);
+  width: 100%;
+  padding: var(--cr-space-200) var(--cr-space-300);
+  border: 0;
+  border-radius: var(--cr-radius-300);
+  background: var(--cr-color-bg-surface);
+  box-shadow: var(--cr-shadow-border-control);
+  color: var(--cr-color-text);
+  font: inherit;
+  text-align: left;
+  cursor: default;
+  transition: background-color var(--cr-duration-fast) var(--cr-easing);
+}
+.answer-option:hover {
+  background: var(--cr-color-bg-fill-hover);
+}
+.answer-option:active {
+  background: var(--cr-color-bg-fill-active);
+}
+.answer-option:focus-visible {
+  outline: none;
+  box-shadow: var(--cr-shadow-border-control), var(--cr-focus-ring);
+}
+.answer-option:disabled {
+  opacity: var(--cr-opacity-disabled);
+  pointer-events: none;
+}
+.answer-option--recommended {
+  box-shadow: 0 0 0 1.5px var(--cr-color-border-focus);
+}
+.answer-option--picked {
+  background: var(--cr-color-bg-fill-selected);
+}
+.answer-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  align-self: center;
+  border-radius: var(--cr-radius-150, 4px);
+  box-shadow: var(--cr-shadow-border-control);
+  background: var(--cr-color-bg-surface);
+}
+.answer-check--on {
+  background: var(--cr-color-bg-fill-brand);
+  color: var(--cr-color-text-on-fill);
+  box-shadow: none;
+}
+.answer-option__detail--indent {
+  padding-left: calc(16px + var(--cr-space-200));
+}
+.answer-given {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cr-space-200);
+  color: var(--cr-color-text);
+}
+.answer-given > svg {
+  flex: 0 0 auto;
+  color: var(--cr-color-text-secondary);
+  transform: translateY(2px);
+}
+.answer-given .md p:last-child {
+  margin-bottom: 0;
+}
+/* Several picks: one check per line instead of bullets. */
+.answer-given:has(ul) > svg {
+  display: none;
+}
+.answer-given ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.answer-given li {
+  display: flex;
+  gap: var(--cr-space-200);
+  align-items: baseline;
+}
+.answer-given li::before {
+  content: '✓';
+  color: var(--cr-color-text-secondary);
+  font-size: var(--cr-font-size-300);
+}
+.answer-option__label {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cr-space-200);
+  font-size: var(--cr-font-size-338);
+  font-weight: var(--cr-font-weight-medium);
 }
 
 /* ------------------------------------------------------------------ attached images */

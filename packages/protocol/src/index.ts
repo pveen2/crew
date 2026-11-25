@@ -121,6 +121,8 @@ export type CrewEventBody =
        * waits for the turn with this event's turnId to start.
        */
       delivery?: 'steer' | 'queue';
+      /** Owner message: the Inbox question (needs_you inboxId) it answers. */
+      replyTo?: string;
     }
   /**
    * What became of an owner message sent while the agent worked: read (steered
@@ -149,7 +151,8 @@ export type CrewEventBody =
       result: string;
       durationMs: number;
     }
-  | { type: 'needs_you'; question: string; inboxId: string }
+  /** ask_owner: one question, optionally with answers the owner can click. */
+  | { type: 'needs_you'; question: string; inboxId: string; options?: QuestionOption[]; recommended?: number; multiSelect?: boolean }
   /** A tool call waits for the owner (approve or deny in the Inbox). */
   | { type: 'approval'; inboxId: string; toolName: string; input: unknown }
   | { type: 'approval_done'; inboxId: string; toolName: string; approved: boolean }
@@ -172,6 +175,14 @@ export type CrewEventType = CrewEventBody['type'];
 
 export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft';
 
+/** A clickable answer to an ask_owner question. */
+export interface QuestionOption {
+  /** What the button says, and what is sent back as the answer. */
+  label: string;
+  /** One line under the label: a cost, a consequence. */
+  detail?: string;
+}
+
 export interface InboxItem {
   id: string;
   threadId: string;
@@ -183,6 +194,11 @@ export interface InboxItem {
   previewId?: string;
   title: string;
   body: string;
+  /** needs_you: the answers the owner can click, and the asker's best guess (index). */
+  options?: QuestionOption[];
+  recommended?: number;
+  /** The owner may pick more than one option. */
+  multiSelect?: boolean;
   status: 'open' | 'resolved';
   createdAt: number;
 }

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import type { InboxItem } from '@crew/protocol';
-import { BlockStack, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Text, TextField, cx, type IconName } from '@crew/ui';
+import { BlockStack, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Text, cx, type IconName } from '@crew/ui';
 import { isPhone, setInboxListWidth } from '../store';
 import { PaneResizer } from './PaneResizer';
-import { decideApproval, ensureThreads, navigate, resolveInbox, resumeThread, selectPreview, sendMessage, setInboxFilter, useApp } from '../store';
+import { decideApproval, ensureThreads, navigate, resolveInbox, resumeThread, selectPreview, setInboxFilter, useApp } from '../store';
 import { Markdown, RoleFace, age, ago, useNow, useRoleLabel } from './common';
 import { DocSourceBar, DocView, usePreviewDocs } from './PreviewPanel';
+import { QuestionAnswer } from './QuestionAnswer';
 import type { PreviewDoc } from '../store';
 
 const KIND: Record<InboxItem['kind'], { label: string; icon: IconName; order: number }> = {
@@ -47,33 +48,6 @@ function InboxRow({ item, selected, unread, now }: { item: InboxItem; selected: 
       }
       trailing={role ? <RoleFace role={role} size="sm" /> : undefined}
     />
-  );
-}
-
-function AnswerForm({ item }: { item: InboxItem }) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const online = useApp((s) => s.connection === 'online');
-  return (
-    <form
-      className="answer-form"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (!text.trim() || busy) return;
-        setBusy(true);
-        try {
-          await sendMessage(item.threadId, text.trim(), item.sessionId, item.id);
-          setText('');
-        } finally {
-          setBusy(false);
-        }
-      }}
-    >
-      <TextField label="Your answer" placeholder="Your answer…" value={text} onChange={setText} autoFocus disabled={!online} />
-      <Button variant="primary" type="submit" disabled={!text.trim() || busy || !online}>
-        Send answer
-      </Button>
-    </form>
   );
 }
 
@@ -160,7 +134,9 @@ function InboxDetail({ item }: { item: InboxItem }) {
             </Text>
           ) : null}
           <Markdown text={item.body} />
-          {item.kind === 'needs_you' ? <AnswerForm item={item} /> : null}
+          {item.kind === 'needs_you' ? (
+            <QuestionAnswer threadId={item.threadId} sessionId={item.sessionId} inboxId={item.id} options={item.options} recommended={item.recommended} multiSelect={item.multiSelect} autoFocus />
+          ) : null}
           {item.kind === 'interrupted' || item.kind === 'error' ? (
             <Text variant="bodySm" tone="secondary">
               {item.kind === 'interrupted'

@@ -56,7 +56,7 @@ export function crewTools(crew: LoadedCrew, agent: LoadedAgent, canDelegate: boo
   if (canDelegate) {
     tools.push({ name: 'rename_thread', description: 'Give the thread a clearer 3–6 word title when the current one is vague or wrong.' });
   }
-  tools.push({ name: 'ask_owner', description: 'Ask the owner something only they can answer, then end your turn.' });
+  tools.push({ name: 'ask_owner', description: 'Ask the owner one question only they can answer, with clickable options when there are a few choices, then end your turn.' });
   tools.push({
     name: 'show_preview',
     description: 'Show a document to the owner: an artifactId, or short content. Use html (styled by Crew) for anything visual or with images.',

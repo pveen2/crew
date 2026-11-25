@@ -4,7 +4,7 @@
 //
 //   <subagent>(message)             lead only: one tool per agent/subagents/<name>, e.g. store_manager
 //   rename_thread(title)            lead only: give the thread a clearer title
-//   ask_owner(question)             put a question in the owner's Inbox
+//   ask_owner(question, options?)   ask the owner one question, with clickable answers
 //   show_preview(title, artifactId | content)   show a document to the owner
 //   save_artifact(title, content)   specialists: store long work, get an id back
 //   read_artifact(id)               read an artifact from this thread
@@ -159,9 +159,25 @@ server.registerTool(
   'ask_owner',
   {
     description:
-      "Ask the owner a question only they can answer (a decision, missing information, permission). It goes to the owner's Inbox. " +
-      'After calling this, end your turn; the answer arrives as a new message.',
-    inputSchema: { question: z.string().min(1) },
+      "Ask the owner one question only they can answer (a decision, missing information, permission). It shows as a card in the thread and in the owner's Inbox. " +
+      'Ask only when the likely readings lead to different work, or the choice costs money or cannot be undone; otherwise act on the likeliest reading and state the assumption. ' +
+      'One question per call, one short sentence. When the answer is one of a few choices, pass them as options: the owner answers with one click, and can still type something else, so never add an "Other" option. ' +
+      'Put the option you would pick in recommended. Set multiSelect when more than one option can apply. After calling this, end your turn without restating the question; the answer arrives as a new message.',
+    inputSchema: {
+      question: z.string().min(1).describe('One short question. No numbered list of choices: put those in options.'),
+      options: z
+        .array(
+          z.object({
+            label: z.string().min(1).max(80).describe('The answer as the owner would say it, a few words. Sent back to you as their reply.'),
+            detail: z.string().max(160).optional().describe('One short line: a cost, a consequence, what you would do.'),
+          }),
+        )
+        .min(2)
+        .max(4)
+        .optional(),
+      recommended: z.number().int().min(0).max(3).optional().describe('Index of the option you would pick.'),
+      multiSelect: z.boolean().optional().describe('The owner may pick several options; their answer lists each one.'),
+    },
     annotations: local,
   },
   forward('ask_owner'),

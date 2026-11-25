@@ -17,6 +17,7 @@ import type {
   Engine,
   InboxItem,
   InboxKind,
+  QuestionOption,
   RoleSummary,
   ServerMessage,
   StateResponse,
@@ -74,6 +75,8 @@ interface QueuedMessage {
   prompt: (text: string) => string;
   text: string;
   removed: boolean;
+  /** The question this message answers: reopened when the message is taken back. */
+  replyTo?: string;
 }
 
 const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
@@ -175,6 +178,32 @@ const TITLE_PROMPT = (text: string) =>
   'Reply with the title only: no quotes, no period, no explanation. Do not use any tools.\n\n' +
   `<message>\n${text.slice(0, 4000)}\n</message>`;
 
+/**
+ * ask_owner's clickable answers, cleaned: 2–4 options with a label, and a
+ * recommended index only when it points at one. Anything else: no buttons, the
+ * owner types the answer, so a malformed list never blocks the question.
+ */
+export function questionOptions(args: Record<string, unknown>): { options?: QuestionOption[]; recommended?: number; multiSelect?: boolean } {
+  if (!Array.isArray(args.options)) return {};
+  const options: QuestionOption[] = [];
+  let recommended: number | undefined;
+  const seen = new Set<string>();
+  args.options.forEach((o: unknown, index: number) => {
+    const raw = typeof o === 'string' ? { label: o } : (o as Record<string, unknown> | null);
+    const label = typeof raw?.label === 'string' ? raw.label.replace(/\s+/g, ' ').trim() : '';
+    if (!label || /^(something else|other|anders|iets anders)\.?$/i.test(label)) return; // the text box covers it
+    // The label is what gets sent back, so two equal labels would be the same answer.
+    if (seen.has(label.toLowerCase()) || options.length === 4) return;
+    seen.add(label.toLowerCase());
+    // recommended points into the list the agent wrote: follow its option, not its position.
+    if (index === args.recommended) recommended = options.length;
+    const detail = typeof raw?.detail === 'string' ? raw.detail.replace(/\s+/g, ' ').trim() : '';
+    options.push(detail ? { label, detail } : { label });
+  });
+  if (options.length < 2) return {};
+  return { options, recommended, ...(args.multiSelect === true ? { multiSelect: true } : {}) };
+}
+
 function snippet(text: string, max = 120): string {
   const s = text.replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -257,14 +286,20 @@ export class Runtime {
     this.broadcast({ kind: 'thread', thread: this.withMeta(next) });
   }
 
-  private addInbox(session: SessionRow, kind: InboxKind, title: string, body: string, previewId?: string): InboxItem {
+  private addInbox(
+    session: SessionRow,
+    kind: InboxKind,
+    title: string,
+    body: string,
+    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect'> = {},
+  ): InboxItem {
     const item: InboxItem = {
       id: newId('i'),
       threadId: session.threadId,
       sessionId: session.id,
       kind,
       role: session.role,
-      previewId,
+      ...extra,
       title,
       body,
       status: 'open',
@@ -515,28 +550,45 @@ export class Runtime {
     const session = this.store.session(sessionId ?? thread.rootSessionId);
     if (!session || session.threadId !== threadId) throw new Error('That session is not part of this thread');
 
-    let answered = false;
+    let question: InboxItem | undefined;
     if (replyTo) {
-      // An answer to one question resolves that question only.
+      // An answer to one question resolves that question only. A second answer
+      // (a stale card, another device, a retry) would start another turn.
       const item = this.store.inboxItem(replyTo);
       if (!item || item.sessionId !== session.id || item.kind !== 'needs_you') {
         throw new Error('That question does not belong to this agent.');
       }
-      if (item.status === 'open') this.resolveInbox(item.id);
-      answered = true;
-    } else if (this.store.openInboxOfThread(threadId, ['needs_you']).filter((i) => i.sessionId === session.id).length === 1) {
+      if (item.status !== 'open') throw new Error('This question was already answered or dismissed.');
+      question = item;
+    } else {
       // A plain reply while exactly one question is open answers that question.
-      this.resolveInboxOf(threadId, ['needs_you'], session.id);
-      answered = true;
+      const open = this.store.openInboxOfThread(threadId, ['needs_you']).filter((i) => i.sessionId === session.id);
+      if (open.length === 1) question = open[0];
     }
+    if (question) this.resolveInbox(question.id);
+    const answers = question?.id;
+    const answered = Boolean(question);
     if (session.depth === 0) this.resolveInboxOf(threadId, ['error']);
 
     const attachments = saveAttachments(threadId, uploads);
     text = text.trim() || (attachments.length ? 'See the attached image.' : text);
-    const promptOf = (t: string) => (session.depth === 0 ? t : `Message from the owner, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
+    // An answer names its question: with several open, a bare "Yes" is ambiguous.
+    const promptOf = (t: string) =>
+      (question
+        ? `The owner answered your question "${snippet(question.body, 300)}":\n\n${t}`
+        : session.depth === 0
+          ? t
+          : `Message from the owner, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
     const prompt = promptOf(text);
     const images = attachments.map((a) => a.file);
-    const message = { type: 'message', role: 'user', text, from: 'owner', ...(attachments.length ? { attachments } : {}) } as const;
+    const message = {
+      type: 'message',
+      role: 'user',
+      text,
+      from: 'owner',
+      ...(attachments.length ? { attachments } : {}),
+      ...(answers ? { replyTo: answers } : {}),
+    } as const;
 
     // Steer: the agent is working and its engine can take the message into the
     // running turn, so it reads it at its next step. Not when other messages
@@ -571,7 +623,7 @@ export class Runtime {
     const turnId = newId('u');
     const event = this.emit(session, busy ? turnId : null, busy ? { ...message, delivery: 'queue' } : message);
     const queuedMessage: QueuedMessage | undefined = busy
-      ? { eventId: event.id, sessionId: session.id, prompt: promptOf, text, removed: false }
+      ? { eventId: event.id, sessionId: session.id, prompt: promptOf, text, removed: false, replyTo: answers }
       : undefined;
     if (queuedMessage) this.queuedMessages.set(event.id, queuedMessage);
     void this.enqueueTurn(session.id, prompt, { turnId, notifyParent: answered && session.depth > 0, images, queuedMessage });
@@ -592,7 +644,16 @@ export class Runtime {
     const q = this.takeQueued(eventId);
     q.removed = true;
     this.queuedMessages.delete(eventId);
-    this.emit(this.store.session(q.sessionId)!, null, { type: 'message_delivery', messageId: eventId, state: 'removed' });
+    const session = this.store.session(q.sessionId)!;
+    this.emit(session, null, { type: 'message_delivery', messageId: eventId, state: 'removed' });
+    // The answer was taken back: the question is open again.
+    if (q.replyTo) {
+      const item = this.store.reopenInbox(q.replyTo);
+      if (item) {
+        this.broadcast({ kind: 'inbox', item });
+        this.refreshThread(item.threadId);
+      }
+    }
   }
 
   private takeQueued(eventId: number): QueuedMessage {
@@ -1034,7 +1095,7 @@ export class Runtime {
         if (!agent.isLead) throw new Error('Only the lead renames threads.');
         return this.renameThread(session, String(args.title ?? ''));
       case 'ask_owner':
-        return this.askOwner(session, String(args.question ?? ''));
+        return this.askOwner(session, args);
       case 'show_preview':
         return this.showPreview(session, agent, args);
       case 'save_artifact':
@@ -1152,11 +1213,24 @@ export class Runtime {
     return `${sub.label} did not finish (${outcome.status}: ${outcome.error ?? 'no details'}).` + (outcome.text ? `\n\nPartial answer:\n${outcome.text}` : '');
   }
 
-  private askOwner(session: SessionRow, question: string): string {
-    const item = this.addInbox(session, 'needs_you', question.split('\n')[0]!.slice(0, 140), question);
-    this.emit(session, this.running.get(session.id)?.turnId ?? null, { type: 'needs_you', question, inboxId: item.id });
+  private askOwner(session: SessionRow, args: Record<string, unknown>): string {
+    const question = String(args.question ?? '').trim();
+    if (!question) throw new Error('Write the question.');
+    const { options, recommended, multiSelect } = questionOptions(args);
+    const item = this.addInbox(session, 'needs_you', question.split('\n')[0]!.slice(0, 140), question, { options, recommended, multiSelect });
+    this.emit(session, this.running.get(session.id)?.turnId ?? null, {
+      type: 'needs_you',
+      question,
+      inboxId: item.id,
+      ...(options ? { options, recommended, multiSelect } : {}),
+    });
     this.refreshThread(session.threadId);
-    return "Your question is in the owner's Inbox. End your turn now with a one-line summary; their answer will arrive as a new message.";
+    // The owner sees the question as a card; repeating it in chat only adds noise.
+    // A specialist's last message goes to whoever asked it for work, so that one
+    // still says it is waiting.
+    return session.depth === 0
+      ? "Your question is on the owner's screen as a card. End your turn now and write nothing else: no summary, no restating the question. Their answer arrives as a new message."
+      : "Your question is in the owner's Inbox. End your turn now with one line for whoever asked you for work: what you asked the owner. Their answer arrives as a new message.";
   }
 
   private showPreview(session: SessionRow, agent: LoadedAgent, args: Record<string, unknown>): string {
@@ -1178,7 +1252,7 @@ export class Runtime {
     const previewId = newId('p');
     this.emit(session, this.running.get(session.id)?.turnId ?? null, { type: 'preview', previewId, title, format, content });
     // Only the thread owner's previews go to the Inbox; specialists' drafts usually feed into it.
-    if (session.depth === 0) this.addInbox(session, 'draft', `Draft ready: ${title}`, `${agent.label} put "${title}" in the preview panel.`, previewId);
+    if (session.depth === 0) this.addInbox(session, 'draft', `Draft ready: ${title}`, `${agent.label} put "${title}" in the preview panel.`, { previewId });
     return `Shown to the owner in the preview panel as "${title}".`;
   }
 
