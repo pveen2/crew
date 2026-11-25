@@ -17,6 +17,8 @@ import type {
   Turn,
   TurnStatus,
   Usage,
+  SpendDay,
+  SpendResponse,
 } from '@crew/protocol';
 
 const SCHEMA = `
@@ -520,6 +522,55 @@ export class Store {
       inputTokens: Number(r?.input ?? 0),
       outputTokens: Number(r?.output ?? 0),
       unpricedTokens: Number(r?.unpriced ?? 0),
+    };
+  }
+
+  /**
+   * Spend and work per day for the last `days` days (today included), with days
+   * in the owner's time zone: `tzOffsetMin` is their Date#getTimezoneOffset().
+   */
+  spend(days: number, tzOffsetMin: number, now = Date.now()): SpendResponse {
+    const DAY = 86_400_000;
+    const shift = -tzOffsetMin * 60_000;
+    const todayStart = Math.floor((now + shift) / DAY) * DAY - shift;
+    const since = todayStart - (days - 1) * DAY;
+    const day = `date((t.started_at + ${shift}) / 1000, 'unixepoch')`;
+    const sums = `COALESCE(SUM(t.cost_usd), 0) AS cost,
+        COALESCE(SUM(t.input_tokens), 0) AS input, COALESCE(SUM(t.output_tokens), 0) AS output,
+        COALESCE(SUM(CASE WHEN t.cost_usd IS NULL THEN COALESCE(t.input_tokens, 0) + COALESCE(t.output_tokens, 0) ELSE 0 END), 0) AS unpriced,
+        COUNT(*) AS turns, COUNT(DISTINCT t.thread_id) AS threads,
+        COALESCE(SUM(CASE WHEN t.caller_session_id IS NULL AND t.ended_at IS NOT NULL THEN t.ended_at - t.started_at ELSE 0 END), 0) AS work`;
+    // Turns that never reached an agent (saved prompts, queued messages) did no work.
+    const worked = `t.started_at >= ? AND (t.ended_at IS NULL OR t.ended_at > t.started_at OR t.cost_usd IS NOT NULL OR t.input_tokens IS NOT NULL)`;
+    const totals = (r: Row | undefined) => ({
+      costUsd: Number(r?.cost ?? 0),
+      tokens: Number(r?.input ?? 0) + Number(r?.output ?? 0),
+      unpricedTokens: Number(r?.unpriced ?? 0),
+      turns: Number(r?.turns ?? 0),
+      threads: Number(r?.threads ?? 0),
+      workMs: Number(r?.work ?? 0),
+    });
+    const byDay = new Map(
+      this.all(`SELECT ${day} AS day, ${sums} FROM turns t WHERE ${worked} GROUP BY day`, since).map((r) => [String(r.day), totals(r)]),
+    );
+    const out: SpendDay[] = [];
+    for (let i = 0; i < days; i++) {
+      const date = new Date(since + i * DAY + shift).toISOString().slice(0, 10);
+      out.push({ date, ...(byDay.get(date) ?? totals(undefined)) });
+    }
+    const agents = this.all(
+      `SELECT s.role AS role, ${sums} FROM turns t JOIN sessions s ON s.id = t.session_id WHERE ${worked}
+       GROUP BY s.role ORDER BY cost DESC, input + output DESC`,
+      since,
+    ).map((r) => {
+      const { costUsd, tokens, unpricedTokens, turns } = totals(r);
+      return { role: String(r.role), costUsd, tokens, unpricedTokens, turns };
+    });
+    const all = this.get(`SELECT ${sums} FROM turns t WHERE ${worked}`, since);
+    return {
+      days: out,
+      agents,
+      totals: { ...totals(all), inputTokens: Number(all?.input ?? 0), outputTokens: Number(all?.output ?? 0) },
     };
   }
 

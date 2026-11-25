@@ -17,6 +17,7 @@ import type {
   DocResponse,
   DocStatus,
   DocSummary,
+  SpendResponse,
   Engine,
   InboxItem,
   InboxKind,
@@ -1497,6 +1498,11 @@ export class Runtime {
   private broadcastDoc(id: string): void {
     const a = this.store.artifact(id);
     if (a?.shownAt) this.broadcast({ kind: 'doc', doc: this.docSummary(a) });
+  }
+
+  /** What the team did and spent per day, for the Settings overview. */
+  spend(days: number, tzOffsetMin: number): SpendResponse {
+    return this.store.spend(days, tzOffsetMin);
   }
 
   docs(): DocSummary[] {

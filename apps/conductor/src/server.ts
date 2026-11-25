@@ -122,6 +122,11 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
 
       if (req.method === 'GET' && a === 'state') return send(res, 200, await runtime.state());
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
+      if (req.method === 'GET' && a === 'spend') {
+        const days = Math.min(366, Math.max(1, Math.round(Number(url.searchParams.get('days') ?? 30)) || 30));
+        const tz = Number(url.searchParams.get('tz') ?? 0);
+        return send(res, 200, runtime.spend(days, Number.isFinite(tz) && Math.abs(tz) <= 840 ? Math.round(tz) : 0));
+      }
 
       // On a server only admins sign tools in, for the whole team.
       const mayManage = !onServer || isAdmin(email);
