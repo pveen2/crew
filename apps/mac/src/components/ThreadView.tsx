@@ -21,6 +21,7 @@ import {
   Text,
   TextField,
   type BadgeTone,
+  type MentionOption,
 } from '@crew/ui';
 import {
   archiveThread,
@@ -727,6 +728,29 @@ export function resolveMention(
   return { sessionId: pick.value, rest };
 }
 
+/**
+ * "@developer …" in a thread the lead owns: which agent it names. The message
+ * itself stays with the lead, who calls that specialist (the longest name wins).
+ */
+export function mentionedRole(body: string, roles: Array<{ name: string; label: string }>): { role: string; rest: string } | { error: string } {
+  const lower = body.toLowerCase();
+  let best: { key: string; role: string } | undefined;
+  for (const r of roles) {
+    for (const key of new Set([r.name.toLowerCase(), r.label.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')])) {
+      const end = 1 + key.length;
+      if (!lower.startsWith('@' + key) || (lower.length > end && !/\s/.test(lower[end]!))) continue;
+      if (!best || key.length > best.key.length) best = { key, role: r.name };
+    }
+  }
+  if (!best) {
+    const name = /^@(\S+)/.exec(body)?.[1] ?? '';
+    return { error: `No agent called @${name} on this thread's team.` };
+  }
+  const rest = body.slice(1 + best.key.length).trim();
+  if (!rest) return { error: 'Write a message after the @ name.' };
+  return { role: best.role, rest };
+}
+
 function ThreadComposer({ threadId, session, data, rootId }: { threadId: string; session: Session; data: ThreadData; rootId: string }) {
   const [text, setText] = useState('');
   const images = useAttachments();
@@ -738,6 +762,23 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const working = session.status === 'running' || session.status === 'queued';
   const ref = useRef<HTMLTextAreaElement>(null);
   const options = useMemo(() => sessionOptions(data, rootId, labels), [data, rootId, labels]);
+  // In a thread the lead owns, @ lists the whole team: the question stays here
+  // and the lead starts that specialist. Otherwise @ talks to an agent in the thread.
+  const roles = useApp((s) => s.roles);
+  const benched = useApp((s) => (s.threads[threadId] ?? s.details[threadId]?.thread)?.benched);
+  const root = data.sessions[rootId];
+  const leadOwns = !!root && roles.some((r) => r.isLead && r.name === root.role);
+  const team = useMemo(
+    () => (leadOwns ? roles.filter((r) => r.isLead || !benched?.includes(r.name)).sort((a, b) => Number(b.isLead) - Number(a.isLead)) : []),
+    [leadOwns, roles, benched],
+  );
+  const mentions = useMemo<MentionOption[]>(
+    () =>
+      leadOwns
+        ? team.map((r) => ({ value: r.name, label: r.label, description: r.isLead ? 'Keep it with the lead' : r.description, prefix: <RoleFace role={r.name} size="sm" decorative /> }))
+        : options.map((o) => ({ value: o.label.toLowerCase().replace(/\s+/g, '-'), label: o.label, prefix: <RoleFace role={o.role} size="sm" decorative /> })),
+    [leadOwns, team, options],
+  );
 
   // Not on a phone: the keyboard would come up over the conversation you just opened.
   useEffect(() => {
@@ -749,9 +790,18 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const submit = async () => {
     let body = text.trim();
     if ((!body && !images.files.length) || busy) return;
-    // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
     let target = session;
-    if (body.startsWith('@')) {
+    if (body.startsWith('@') && leadOwns) {
+      // "@developer …" goes to the lead in the main thread, word for word; the lead calls the developer.
+      const named = mentionedRole(body, team);
+      if ('error' in named) {
+        setError(named.error);
+        return;
+      }
+      target = root;
+      if (team.find((r) => r.name === named.role)?.isLead) body = named.rest;
+    } else if (body.startsWith('@')) {
+      // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
       const resolved = resolveMention(body, options, session.id);
       if ('error' in resolved) {
         setError(resolved.error);
@@ -789,6 +839,7 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         onChange={setText}
         onSubmit={() => void submit()}
         onPaste={images.onPaste}
+        mentions={mentions}
         leading={images.button}
         disabled={!online}
         placeholder={session.depth > 0 ? `Message ${label} directly, or @ an agent` : 'Reply, or @ an agent'}

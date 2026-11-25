@@ -836,6 +836,7 @@
 /* ------------------------------------------------------------------ composer */
 
 .cr-composer {
+  position: relative;
   display: flex;
   align-items: flex-end;
   gap: var(--cr-space-150);
@@ -886,6 +887,48 @@
   display: flex;
   align-items: center;
   gap: var(--cr-space-150);
+}
+
+/* The @ menu: agents to mention, above the composer. */
+.cr-mention-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + var(--cr-space-100));
+  z-index: 20;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: var(--cr-space-100);
+  border-radius: var(--cr-radius-500);
+  background: var(--cr-color-bg-surface);
+  box-shadow: var(--cr-shadow-card-elevated);
+}
+.cr-mention-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--cr-space-200);
+  padding: var(--cr-space-150) var(--cr-space-200);
+  border-radius: var(--cr-radius-300);
+  cursor: default;
+}
+.cr-mention-menu__item--active {
+  background: var(--cr-color-bg-fill-selected);
+}
+.cr-mention-menu__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cr-mention-menu__label {
+  color: var(--cr-color-text);
+  font-weight: var(--cr-font-weight-medium);
+}
+.cr-mention-menu__description {
+  overflow: hidden;
+  color: var(--cr-color-text-secondary);
+  font-size: var(--cr-font-size-313);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 /* ------------------------------------------------------------------ chip select */
