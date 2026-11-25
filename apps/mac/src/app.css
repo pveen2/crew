@@ -841,6 +841,10 @@ body,
   min-width: 0;
   flex: 0 1 auto;
 }
+.doc-age {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
 .reading {
   max-width: var(--cr-width-reading);
   padding: var(--cr-space-700);

@@ -1496,11 +1496,23 @@ export class Runtime {
   setDocStatus(id: string, status: DocStatus): DocSummary {
     const before = this.store.artifact(id);
     if (!before?.shownAt) throw new Error('No such doc');
-    const a = this.store.setDocStatus(id, status, Date.now())!;
+    let a = this.store.setDocStatus(id, status, Date.now())!;
+    // An approved version is the one that counts: approving one from the archive brings it back.
+    if (status === 'approved' && a.archivedAt) a = this.store.setDocArchived(id, null)!;
     const thread = this.store.thread(a.threadId);
     const root = thread && this.store.session(thread.rootSessionId);
     if (root && before.status !== status) {
       this.emit(root, null, { type: 'status', text: status === 'approved' ? `Owner approved "${a.title}" (artifact ${a.id}).` : `Owner moved "${a.title}" (artifact ${a.id}) back to draft.` });
+    }
+    // Approving a version settles the drafts before it: they leave the Docs list (still under Archived).
+    if (status === 'approved' && before.status !== 'approved') {
+      const shownAt = a.shownAt ?? a.createdAt;
+      const now = Date.now();
+      for (const old of this.store.docs(a.threadId)) {
+        if (old.id === a.id || old.archivedAt || (old.status ?? 'draft') !== 'draft' || (old.shownAt ?? old.createdAt) >= shownAt) continue;
+        this.store.setDocArchived(old.id, now);
+        this.broadcastDoc(old.id);
+      }
     }
     const doc = this.docSummary(a);
     this.broadcast({ kind: 'doc', doc });
