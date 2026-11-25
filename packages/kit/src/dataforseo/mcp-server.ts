@@ -10,9 +10,10 @@
 //
 // Every call costs money. CREW_DATAFORSEO_MAX_COST (USD) caps what one agent
 // session spends. The conductor starts this server again for every turn, so the
-// running total lives in a file per session (CREW_SESSION_ID) in the temp
-// folder. Calls run one at a time, and a call is refused when its expected
-// cost would go over the cap.
+// running total lives in a file per session (CREW_SESSION_ID) in the folder the
+// conductor gives this connection (CREW_STATE_DIR, under CREW_HOME), which
+// survives restarts. Calls run one at a time; a call is refused when its
+// expected cost would go over the cap, or when the total can't be read or saved.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -26,15 +27,24 @@ const LOCATION = process.env.CREW_DATAFORSEO_LOCATION?.trim() || 'Netherlands';
 const LANGUAGE = process.env.CREW_DATAFORSEO_LANGUAGE?.trim() || 'en';
 const MAX_COST = Number(process.env.CREW_DATAFORSEO_MAX_COST) > 0 ? Number(process.env.CREW_DATAFORSEO_MAX_COST) : 2;
 
-const SPEND_DIR = join(tmpdir(), 'crew-dataforseo');
+const SPEND_DIR = process.env.CREW_STATE_DIR?.trim() || join(tmpdir(), 'crew-dataforseo');
 const SPEND_FILE = join(SPEND_DIR, `${(process.env.CREW_SESSION_ID?.trim() || `pid-${process.pid}`).replace(/[^\w.-]/g, '_')}.json`);
 
+/** The session's total so far. Throws when the file exists but can't be read: no budget, no calls. */
 function readSpent(): number {
+  let text: string;
   try {
-    return Number(JSON.parse(readFileSync(SPEND_FILE, 'utf8')).spent) || 0;
-  } catch {
-    return 0;
+    text = readFileSync(SPEND_FILE, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+    throw new Error(`Refused: can't read this session's DataForSEO spend (${(err as Error).message}).`);
   }
+  let spent = Number.NaN;
+  try {
+    spent = Number(JSON.parse(text || '{}').spent);
+  } catch {}
+  if (!Number.isFinite(spent) || spent < 0) throw new Error(`Refused: this session's DataForSEO spend file is damaged (${SPEND_FILE}).`);
+  return spent;
 }
 
 function book(cost: number): number {
@@ -53,9 +63,12 @@ function serial<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /** A paid call within the session budget. `estimate` is the expected cost in USD. */
-function paid(path: string, task: Item, estimate: number): Promise<TaskResult<Item> & { spent: number }> {
+function paid(path: string, task: Item, estimate: number, signal?: AbortSignal): Promise<TaskResult<Item> & { spent: number }> {
   return serial(async () => {
-    const before = readSpent();
+    // The caller may have given up while this call waited its turn.
+    if (signal?.aborted) throw new Error('Cancelled before it was sent; nothing was charged.');
+    // Saving must work before anything is spent, or charges would go unrecorded.
+    const before = book(0);
     if (before + estimate > MAX_COST) {
       throw new Error(
         `Refused: this session has spent $${before.toFixed(2)} on DataForSEO and this call costs about $${estimate.toFixed(3)}; the limit is $${MAX_COST}. ` +
@@ -85,12 +98,18 @@ function asError(err: unknown) {
 const round = (n: unknown, digits = 2) => (typeof n === 'number' ? Number(n.toFixed(digits)) : (n ?? null));
 const clip = (s: unknown, max: number) => (typeof s === 'string' ? (s.length > max ? `${s.slice(0, max)}…` : s) : (s ?? null));
 
+/** The newest month in Google Ads' monthly series ("2026-10"): what the 12-month average runs to. */
+const dataThrough = (rows: Item[]) => {
+  const m = rows.find((k) => Array.isArray(k.monthly_searches) && k.monthly_searches.length)?.monthly_searches[0];
+  return m ? `${m.year}-${String(m.month).padStart(2, '0')}` : null;
+};
+
 /** Twelve months as "2026-10: 210", newest first. */
 const monthly = (m: unknown) =>
   Array.isArray(m) ? m.slice(0, 12).map((x: Item) => `${x.year}-${String(x.month).padStart(2, '0')}: ${x.search_volume ?? '?'}`) : null;
 
 /** One live call within the session budget, with location and language filled in. */
-async function run(path: string, task: Item, place: { location?: string; language?: string }, estimate: number) {
+async function run(path: string, task: Item, place: { location?: string; language?: string }, estimate: number, signal?: AbortSignal) {
   const location = place.location?.trim() || LOCATION;
   const full = {
     ...task,
@@ -98,7 +117,7 @@ async function run(path: string, task: Item, place: { location?: string; languag
     language_code: place.language?.trim() || LANGUAGE,
   };
   try {
-    const { result, cost, warning, spent } = await paid(path, full, estimate);
+    const { result, cost, warning, spent } = await paid(path, full, estimate, signal);
     return {
       result,
       meta: { location, language: full.language_code, ...(warning ? { warning } : {}), cost_usd: round(cost, 4), session_spent_usd: round(spent, 4), session_limit_usd: MAX_COST },
@@ -137,13 +156,15 @@ server.registerTool(
     },
     annotations: READ,
   },
-  async ({ keyword, location, language, depth, device }) => {
+  async ({ keyword, location, language, depth, device }, { signal }) => {
     try {
       const { result, meta } = await run(
         'serp/google/organic/live/advanced',
         { keyword, depth: depth ?? 20, device: device ?? 'desktop', load_async_ai_overview: true },
         { location, language },
-        0.002 * Math.ceil((depth ?? 20) / 10) + 0.002,
+        // Search operators (site:, intitle:, …) cost five times as much.
+        (/\b(site|inurl|intitle|intext|allinurl|allintitle|allintext|related|cache):/i.test(keyword) ? 5 : 1) * 0.002 * Math.ceil((depth ?? 20) / 10) + 0.002,
+        signal,
       );
       const r = result[0] ?? {};
       const items = (r.items ?? []).map((i: Item) => {
@@ -178,9 +199,9 @@ server.registerTool(
     },
     annotations: READ,
   },
-  async ({ keywords, location, language }) => {
+  async ({ keywords, location, language }, { signal }) => {
     try {
-      const { result, meta } = await run('keywords_data/google_ads/search_volume/live', { keywords }, { location, language }, 0.09);
+      const { result, meta } = await run('keywords_data/google_ads/search_volume/live', { keywords }, { location, language }, 0.09, signal);
       const rows = result.map((k) => ({
         keyword: k.keyword,
         search_volume: k.search_volume ?? null,
@@ -188,7 +209,7 @@ server.registerTool(
         cpc_usd: round(k.cpc),
         monthly: monthly(k.monthly_searches),
       }));
-      return asText({ ...meta, search_volume_is: 'average monthly searches over the last 12 months (Google Ads)', keywords: rows });
+      return asText({ ...meta, search_volume_is: 'average monthly searches over the last 12 months (Google Ads)', data_through: dataThrough(result), keywords: rows });
     } catch (err) {
       return asError(err);
     }
@@ -208,15 +229,15 @@ server.registerTool(
     },
     annotations: READ,
   },
-  async ({ keywords, location, language, limit }) => {
+  async ({ keywords, location, language, limit }, { signal }) => {
     try {
-      const { result, meta } = await run('keywords_data/google_ads/keywords_for_keywords/live', { keywords, sort_by: 'search_volume' }, { location, language }, 0.09);
+      const { result, meta } = await run('keywords_data/google_ads/keywords_for_keywords/live', { keywords, sort_by: 'search_volume' }, { location, language }, 0.09, signal);
       const rows = result
         .filter((k) => k.keyword)
         .sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0))
         .slice(0, limit ?? 50)
         .map((k) => ({ keyword: k.keyword, search_volume: k.search_volume ?? null, competition: k.competition ?? null, cpc_usd: round(k.cpc) }));
-      return asText({ ...meta, search_volume_is: 'average monthly searches over the last 12 months (Google Ads)', ideas_found: result.length, ideas: rows });
+      return asText({ ...meta, search_volume_is: 'average monthly searches over the last 12 months (Google Ads)', data_through: dataThrough(result), ideas_found: result.length, ideas: rows });
     } catch (err) {
       return asError(err);
     }
@@ -236,13 +257,14 @@ server.registerTool(
     },
     annotations: READ,
   },
-  async ({ target, location, language, limit }) => {
+  async ({ target, location, language, limit }, { signal }) => {
     try {
       const { result, meta } = await run(
         'dataforseo_labs/google/ranked_keywords/live',
         { target, limit: limit ?? 50, order_by: ['keyword_data.keyword_info.search_volume,desc'] },
         { location, language },
-        0.012 + 0.0001 * (limit ?? 50),
+        0.012 + 0.00012 * (limit ?? 50),
+        signal,
       );
       const r = result[0] ?? {};
       const rows = (r.items ?? []).map((i: Item) => {
@@ -279,9 +301,9 @@ server.registerTool(
     },
     annotations: READ,
   },
-  async ({ target, location, language, limit }) => {
+  async ({ target, location, language, limit }, { signal }) => {
     try {
-      const { result, meta } = await run('dataforseo_labs/google/competitors_domain/live', { target, limit: (limit ?? 20) + 1 }, { location, language }, 0.012 + 0.0001 * ((limit ?? 20) + 1));
+      const { result, meta } = await run('dataforseo_labs/google/competitors_domain/live', { target, limit: (limit ?? 20) + 1 }, { location, language }, 0.012 + 0.00012 * ((limit ?? 20) + 1), signal);
       const r = result[0] ?? {};
       const bare = target.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
       const rows = (r.items ?? [])
@@ -309,9 +331,9 @@ server.registerTool(
     inputSchema: { url: z.string().url().describe('The full page URL, https://…') },
     annotations: READ,
   },
-  async ({ url }) => {
+  async ({ url }, { signal }) => {
     try {
-      const { result, cost, spent } = await paid('on_page/instant_pages', { url }, 0.0005);
+      const { result, cost, spent, warning } = await paid('on_page/instant_pages', { url }, 0.0005, signal);
       const p = result[0]?.items?.[0];
       if (!p) return asError(`DataForSEO could not load ${url}.`);
       const m = p.meta ?? {};
@@ -326,6 +348,7 @@ server.registerTool(
       return asText({
         url: p.url,
         status: p.status_code,
+        ...(warning ? { warning } : {}),
         cost_usd: round(cost, 4),
         session_spent_usd: round(spent, 4),
         onpage_score: round(p.onpage_score, 1),

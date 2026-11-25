@@ -830,8 +830,10 @@ export class Runtime {
       env.CREW_IMAGES_DIR = join(paths.attachments, session.threadId);
       // Keeps each session's browser tabs to itself (guard.ts suffixes the browser session names).
       env.CREW_BROWSER_SCOPE = session.id;
-      // Lets a connection keep state across this session's turns (DataForSEO's spend).
+      // Lets a connection keep state across this session's turns and conductor restarts
+      // (DataForSEO's spend), in a folder of its own under CREW_HOME.
       env.CREW_SESSION_ID = session.id;
+      env.CREW_STATE_DIR = join(paths.home, 'connections', name);
       servers[name] = {
         command: c.command,
         args: c.args ?? [],
