@@ -693,7 +693,8 @@ export function loadDoc(id: string): Promise<DocResponse> {
 
 export async function setDocStatus(id: string, status: DocStatus): Promise<void> {
   const doc = await api<DocSummary>('POST', `/api/docs/${encodeURIComponent(id)}/status`, { status });
-  set((s) => ({ docs: { ...(s.docs ?? {}), [doc.id]: doc } }));
+  // Only into a loaded list: a list made of this one doc would hide all the others.
+  set((s) => (s.docs ? { docs: { ...s.docs, [doc.id]: doc } } : {}));
 }
 
 export function setDocsFilter(docsFilter: 'all' | DocStatus): void {
