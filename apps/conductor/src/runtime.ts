@@ -225,7 +225,12 @@ export class Runtime {
   private readonly stopGen = new Map<string, number>();
   private readonly bridgeSecret = randomBytes(32);
   /** Tool calls waiting for the owner's approve or deny, by Inbox item id. */
-  private readonly approvals = new Map<string, (approved: boolean) => void>();
+  /**
+   * Approvals waiting on the owner, by inbox id: how to wake the call, and the
+   * thread and `agent:tool` it asks for (so "Always allow" can clear the rest).
+   * An entry is removed the moment it is settled.
+   */
+  private readonly approvals = new Map<string, { settle: (approved: boolean) => void; threadId: string; key: string }>();
   private listeners = new Set<(msg: ServerMessage) => void>();
   private shuttingDown = false;
 
@@ -315,11 +320,7 @@ export class Runtime {
 
   resolveInbox(id: string): InboxItem | undefined {
     // Dismissing an approval without deciding counts as a deny.
-    const waiter = this.approvals.get(id);
-    if (waiter) {
-      this.approvals.delete(id);
-      waiter(false);
-    }
+    this.approvals.get(id)?.settle(false);
     const item = this.store.resolveInbox(id);
     if (item) {
       this.broadcast({ kind: 'inbox', item });
@@ -1127,6 +1128,11 @@ export class Runtime {
     const decision = agent.def.approval?.({ toolName, input, agent: agent.name }) ?? toolDefault;
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
+    // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.
+    const key = `${agent.name}:${toolName}`;
+    if (signal.aborted) throw new Error('The call was cancelled.');
+    const allowed = this.store.allowedTools(session.threadId);
+    if (allowed.includes(key) || allowed.includes('*')) return;
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
@@ -1141,11 +1147,14 @@ export class Runtime {
     this.refreshThread(session.threadId);
 
     const approved = await new Promise<boolean>((resolve) => {
-      this.approvals.set(item.id, resolve);
-      if (signal.aborted) resolve(false);
-      else signal.addEventListener('abort', () => resolve(false), { once: true });
+      const settle = (ok: boolean) => {
+        this.approvals.delete(item.id);
+        resolve(ok);
+      };
+      this.approvals.set(item.id, { settle, threadId: session.threadId, key });
+      if (signal.aborted) settle(false);
+      else signal.addEventListener('abort', () => settle(false), { once: true });
     });
-    if (this.approvals.get(item.id)) this.approvals.delete(item.id);
     if (this.store.inboxItem(item.id)?.status === 'open') this.resolveInbox(item.id);
     this.emit(session, turnId, { type: 'approval_done', inboxId: item.id, toolName, approved });
     this.refreshThread(session.threadId);
@@ -1154,8 +1163,12 @@ export class Runtime {
     }
   }
 
-  /** The owner's decision on an approval item. */
-  decideApproval(inboxId: string, approved: boolean): InboxItem {
+  /**
+   * The owner's decision on an approval item. `always`: 'tool' also allows this
+   * agent's tool for the rest of the thread, 'all' allows every tool in it; both
+   * approve the matching calls already waiting.
+   */
+  decideApproval(inboxId: string, approved: boolean, always?: 'tool' | 'all'): InboxItem {
     const item = this.store.inboxItem(inboxId);
     if (!item || item.kind !== 'approval') throw new Error('No such approval');
     const waiter = this.approvals.get(inboxId);
@@ -1163,9 +1176,19 @@ export class Runtime {
       if (item.status === 'open') this.resolveInbox(inboxId);
       throw new Error('This approval is no longer waiting: the turn that asked for it has ended.');
     }
-    this.approvals.delete(inboxId);
-    waiter(approved);
-    return this.resolveInbox(inboxId) ?? item;
+    // Save the grant first: if that fails, nothing has been released yet.
+    if (approved && always) this.store.allowTool(waiter.threadId, always === 'all' ? '*' : waiter.key);
+    waiter.settle(approved);
+    const resolved = this.resolveInbox(inboxId) ?? item;
+    if (approved && always) {
+      for (const [id, other] of [...this.approvals]) {
+        if (other.threadId !== waiter.threadId || (always === 'tool' && other.key !== waiter.key)) continue;
+        if (!this.approvals.has(id)) continue; // settled meanwhile
+        other.settle(true);
+        this.resolveInbox(id);
+      }
+    }
+    return resolved;
   }
 
   private async callSubagent(crew: LoadedCrew, caller: SessionRow, sub: LoadedAgent, brief: string, signal: AbortSignal): Promise<string> {
