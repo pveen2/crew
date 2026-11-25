@@ -1293,6 +1293,22 @@ body,
   flex: 1 1 auto;
   min-width: 0;
 }
+/* The Terminal one-liner on the Crew for Mac card (web app only). */
+.mac-install {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+.mac-install__command {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--cr-color-bg-surface-secondary);
+  font: 12px/1.5 var(--cr-font-family-mono);
+  user-select: all;
+}
 
 /* A tool signing in on the team's server (ServerLoginDialog). */
 .server-login {
