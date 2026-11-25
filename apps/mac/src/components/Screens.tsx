@@ -17,6 +17,7 @@ import {
 } from '@crew/ui';
 import { createThread, navigate, takeNewDraft, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
+import { isPhoneTouch } from '../swipe';
 import { RoleFace, RoleFaces, age, useNow } from './common';
 
 export function NewThreadView({ initialRole }: { initialRole?: string }) {
@@ -69,6 +70,7 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
             <AttachmentTray files={images.files} onRemove={images.remove} />
             <Composer
               ref={ref}
+              enterSends={!isPhoneTouch()}
               size="tall"
               label="New thread"
               autoFocus
@@ -120,7 +122,8 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
               </Text>
             ) : (
               <Text variant="caption" tone="tertiary">
-                <span className="phone-hide">Enter sends, Shift+Enter adds a line. Paste or drop images to attach them. </span>
+                {/* A phone: Return adds a line and the button sends, so no keyboard hints. */}
+                {isPhoneTouch() ? null : 'Enter sends, Shift+Enter adds a line. Paste or drop images to attach them. '}
                 Read and draft only: nothing is published.
               </Text>
             )}

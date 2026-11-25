@@ -40,6 +40,7 @@ import {
   useApp,
   type ThreadData,
 } from '../store';
+import { isPhoneTouch } from '../swipe';
 import { AttachmentTray, MessageImages, useAttachments } from './attachments';
 import { PaneResizer } from './PaneResizer';
 import {
@@ -769,6 +770,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
       <AttachmentTray files={images.files} onRemove={images.remove} />
       <Composer
         ref={ref}
+        // On a phone Return adds a line and the send button sends, as in the ChatGPT and Claude apps.
+        enterSends={!isPhoneTouch()}
         label={`Message ${label}`}
         value={text}
         onChange={setText}

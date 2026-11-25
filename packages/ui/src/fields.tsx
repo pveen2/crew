@@ -45,11 +45,6 @@ export interface ComposerProps {
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
 }
 
-/** A phone or tablet: no hover, a finger for a pointer. */
-function touchScreen(): boolean {
-  return typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches;
-}
-
 /** The message box: an auto-growing textarea with slots, as in "Reply, or @ an agent". */
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer(
   { label, value, onChange, onSubmit, placeholder, disabled, autoFocus, leading, trailing, size = 'default', maxHeight = 220, enterSends = true, onPaste },
@@ -75,12 +70,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onPaste={onPaste}
-      // On a touch screen (a phone) Return adds a line and the send button sends,
-      // as in the ChatGPT and Claude apps: there is no Shift key for a new line.
-      enterKeyHint={enterSends && !touchScreen() ? 'send' : 'enter'}
+      enterKeyHint={enterSends ? 'send' : 'enter'}
       onKeyDown={(e) => {
         if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
-        if ((enterSends && !e.shiftKey && !touchScreen()) || e.metaKey) {
+        if ((enterSends && !e.shiftKey) || e.metaKey) {
           e.preventDefault();
           onSubmit();
         }
