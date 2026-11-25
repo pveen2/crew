@@ -10,7 +10,7 @@ import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 import { accessEmail, accessEnabled } from './access.ts';
 import { cancelLogin, loginInput, loginState } from './server-login.ts';
-import { serveWeb } from './web.ts';
+import { PUBLIC_WEB_FILES, serveWeb } from './web.ts';
 
 /** A conductor on a (Linux) server rather than someone's Mac. */
 const onServer = process.platform !== 'darwin';
@@ -91,6 +91,14 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         res.writeHead(302, { location: back, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
         res.end();
         return;
+      }
+
+      // The home screen icons and manifest are public: after "Add to Home Screen"
+      // iOS fetches the icon again without the Access cookie and, refused, saves a
+      // blurry screenshot instead. Cloudflare Access bypasses these paths too.
+      if (accessEnabled && req.method === 'GET' && PUBLIC_WEB_FILES.has(url.pathname)) {
+        if (await serveWeb(url.pathname, res, { fallback: false })) return;
+        return send(res, 404, { error: 'Not found' });
       }
 
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.

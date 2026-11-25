@@ -24,6 +24,9 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
+/** Served without an Access login (Cloudflare Access bypasses them too): the home screen icon and manifest. */
+export const PUBLIC_WEB_FILES = new Set(['/apple-touch-icon.png', '/icon-192.png', '/icon-512.png', '/manifest.webmanifest']);
+
 async function file(path: string): Promise<Buffer | null> {
   try {
     if (!(await stat(path)).isFile()) return null;
@@ -36,9 +39,9 @@ async function file(path: string): Promise<Buffer | null> {
 /**
  * Serves a GET for the web app. Unknown paths get index.html (the app routes
  * with #hashes, so this only matters for a mistyped link). False when the app
- * is not built.
+ * is not built, or (with fallback: false) when the file is missing.
  */
-export async function serveWeb(pathname: string, res: ServerResponse): Promise<boolean> {
+export async function serveWeb(pathname: string, res: ServerResponse, opts: { fallback?: boolean } = {}): Promise<boolean> {
   let rel: string;
   try {
     rel = decodeURIComponent(pathname).replace(/^\/+/, '') || 'index.html';
@@ -50,6 +53,7 @@ export async function serveWeb(pathname: string, res: ServerResponse): Promise<b
   let body = inside ? await file(full) : null;
   let path = full;
   if (!body) {
+    if (opts.fallback === false) return false;
     path = join(ROOT, 'index.html');
     body = await file(path);
     if (!body) return false;
