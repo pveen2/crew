@@ -516,6 +516,11 @@ export class Store {
       "SELECT id, thread_id, session_id, agent, title, format, '' AS content, created_at, status, shown_at, approved_at FROM artifacts WHERE shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 500",
     ).map(toArtifact);
   }
+  /** Status of the doc the owner was shown last in a thread, if any. */
+  latestDocStatusOfThread(threadId: string): DocStatus | undefined {
+    const r = this.get('SELECT status FROM artifacts WHERE thread_id = ? AND shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 1', threadId);
+    return r ? (r.status as DocStatus) : undefined;
+  }
   markShown(id: string, at: number): void {
     this.run('UPDATE artifacts SET shown_at = ? WHERE id = ?', at, id);
   }

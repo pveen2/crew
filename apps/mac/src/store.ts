@@ -159,6 +159,8 @@ export interface AppState {
   /** Docs the owner was shown (Docs tab), by id. Null until loaded. */
   docs: Record<string, DocSummary> | null;
   docsFilter: 'all' | DocStatus;
+  /** Docs the owner has opened, and when this Mac started counting (older docs count as seen). */
+  docsSeen: { since: number; ids: Record<string, true> };
   /** Inbox items the owner has looked at. Kept on this Mac only; the conductor has no read state. */
   inboxRead: Record<string, true>;
   /** Threads that could not be loaded (missing or failed), with the reason. */
@@ -203,6 +205,41 @@ function hashOf(view: View): string {
     default:
       return `#${view.name}`;
   }
+}
+
+const DOCS_SEEN_KEY = 'crew.docs.seen';
+function loadDocsSeen(): AppState['docsSeen'] {
+  try {
+    const v = JSON.parse(localStorage.getItem(DOCS_SEEN_KEY) ?? 'null') as AppState['docsSeen'] | null;
+    if (v && typeof v.since === 'number' && v.ids) return v;
+  } catch {
+    /* fall through: start counting now */
+  }
+  const fresh = { since: Date.now(), ids: {} };
+  try {
+    localStorage.setItem(DOCS_SEEN_KEY, JSON.stringify(fresh));
+  } catch {
+    /* storage unavailable */
+  }
+  return fresh;
+}
+
+/** A draft the owner has not opened yet: counts on Docs in the sidebar. */
+export function isNewDoc(d: DocSummary, seen: AppState['docsSeen']): boolean {
+  return d.status === 'draft' && d.shownAt > seen.since && !seen.ids[d.id];
+}
+
+export function markDocSeen(id: string): void {
+  if (state.docsSeen.ids[id]) return;
+  set((s) => {
+    const docsSeen = { since: s.docsSeen.since, ids: { ...s.docsSeen.ids, [id]: true as const } };
+    try {
+      localStorage.setItem(DOCS_SEEN_KEY, JSON.stringify(docsSeen));
+    } catch {
+      /* storage full or unavailable: stays in memory */
+    }
+    return { docsSeen };
+  });
 }
 
 const READ_KEY = 'crew.inbox.read';
@@ -281,6 +318,7 @@ let state: AppState = {
   inboxFilter: 'all',
   docs: null,
   docsFilter: 'all',
+  docsSeen: loadDocsSeen(),
   inboxRead: loadRead(),
   loadErrors: {},
   newDraft: null,
@@ -499,6 +537,8 @@ export async function connect(): Promise<void> {
     const current = state.view.name === 'thread' ? state.view.threadId : undefined;
     set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {} }));
     await refreshState();
+    // Docs: the sidebar counts new drafts.
+    void loadDocs().catch(() => undefined);
     if (current) await loadThread(current);
   } catch {
     pending = null;
@@ -567,6 +607,7 @@ export function navigate(view: View): void {
     // Looking at a thread counts as reading its Inbox items.
     markRead(Object.values(state.inbox).filter((i) => i.threadId === view.threadId).map((i) => i.id));
   }
+  if (view.name === 'docs' && view.docId) markDocSeen(view.docId);
   if (view.name === 'inbox' && view.itemId) {
     markRead([view.itemId]);
     const item = state.inbox[view.itemId];

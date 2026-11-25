@@ -351,8 +351,7 @@ export class Runtime {
       else if (last?.type === 'tool_call') statusText = `Using ${last.name.replace(/^mcp__\w+?__/, '')}`;
       else statusText = 'Working';
     } else {
-      const open = this.store.openInboxOfThread(t.id, ['draft']);
-      statusText = open.length ? 'Draft to review' : 'Done';
+      statusText = this.store.latestDocStatusOfThread(t.id) === 'draft' ? 'Draft to review' : 'Done';
     }
     return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id) };
   }
@@ -1263,7 +1262,8 @@ export class Runtime {
     this.emit(session, this.running.get(session.id)?.turnId ?? null, { type: 'preview', previewId, title, format, content, artifactId });
     this.broadcastDoc(artifactId);
     // Only the thread owner's previews go to the Inbox; specialists' drafts usually feed into it.
-    if (session.depth === 0) this.addInbox(session, 'draft', `Draft ready: ${title}`, `${agent.label} put "${title}" in the preview panel.`, { previewId });
+    // Drafts go to Docs, not the Inbox: the Inbox is only for what blocks an agent.
+    this.refreshThread(session.threadId);
     return `Shown to the owner in the preview panel as "${title}".`;
   }
 
@@ -1344,6 +1344,7 @@ export class Runtime {
     }
     const doc = this.docSummary(a);
     this.broadcast({ kind: 'doc', doc });
+    this.refreshThread(a.threadId);
     return doc;
   }
 
@@ -1371,8 +1372,9 @@ export class Runtime {
 
   /** After a restart: anything that was running is now interrupted. */
   recover(): number {
-    // Approvals were waiting on turns that no longer exist.
-    for (const item of this.store.openInbox().filter((i) => i.kind === 'approval')) this.store.resolveInbox(item.id);
+    // Approvals were waiting on turns that no longer exist. Draft items are from builds before
+    // the Docs tab, where drafts now live.
+    for (const item of this.store.openInbox().filter((i) => i.kind === 'approval' || i.kind === 'draft')) this.store.resolveInbox(item.id);
     const turns = this.store.turnsWithStatus('running');
     const threads = new Set<string>();
     for (const t of turns) {

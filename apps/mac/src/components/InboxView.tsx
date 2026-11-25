@@ -1,225 +1,161 @@
 import { useEffect, useMemo } from 'react';
 import type { InboxItem } from '@crew/protocol';
-import { BlockStack, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Text, cx, type IconName } from '@crew/ui';
-import { isPhone, setInboxListWidth } from '../store';
-import { PaneResizer } from './PaneResizer';
-import { decideApproval, ensureThreads, navigate, resolveInbox, resumeThread, selectPreview, setInboxFilter, useApp } from '../store';
-import { Markdown, RoleFace, age, ago, useNow, useRoleLabel } from './common';
-import { DocSourceBar, DocView, usePreviewDocs } from './PreviewPanel';
+import { BlockStack, Button, Card, Disclosure, Icon, InlineStack, Panel, PanelHeader, Text, cx, type IconName } from '@crew/ui';
+import { decideApproval, ensureThreads, markRead, navigate, resolveInbox, resumeThread, useApp } from '../store';
+import { Markdown, RoleFace, age, useNow, useRoleLabel } from './common';
 import { QuestionAnswer } from './QuestionAnswer';
-import type { PreviewDoc } from '../store';
 
+/**
+ * The Inbox: only what an agent is waiting on (a question, an approval, a run that stopped).
+ * Every item is a card with its action on it, and it leaves the Inbox once handled. Drafts are
+ * not here: they live in Docs.
+ */
 const KIND: Record<InboxItem['kind'], { label: string; icon: IconName; order: number }> = {
-  needs_you: { label: 'Answer a question', icon: 'question', order: 0 },
-  approval: { label: 'Approve a tool call', icon: 'question', order: 0 },
+  needs_you: { label: 'Question', icon: 'question', order: 0 },
+  approval: { label: 'Approval', icon: 'question', order: 0 },
   interrupted: { label: 'Interrupted', icon: 'alert', order: 1 },
   error: { label: 'Failed', icon: 'alert', order: 2 },
-  draft: { label: 'Draft to review', icon: 'document', order: 3 },
+  // From builds before Docs; cleared on the conductor's next start.
+  draft: { label: 'Draft', icon: 'document', order: 3 },
 };
 
-function itemTitle(item: InboxItem): string {
-  return item.title.replace(/^Draft ready:\s*/, '');
-}
+export function InboxView({ itemId }: { itemId?: string }) {
+  const inbox = useApp((s) => s.inbox);
+  const now = useNow(30_000);
+  const items = useMemo(
+    () => Object.values(inbox).sort((a, b) => KIND[a.kind].order - KIND[b.kind].order || b.createdAt - a.createdAt),
+    [inbox],
+  );
 
-/** The agent behind an item: from the thread's sessions once loaded, else the thread owner. */
-function useItemRole(item: InboxItem | undefined): string {
-  return useApp((s) => {
-    if (!item) return '';
-    return item.role || s.details[item.threadId]?.sessions[item.sessionId]?.role || s.threads[item.threadId]?.roles[0] || '';
-  });
-}
+  // Know which agent raised each item.
+  useEffect(() => ensureThreads(items.map((i) => i.threadId)), [items]);
+  // Everything is on screen at once: looking at the Inbox reads it.
+  useEffect(() => markRead(items.map((i) => i.id)), [items]);
+  // A link to one item (#inbox/<id>) scrolls to it.
+  useEffect(() => {
+    if (itemId) document.getElementById(`inbox-${itemId}`)?.scrollIntoView({ block: 'center' });
+  }, [itemId]);
 
-function InboxRow({ item, selected, unread, now }: { item: InboxItem; selected: boolean; unread: boolean; now: number }) {
-  const thread = useApp((s) => s.threads[item.threadId]);
-  const role = useItemRole(item);
   return (
-    <ListItem
-      title={itemTitle(item)}
-      tooltip={itemTitle(item)}
-      unread={unread}
-      selected={selected}
-      onClick={() => navigate({ name: 'inbox', itemId: item.id })}
-      meta={age(item.createdAt, now)}
-      subtitle={
-        <>
-          <span className={unread ? 'inbox-kind-strong' : undefined}>{KIND[item.kind].label}</span>
-          {thread ? ` · ${thread.title}` : ''}
-        </>
-      }
-      trailing={role ? <RoleFace role={role} size="sm" /> : undefined}
-    />
+    <Panel as="main" className="pane-main" aria-label="Inbox">
+      <PanelHeader>
+        <Text as="h1" variant="headingSm" className="list-title">
+          Inbox
+        </Text>
+        <span className="cr-spacer" />
+        <Text as="span" tone="secondary">
+          {items.length ? `${items.length} waiting on you` : ''}
+        </Text>
+      </PanelHeader>
+      <div className="pane-scroll">
+        {items.length === 0 ? (
+          <div className="pane-center inbox-empty">
+            <BlockStack gap="200" inlineAlign="center">
+              <Icon name="checkCircle" size={16} />
+              <Text tone="secondary">Nothing is waiting on you.</Text>
+              <Text variant="bodySm" tone="tertiary">
+                Drafts to review are in Docs.
+              </Text>
+            </BlockStack>
+          </div>
+        ) : (
+          <BlockStack gap="300" className="inbox-cards">
+            {items.map((item, i) => (
+              <InboxCard key={item.id} item={item} now={now} focused={item.id === itemId} autoFocus={i === 0 && !itemId} />
+            ))}
+          </BlockStack>
+        )}
+      </div>
+    </Panel>
   );
 }
 
-/** The preview document a draft item points at: by previewId, or by title for items from older builds. */
-function useDraftDoc(item: InboxItem): PreviewDoc | undefined {
-  const docs = usePreviewDocs(item.threadId);
-  if (item.kind !== 'draft') return undefined;
-  if (item.previewId) return docs.find((d) => d.id === item.previewId);
-  const title = itemTitle(item);
-  const matches = docs.filter((d) => d.title === title);
-  return [...matches].sort((a, b) => Math.abs(a.ts - item.createdAt) - Math.abs(b.ts - item.createdAt))[0];
+/** The agent behind an item: from the thread's sessions once loaded, else the thread owner. */
+function useItemRole(item: InboxItem): string {
+  return useApp((s) => item.role || s.details[item.threadId]?.sessions[item.sessionId]?.role || s.threads[item.threadId]?.roles[0] || '');
 }
 
-
-function InboxDetail({ item }: { item: InboxItem }) {
+function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: number; focused: boolean; autoFocus: boolean }) {
   const thread = useApp((s) => s.threads[item.threadId]);
   const role = useItemRole(item);
   const roleLabel = useRoleLabel(role);
   const kind = KIND[item.kind];
-  const doc = useDraftDoc(item);
-  const openThread = () => {
-    if (doc) {
-      // Drafts open in the thread owner's view, with the draft in the preview pane.
-      selectPreview(item.threadId, doc.id);
-      navigate({ name: 'thread', threadId: item.threadId });
-      return;
-    }
+  const openThread = () =>
     navigate({ name: 'thread', threadId: item.threadId, sessionId: item.sessionId === thread?.rootSessionId ? undefined : item.sessionId });
-  };
+
+  // A question's title is its first line: show the rest only when there is more.
+  const body = item.kind === 'needs_you' ? item.body.split('\n').slice(1).join('\n').trim() : item.body;
+
   return (
-    <>
-      <PanelHeader className="inbox-detail-header">
-        <IconButton icon="chevronLeft" label="Back to the Inbox" className="phone-only" onClick={() => navigate({ name: 'inbox' })} />
-        <InlineStack gap="200" paddingInline="150" className="detail-title">
+    <Card id={`inbox-${item.id}`} padded className={cx('inbox-card', `inbox-card--${item.kind}`, focused && 'inbox-card--focused')}>
+      <BlockStack gap="300">
+        <InlineStack gap="200" className="inbox-card-meta">
           <Icon name={kind.icon} size={13} />
-          <Text as="h1" variant="headingSm" truncate title={itemTitle(item)}>
-            {itemTitle(item)}
+          <Text as="span" variant="bodySm" weight="medium">
+            {kind.label}
           </Text>
-          <Text as="span" variant="bodyLg" tone="secondary" truncate>
-            {[roleLabel, ago(item.createdAt)].filter(Boolean).join(' · ')}
+          <Text as="span" variant="bodySm" tone="secondary" truncate className="grow">
+            {[roleLabel, thread?.title].filter(Boolean).join(' · ')}
           </Text>
+          <Text as="span" variant="bodySm" tone="tertiary">
+            {age(item.createdAt, now)}
+          </Text>
+          {role ? <RoleFace role={role} size="xs" /> : null}
         </InlineStack>
-        <span className="cr-spacer" />
-        <span className="inbox-detail-actions">
-        <Button onClick={openThread}>Open thread</Button>
-        <span className="header-gap" />
+
+        <Text as="h2" variant="headingSm">
+          {item.title}
+        </Text>
+
         {item.kind === 'approval' ? (
-          <>
-            <Button variant="tertiary" onClick={() => void decideApproval(item.id, false)}>
-              Deny
-            </Button>
-            <Button variant="primary" onClick={() => void decideApproval(item.id, true)}>
-              Approve
-            </Button>
-          </>
-        ) : item.kind === 'interrupted' ? (
-          <>
-            <Button variant="tertiary" onClick={() => void resolveInbox(item.id)}>
-              Dismiss
-            </Button>
-            <Button variant="primary" icon="play" onClick={() => void resumeThread(item.threadId)}>
-              Resume
-            </Button>
-          </>
-        ) : (
-          <Button variant="primary" onClick={() => void resolveInbox(item.id)}>
-            Done
-          </Button>
-        )}
-        </span>
-      </PanelHeader>
-      {doc ? (
-        // A draft looks exactly like it does in the thread's preview pane.
-        <>
-          <DocSourceBar doc={doc} />
-          <DocView doc={doc} threadId={item.threadId} />
-        </>
-      ) : (
-      <div className="pane-scroll">
-        <BlockStack gap="400" className="reading">
-          {thread ? (
-            <Text variant="caption" tone="secondary">
-              {kind.label} · {thread.title}
-            </Text>
-          ) : null}
-          <Markdown text={item.body} />
-          {item.kind === 'needs_you' ? (
-            <QuestionAnswer threadId={item.threadId} sessionId={item.sessionId} inboxId={item.id} options={item.options} recommended={item.recommended} multiSelect={item.multiSelect} autoFocus />
-          ) : null}
-          {item.kind === 'interrupted' || item.kind === 'error' ? (
-            <Text variant="bodySm" tone="secondary">
-              {item.kind === 'interrupted'
-                ? 'The conductor stopped while this was running. Resume picks up the agent’s own session where it left off.'
-                : 'Open the thread to see what went wrong, or retry from there.'}
-            </Text>
-          ) : null}
-        </BlockStack>
-      </div>
-      )}
-    </>
-  );
-}
+          <Disclosure summary="What it wants to run">
+            <Markdown text={body} />
+          </Disclosure>
+        ) : body ? (
+          <Markdown text={body} />
+        ) : null}
 
-export function InboxView({ itemId }: { itemId?: string }) {
-  const inbox = useApp((s) => s.inbox);
-  const read = useApp((s) => s.inboxRead);
-  const filter = useApp((s) => s.inboxFilter);
-  const now = useNow(30_000);
-
-  const all = useMemo(
-    () => Object.values(inbox).sort((a, b) => KIND[a.kind].order - KIND[b.kind].order || b.createdAt - a.createdAt),
-    [inbox],
-  );
-  const items = filter === 'unread' ? all.filter((i) => !read[i.id] || i.id === itemId) : all;
-  const selected = (itemId && inbox[itemId]) || undefined;
-
-  // Know which agent raised each item.
-  useEffect(() => ensureThreads(all.map((i) => i.threadId)), [all]);
-  // Keep a selection: the first item when none (or a resolved one) is selected.
-  const listWidth = useApp((s) => s.inboxListWidth);
-  // On a phone the list is its own screen: nothing is picked for you.
-  useEffect(() => {
-    if (!selected && items[0] && !isPhone()) navigate({ name: 'inbox', itemId: items[0].id });
-  }, [selected, items]);
-
-  return (
-    <>
-      <Panel className={cx('pane-list', selected && 'phone-hide')} aria-label="Inbox" style={listWidth ? { flex: `0 1 ${listWidth}px` } : undefined}>
-        <PanelHeader>
-          <Text as="h1" variant="headingSm" className="list-title">
-            Inbox
-          </Text>
-          <span className="cr-spacer" />
-          <SegmentedControl
-            label="Filter"
-            value={filter}
-            onValueChange={setInboxFilter}
-            items={[
-              { value: 'all', label: 'All' },
-              { value: 'unread', label: 'Unread' },
-            ]}
+        {item.kind === 'needs_you' ? (
+          <QuestionAnswer
+            threadId={item.threadId}
+            sessionId={item.sessionId}
+            inboxId={item.id}
+            options={item.options}
+            recommended={item.recommended}
+            multiSelect={item.multiSelect}
+            autoFocus={autoFocus || focused}
+            actions={
+              <Button variant="tertiary" onClick={openThread}>
+                Open thread
+              </Button>
+            }
           />
-        </PanelHeader>
-        <div className="pane-scroll">
-          <BlockStack gap="025" padding="200">
-            {items.length === 0 ? (
-              <Text tone="secondary" className="list-empty">
-                {all.length ? 'No unread items.' : 'Nothing needs you right now.'}
-              </Text>
-            ) : (
-              items.map((i) => <InboxRow key={i.id} item={i} selected={i.id === selected?.id} unread={!read[i.id]} now={now} />)
-            )}
-          </BlockStack>
-        </div>
-      </Panel>
-      <PaneResizer target="before" label="Resize Inbox list" min={260} minOther={420} onResize={setInboxListWidth} onReset={() => setInboxListWidth(null)} />
-      <Panel as="main" className={cx('pane-main', !selected && 'phone-hide')}>
-        {selected ? (
-          <InboxDetail key={selected.id} item={selected} />
         ) : (
-          <>
-            <PanelHeader />
-            <div className="pane-center">
-              <BlockStack gap="200" inlineAlign="center">
-                <Icon name="checkCircle" size={16} />
-                <Text tone="secondary">Nothing needs you right now.</Text>
-              </BlockStack>
-            </div>
-          </>
+          <InlineStack gap="200" className="inbox-card-actions">
+            <Button variant="tertiary" onClick={openThread}>
+              Open thread
+            </Button>
+            <span className="cr-spacer" />
+            {item.kind === 'approval' ? (
+              <>
+                <Button onClick={() => void decideApproval(item.id, false)}>Deny</Button>
+                <Button variant="primary" onClick={() => void decideApproval(item.id, true)}>
+                  Approve
+                </Button>
+              </>
+            ) : item.kind === 'interrupted' ? (
+              <>
+                <Button onClick={() => void resolveInbox(item.id)}>Dismiss</Button>
+                <Button variant="primary" icon="play" onClick={() => void resumeThread(item.threadId)}>
+                  Resume
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => void resolveInbox(item.id)}>Dismiss</Button>
+            )}
+          </InlineStack>
         )}
-      </Panel>
-    </>
+      </BlockStack>
+    </Card>
   );
 }
-

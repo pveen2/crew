@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DocResponse, DocSummary } from '@crew/protocol';
 import { BlockStack, Badge, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Spinner, Text, cx } from '@crew/ui';
-import { isPhone, loadDoc, loadDocs, navigate, setDocsFilter, setInboxListWidth, useApp, type PreviewDoc } from '../store';
+import { isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocsFilter, setInboxListWidth, useApp, type PreviewDoc } from '../store';
 import { PaneResizer } from './PaneResizer';
 import { RoleFace, age, useNow } from './common';
 import { DocSourceBar, DocView } from './PreviewPanel';
@@ -88,10 +88,12 @@ export function DocsView({ docId }: { docId?: string }) {
 }
 
 function DocRow({ doc, selected, now }: { doc: DocSummary; selected: boolean; now: number }) {
+  const unread = useApp((s) => isNewDoc(doc, s.docsSeen));
   return (
     <ListItem
       title={doc.title}
       tooltip={doc.title}
+      unread={unread}
       selected={selected}
       onClick={() => navigate({ name: 'docs', docId: doc.id })}
       meta={age(doc.shownAt, now)}
