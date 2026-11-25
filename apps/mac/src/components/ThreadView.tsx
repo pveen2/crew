@@ -21,6 +21,7 @@ import {
   Text,
   TextField,
   type BadgeTone,
+  type IconName,
   type MentionOption,
 } from '@crew/ui';
 import {
@@ -60,6 +61,7 @@ import {
   useRoleLabel,
   useRoleLabels,
 } from './common';
+import { ApprovalCard } from './ApprovalCard';
 import { PreviewPanel, usePreviewDocs } from './PreviewPanel';
 import { QuestionAnswer } from './QuestionAnswer';
 
@@ -237,13 +239,15 @@ function SubagentRow({ threadId, start, data }: { threadId: string; start: Ev<'s
   const now = useNow(1000, !open);
   const showSpend = useApp((s) => s.showSpend);
   const { done, status } = subagentState(start, data);
+  const waiting = useApp((s) => Object.values(s.inbox).some((i) => i.kind === 'approval' && i.sessionId === start.childSessionId));
 
   const childEvents = data.events.filter((e) => e.turnId === start.childTurnId);
   const last = [...childEvents].reverse().find((e) => e.type === 'tool_call' || e.type === 'message' || e.type === 'subagent_started');
   const nested = childEvents.filter((e): e is Ev<'subagent_started'> => e.type === 'subagent_started');
 
   let line: string;
-  if (status === 'running' || status === 'queued') {
+  if (waiting && (status === 'running' || status === 'queued')) line = 'Waiting for your approval';
+  else if (status === 'running' || status === 'queued') {
     if (last?.type === 'tool_call') line = crewToolLine(last.name, labels) ?? `Using ${toolLabel(last.name, last.input)}`;
     else if (last?.type === 'message') line = oneLine(last.text, 120);
     else if (last?.type === 'subagent_started') line = `Asked ${labels[last.role] ?? last.role}`;
@@ -408,8 +412,49 @@ function NeedsYouCard({ threadId, event, role, answer }: { threadId: string; eve
 }
 
 // ---------------------------------------------------------------------------
+// Approvals in the thread. The Inbox has the same items; deciding in either place settles both.
 
-function StatusLine({ tone = 'secondary', icon, children }: { tone?: 'secondary' | 'caution' | 'critical'; icon?: 'alert' | 'clock' | 'play'; children: ReactNode }) {
+/** Where the agent asked: the card while it waits; afterwards the approval_done line says how it went. */
+function InlineApproval({ inboxId }: { inboxId: string }) {
+  const item = useApp((s) => s.inbox[inboxId]);
+  return item?.kind === 'approval' ? <ApprovalCard item={item} /> : null;
+}
+
+/**
+ * Approvals other agents in this thread are waiting on (a specialist the GM
+ * asked, like the Developer), above the composer, so you see them without
+ * stepping in or opening the Inbox.
+ */
+function OtherApprovals({ threadId, session, rootId }: { threadId: string; session: Session; rootId: string }) {
+  const inbox = useApp((s) => s.inbox);
+  const items = useMemo(
+    () =>
+      Object.values(inbox)
+        .filter((i) => i.kind === 'approval' && i.threadId === threadId && i.sessionId !== session.id)
+        .sort((a, b) => a.createdAt - b.createdAt),
+    [inbox, threadId, session.id],
+  );
+  if (!items.length) return null;
+  return (
+    <BlockStack gap="200" className="thread-approvals">
+      {items.map((item) => (
+        <ApprovalCard
+          key={item.id}
+          item={item}
+          extra={
+            <Button variant="tertiary" onClick={() => navigate({ name: 'thread', threadId, sessionId: item.sessionId === rootId ? undefined : item.sessionId })}>
+              Step in
+            </Button>
+          }
+        />
+      ))}
+    </BlockStack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function StatusLine({ tone = 'secondary', icon, children }: { tone?: 'secondary' | 'caution' | 'critical'; icon?: IconName; children: ReactNode }) {
   return (
     <InlineStack gap="150" className={`status-line status-line--${tone}`}>
       {icon ? <Icon name={icon} size={13} /> : null}
@@ -621,6 +666,14 @@ function EventRow({ threadId, event, session, answer }: { threadId: string; even
       return <Markdown text={event.text} />;
     case 'needs_you':
       return <NeedsYouCard threadId={threadId} event={event} role={session.role} answer={answer} />;
+    case 'approval':
+      return <InlineApproval inboxId={event.inboxId} />;
+    case 'approval_done':
+      return (
+        <StatusLine tone={event.approved ? 'secondary' : 'caution'} icon={event.approved ? 'check' : 'alert'}>
+          {event.approved ? 'Approved' : event.stopped ? 'Not decided, the work was stopped' : 'Denied'}: {event.toolName.replace(/^mcp__crew__/, '')}
+        </StatusLine>
+      );
     case 'preview':
       return (
         <Card>
@@ -733,19 +786,22 @@ export function resolveMention(
 
 /**
  * "@developer …" in a thread the lead owns: which agent it names. The message
- * itself stays with the lead, who calls that specialist. The longest name wins;
- * at equal length an agent's name beats another agent's label (what the menu writes).
+ * itself stays with the lead, who calls that specialist. Names (what the menu
+ * writes) first, labels only when no name fits; the longest wins.
  */
 export function mentionedRole(body: string, roles: Array<{ name: string; label: string }>): { role: string; rest: string } | { error: string } {
   const lower = body.toLowerCase();
-  let best: { key: string; role: string; byName: boolean } | undefined;
-  for (const r of roles) {
-    for (const key of new Set([r.name.toLowerCase(), r.label.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')])) {
-      const end = 1 + key.length;
-      if (!lower.startsWith('@' + key) || (lower.length > end && !/\s/.test(lower[end]!))) continue;
-      const byName = key === r.name.toLowerCase();
-      if (!best || key.length > best.key.length || (key.length === best.key.length && byName && !best.byName)) best = { key, role: r.name, byName };
+  let best: { key: string; role: string } | undefined;
+  for (const byName of [true, false]) {
+    for (const r of roles) {
+      const keys = byName ? [r.name.toLowerCase()] : [r.label.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')];
+      for (const key of keys) {
+        const end = 1 + key.length;
+        if (!lower.startsWith('@' + key) || (lower.length > end && !/\s/.test(lower[end]!))) continue;
+        if (!best || key.length > best.key.length) best = { key, role: r.name };
+      }
     }
+    if (best) break;
   }
   if (!best) {
     const name = /^@(\S+)/.exec(body)?.[1] ?? '';
@@ -759,7 +815,8 @@ export function mentionedRole(body: string, roles: Array<{ name: string; label: 
 /** An "@specialist" anywhere in the text (after a space), by name or dashed label. */
 function mentionsSpecialist(body: string, roles: Array<{ name: string; label: string; isLead: boolean }>): boolean {
   const keys = new Set(roles.filter((r) => !r.isLead).flatMap((r) => [r.name.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')]));
-  return [...body.toLowerCase().matchAll(/(?:^|\s)@([\w-]+)/g)].some((m) => keys.has(m[1]!));
+  // A word of its own: "@developer," counts, "@developer/tools" (a package) does not.
+  return [...body.toLowerCase().matchAll(/(?:^|\s)@([\w-]+)(?=$|[\s.,;:!?)])/g)].some((m) => keys.has(m[1]!));
 }
 
 function ThreadComposer({ threadId, session, data, rootId }: { threadId: string; session: Session; data: ThreadData; rootId: string }) {
@@ -1046,6 +1103,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
         </div>
 
         <div className="composer-dock">
+          <OtherApprovals threadId={threadId} session={session} rootId={rootId} />
           {/* Keyed by session: a draft never follows you to another agent. */}
           <ThreadComposer key={session.id} threadId={threadId} session={session} data={data} rootId={rootId} />
         </div>

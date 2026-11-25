@@ -141,7 +141,7 @@ export function instructionsMarkdown(opts: TranslateOptions): string {
     const off = canDelegate ? (opts.benched ?? []).map((n) => crew.agents[n]).filter((a) => a && !a.isLead) : [];
     if (off.length) {
       parts.push(
-        `- Switched off by the owner for this thread: ${off.map((a) => `the ${a!.label}`).join(', ')}.` +
+        `- Switched off by the owner for this thread: ${off.map((a) => `the ${a!.label} (@${a!.name})`).join(', ')}.` +
           ' You cannot call them here, whatever your instructions say about them. Do their part yourself or with the specialists you have, and do not ask the owner to switch them back on.',
       );
     }

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { InboxItem } from '@crew/protocol';
 import { BlockStack, Button, Card, Disclosure, Icon, InlineStack, Panel, PanelHeader, Text, cx, type IconName } from '@crew/ui';
-import { decideApproval, ensureThreads, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
+import { ensureThreads, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
 import { Markdown, RoleFace, age, useNow, useRoleLabel } from './common';
+import { ApprovalActions } from './ApprovalCard';
 import { QuestionAnswer } from './QuestionAnswer';
 
 /**
@@ -143,18 +144,7 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
             </Button>
             <span className="cr-spacer" />
             {item.kind === 'approval' ? (
-              <>
-                <Button onClick={() => void decideApproval(item.id, false)}>Deny</Button>
-                {item.askEveryTime ? null : (
-                  <>
-                    <Button onClick={() => void decideApproval(item.id, true, 'tool')}>Always allow this tool</Button>
-                    <Button onClick={() => void decideApproval(item.id, true, 'all')}>Approve all in this thread</Button>
-                  </>
-                )}
-                <Button variant="primary" onClick={() => void decideApproval(item.id, true)}>
-                  Approve
-                </Button>
-              </>
+              <ApprovalActions item={item} />
             ) : item.kind === 'pull_request' ? (
               <PullRequestActions item={item} />
             ) : item.kind === 'interrupted' ? (

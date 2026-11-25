@@ -3,6 +3,7 @@ import { BlockStack, Button, Card, Icon, InlineStack, Panel, SegmentedControl, S
 import { MAC_INSTALL_COMMAND, MAC_RELEASES, latestMacDownloads, offerMacApp, type MacDownloads } from '../macApp';
 import { setShowSpend, setSidebarTheme, setTouchIcon, useApp, type SidebarTheme } from '../store';
 import type { TouchIcon } from '../touchIcon';
+import { SpendOverview } from './SpendOverview';
 
 const SIDEBAR_THEMES: Array<{ value: SidebarTheme; label: string }> = [
   { value: 'dark', label: 'Dark' },
@@ -57,6 +58,8 @@ export function SettingsView() {
               <Switch checked={showSpend} onChange={setShowSpend} labelledBy="setting-spend" describedBy="setting-spend-help" />
             </InlineStack>
           </Card>
+
+          <SpendOverview />
 
           {!window.crewHost && (
             <Card>

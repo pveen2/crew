@@ -88,7 +88,7 @@ function printEvent(e: CrewEvent, roleOf: (sessionId: string) => string): void {
       console.log(dim(`    pnpm crew approve ${e.inboxId}   ·   pnpm crew deny ${e.inboxId}`));
       break;
     case 'approval_done':
-      console.log(`${who} ${e.approved ? green(`✓ approved ${e.toolName}`) : red(`✗ denied ${e.toolName}`)}`);
+      console.log(`${who} ${e.approved ? green(`✓ approved ${e.toolName}`) : red(`✗ ${e.stopped ? 'stopped before a decision on' : 'denied'} ${e.toolName}`)}`);
       break;
     case 'preview':
       console.log(`${who} ${green(`▣ preview: ${e.title}`)} ${dim(`(${e.content.length} chars)`)}`);

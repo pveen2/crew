@@ -517,6 +517,15 @@ body,
   margin: 0 auto;
   padding: var(--cr-space-250) var(--cr-space-500) var(--cr-space-450);
 }
+/* Approvals a specialist in this thread waits on, above the composer. */
+.thread-approvals {
+  margin-bottom: var(--cr-space-250);
+  max-height: 45vh;
+  overflow-y: auto;
+}
+.thread-approvals > * {
+  flex-shrink: 0;
+}
 .session-status {
   padding: 0 var(--cr-space-150);
   color: var(--cr-color-text-secondary);
@@ -1333,6 +1342,139 @@ body,
   flex: 1 1 auto;
   min-width: 0;
 }
+.spend.settings-row {
+  align-items: stretch;
+}
+
+.spend__loading {
+  justify-content: center;
+  padding: var(--cr-space-400) 0;
+}
+
+.spend__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: var(--cr-space-300);
+}
+
+.spend__stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.spend__stat-value {
+  font-size: 22px;
+  line-height: 1.2;
+  font-weight: var(--cr-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  color: var(--cr-color-text);
+}
+
+.spend__readout {
+  align-items: baseline;
+  min-height: 18px;
+  font-variant-numeric: tabular-nums;
+}
+
+.spend__chart {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  height: 120px;
+  padding-bottom: 1px;
+  border-bottom: 1px solid var(--cr-color-border-subtle);
+}
+
+.spend__col {
+  flex: 1 1 0;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+  border-radius: 3px 3px 0 0;
+  outline: none;
+  cursor: default;
+}
+
+.spend__col:hover,
+.spend__col[data-active] {
+  background: var(--cr-color-bg-surface-tertiary);
+}
+
+.spend__col:focus-visible {
+  box-shadow: 0 0 0 2px var(--cr-color-border-focus);
+}
+
+.spend__bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--cr-color-border);
+  transition: background var(--cr-duration-fast) ease;
+}
+
+.spend__bar[data-empty] {
+  height: 2px;
+  background: var(--cr-color-border-faint);
+}
+
+.spend__col[data-today] .spend__bar:not([data-empty]),
+.spend__col:hover .spend__bar:not([data-empty]),
+.spend__col[data-active] .spend__bar:not([data-empty]) {
+  background: var(--cr-color-bg-fill-brand);
+}
+
+.spend__axis {
+  display: flex;
+  justify-content: space-between;
+}
+
+.spend__agents {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-space-150);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spend__agent {
+  display: grid;
+  grid-template-columns: auto minmax(90px, 160px) 1fr auto 64px;
+  align-items: center;
+  gap: var(--cr-space-200);
+}
+
+.spend__agent-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spend__agent-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--cr-color-bg-surface-tertiary);
+  overflow: hidden;
+}
+
+.spend__agent-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--cr-color-bg-fill-brand);
+}
+
+.spend__agent-turns,
+.spend__agent-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.spend__agent-value {
+  text-align: right;
+}
+
 /* The Terminal one-liner on the Crew for Mac card (web app only). */
 .mac-install {
   align-items: center;

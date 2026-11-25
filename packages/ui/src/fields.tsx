@@ -112,11 +112,15 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       el.setSelectionRange(at, at);
     });
   };
-  // Keep the highlighted agent in view while arrowing through a long list.
-  useEffect(() => {
-    if (menuOpen) document.getElementById(`${menuId}-${active}`)?.scrollIntoView({ block: 'nearest' });
-  }, [menuOpen, active]); // eslint-disable-line react-hooks/exhaustive-deps
   const menuId = useMemo(() => `cr-mentions-${Math.random().toString(36).slice(2, 8)}`, []);
+  // Keep the highlighted agent in view, scrolling only the list (never the page around it).
+  useEffect(() => {
+    const item = menuOpen ? document.getElementById(`${menuId}-${active}`) : null;
+    const list = item?.parentElement;
+    if (!item || !list) return;
+    if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop;
+    else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight;
+  }, [menuOpen, active, matches, menuId]);
   // Fit the box to its text: on every change, and whenever its width changes
   // (a pane resized or a preview opened), since narrower means more lines.
   useLayoutEffect(() => {
@@ -177,7 +181,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
             return;
           }
         }
-        if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
+        if (e.key !== 'Enter' || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
         if ((enterSends && !e.shiftKey) || e.metaKey) {
           e.preventDefault();
           onSubmit();
