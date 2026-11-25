@@ -7,6 +7,7 @@ import { ServerLoginDialog } from './components/ServerLoginDialog';
 import { ThreadView } from './components/ThreadView';
 import { DocsView } from './components/DocsView';
 import { InboxView } from './components/InboxView';
+import { PaneErrorBoundary } from './components/PaneErrorBoundary';
 import { AgentsView } from './components/AgentsView';
 import { TeamView } from './components/TeamView';
 import { SettingsView } from './components/SettingsView';
@@ -87,6 +88,7 @@ export function App() {
           </Banner>
         )}
         <div className="panes">
+          <PaneErrorBoundary key={JSON.stringify(view)}>
           {view.name === 'new' && <NewThreadView key={view.role ?? ''} initialRole={view.role} />}
           {view.name === 'threads' && <ThreadsView />}
           {view.name === 'done' && <ThreadsView done key="done" />}
@@ -96,6 +98,7 @@ export function App() {
           {view.name === 'team' && <TeamView />}
           {view.name === 'settings' && <SettingsView />}
           {view.name === 'thread' && <ThreadView key={view.threadId} threadId={view.threadId} sessionId={view.sessionId} />}
+          </PaneErrorBoundary>
         </div>
       </div>
       </div>
