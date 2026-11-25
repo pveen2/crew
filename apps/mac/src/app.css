@@ -541,6 +541,266 @@ body,
   padding: var(--cr-space-450);
 }
 
+/* ------------------------------------------------------------------ concept board */
+
+.concepts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-space-500);
+  max-width: 980px;
+  margin: 0 auto;
+}
+.concepts-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  gap: var(--cr-space-300);
+}
+.concepts-thumb {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-space-150);
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--cr-color-text-secondary);
+  font: inherit;
+  font-size: var(--cr-font-size-300);
+  min-width: 0;
+}
+.concepts-thumb:hover .ad {
+  transform: translateY(-2px);
+}
+.concepts-thumb--keep .ad {
+  outline: 2px solid var(--cr-color-text-success);
+  outline-offset: 2px;
+}
+.concepts-thumb--drop .ad {
+  opacity: 0.35;
+}
+.concepts-thumb-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.concept {
+  display: grid;
+  grid-template-columns: minmax(200px, 300px) 1fr;
+  gap: var(--cr-space-500);
+  align-items: start;
+  padding-top: var(--cr-space-500);
+  border-top: 1px solid var(--cr-color-border-faint);
+  scroll-margin-top: var(--cr-space-400);
+}
+.concept--drop > .ad {
+  opacity: 0.4;
+}
+@container (max-width: 620px) {
+  .concept {
+    grid-template-columns: 1fr;
+  }
+}
+.doc-scroll:has(.concepts) {
+  container-type: inline-size;
+}
+.concept-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cr-space-250);
+  min-width: 0;
+}
+.concept-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--cr-space-100) var(--cr-space-300);
+  margin: 0;
+  font-size: var(--cr-font-size-325);
+}
+.concept-facts dt {
+  color: var(--cr-color-text-tertiary);
+}
+.concept-facts dd {
+  margin: 0;
+}
+.concept-label {
+  display: block;
+  margin-top: var(--cr-space-150);
+  font-size: var(--cr-font-size-275);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--cr-color-text-tertiary);
+}
+.concept-headlines {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.concept-headline {
+  display: flex;
+  align-items: baseline;
+  gap: var(--cr-space-200);
+  padding: var(--cr-space-150) var(--cr-space-200);
+  border: 0;
+  border-radius: var(--cr-radius-300);
+  background: none;
+  color: var(--cr-color-text);
+  font-family: var(--ad-font-text);
+  font-size: var(--cr-font-size-375);
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+.concept-headline:hover {
+  background: var(--cr-color-bg-fill-hover);
+}
+.concept-headline[aria-checked='true'] {
+  background: var(--cr-color-bg-fill-selected);
+}
+.concept-star {
+  flex: 0 0 1em;
+  color: var(--cr-color-text-caution);
+}
+.concept-headline-text {
+  flex: 1 1 auto;
+}
+.concept-count {
+  font-family: var(--cr-font-family);
+  font-size: var(--cr-font-size-288);
+  color: var(--cr-color-text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+.concept-copy p {
+  margin: 0 0 var(--cr-space-150);
+  font-size: var(--cr-font-size-325);
+  color: var(--cr-color-text-secondary);
+}
+.concept-note {
+  display: flex;
+  gap: var(--cr-space-200);
+  align-items: flex-start;
+  padding: var(--cr-space-200) var(--cr-space-300);
+  border-radius: var(--cr-radius-300);
+  background: var(--cr-color-bg-caution);
+  color: var(--cr-color-text-caution);
+  font-size: var(--cr-font-size-325);
+}
+.concept-actions {
+  display: flex;
+  gap: var(--cr-space-200);
+  align-items: center;
+  margin-top: var(--cr-space-150);
+}
+.concept-comment {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--cr-space-150) var(--cr-space-250);
+  border: 1px solid var(--cr-color-border-control);
+  border-radius: var(--cr-radius-300);
+  background: var(--cr-color-bg-surface);
+  color: var(--cr-color-text);
+  font: inherit;
+  font-size: var(--cr-font-size-325);
+}
+.concepts-send {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cr-space-300);
+  padding: var(--cr-space-300) var(--cr-space-400);
+  border-radius: var(--cr-radius-400);
+  background: var(--cr-color-bg-surface-secondary);
+  box-shadow: var(--cr-shadow-border-subtle);
+}
+
+/* The ad itself: image + headline, in the team's fonts. */
+.ad {
+  position: relative;
+  aspect-ratio: var(--ad-aspect, 4 / 5);
+  container-type: inline-size;
+  overflow: hidden;
+  border-radius: var(--cr-radius-400);
+  box-shadow: var(--cr-shadow-border-subtle);
+  font-family: var(--ad-font-text);
+  transition: transform 120ms ease;
+}
+.ad--small {
+  border-radius: var(--cr-radius-250);
+}
+.ad-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ad--photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 0.35), transparent 45%);
+  pointer-events: none;
+}
+.ad--photo.ad--bottom::after {
+  background: linear-gradient(to top, rgb(0 0 0 / 0.4), transparent 50%);
+}
+.ad-placeholder {
+  position: absolute;
+  inset: 30% 12% 12%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px dashed currentColor;
+  border-radius: var(--cr-radius-300);
+  padding: 8px;
+  opacity: 0.55;
+  font-family: var(--cr-font-family);
+  font-size: max(10px, 4cqi);
+  line-height: 1.35;
+  text-align: center;
+}
+.ad--top .ad-placeholder {
+  inset: 34% 12% 10%;
+}
+.ad--bottom .ad-placeholder {
+  inset: 10% 12% 34%;
+}
+.ad--center .ad-placeholder {
+  display: none;
+}
+.ad-headline {
+  position: absolute;
+  z-index: 1;
+  left: 7cqi;
+  right: 7cqi;
+  font-size: 9cqi;
+  line-height: 1.08;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.ad--top .ad-headline {
+  top: 7cqi;
+}
+.ad--bottom .ad-headline {
+  bottom: 7cqi;
+}
+.ad--center .ad-headline {
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+}
+.ad-accent {
+  font-family: var(--ad-font-accent);
+  font-weight: var(--ad-accent-weight, 400);
+  font-style: italic;
+  font-size: 1.12em;
+  letter-spacing: 0;
+}
+
 /* ------------------------------------------------------------------ inbox */
 
 .inbox-kind-strong {

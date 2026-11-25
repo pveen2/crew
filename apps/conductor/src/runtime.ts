@@ -13,6 +13,7 @@ import type {
   AttachmentUpload,
   CrewEvent,
   CrewEventBody,
+  DocFormat,
   Engine,
   InboxItem,
   InboxKind,
@@ -25,6 +26,7 @@ import type {
   TurnStatus,
   Usage,
 } from '@crew/protocol';
+import { parseConceptBoard } from '@crew/protocol';
 import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
 import type { SessionRow, Store } from './db.ts';
@@ -356,7 +358,11 @@ export class Runtime {
   async state(): Promise<StateResponse> {
     const crew = await loadCrew();
     return {
-      team: { name: crew.config.name, suggestions: crew.config.suggestions ?? [] },
+      team: {
+        name: crew.config.name,
+        suggestions: crew.config.suggestions ?? [],
+        fonts: crew.fonts.filter((f) => existsSync(f.file)).map(({ file: _file, ...f }) => f),
+      },
       threads: this.store.threads().filter((t) => !t.archived).map((t) => this.withMeta(t)),
       done: this.store.threads().filter((t) => t.archived).slice(0, 200).map((t) => this.withMeta(t)),
       inbox: this.store.openInbox(),
@@ -968,6 +974,14 @@ export class Runtime {
   }
 
   /** An attached image for the app, or undefined. */
+  /** A team font file (crew.config.ts `fonts`), for the app: /api/brand-fonts/<role>. */
+  async brandFontFile(role: string): Promise<{ mime: string; data: Buffer } | undefined> {
+    const font = (await loadCrew()).fonts.find((f) => f.role === role);
+    if (!font || !existsSync(font.file)) return undefined;
+    const ext = font.file.split('.').pop()!.toLowerCase();
+    return { mime: `font/${ext}`, data: readFileSync(font.file) };
+  }
+
   attachmentFile(threadId: string, file: string): { mime: string; data: Buffer } | undefined {
     if (!/^[\w-]+$/.test(threadId) || !/^[\w.-]+$/.test(file) || file.startsWith('.')) return undefined;
     const p = join(paths.attachments, threadId, file);
@@ -1148,7 +1162,7 @@ export class Runtime {
   private showPreview(session: SessionRow, agent: LoadedAgent, args: Record<string, unknown>): string {
     let title = typeof args.title === 'string' ? args.title.trim() : '';
     let content = typeof args.content === 'string' ? args.content : '';
-    let format: 'markdown' | 'html' = args.format === 'html' ? 'html' : 'markdown';
+    let format = docFormat(args.format);
     const artifactId = typeof args.artifactId === 'string' ? args.artifactId.trim() : '';
     if (artifactId) {
       const a = this.store.artifact(artifactId);
@@ -1158,6 +1172,7 @@ export class Runtime {
       title ||= a.title;
     }
     if (!content.trim()) throw new Error('Pass an artifactId, or content to show.');
+    if (format === 'concepts') content = JSON.stringify(parseConceptBoard(content));
     title ||= 'Preview';
 
     const previewId = newId('p');
@@ -1169,8 +1184,10 @@ export class Runtime {
 
   private saveArtifact(session: SessionRow, agent: LoadedAgent, args: Record<string, unknown>): string {
     const title = String(args.title ?? '').trim();
-    const content = String(args.content ?? '');
+    const format = docFormat(args.format);
+    let content = String(args.content ?? '');
     if (!title || !content.trim()) throw new Error('An artifact needs a title and content.');
+    if (format === 'concepts') content = JSON.stringify(parseConceptBoard(content));
     if (content.length > 200_000) throw new Error('Artifacts are capped at 200,000 characters. Split the work or shorten it.');
     const id = newId('a');
     this.store.insertArtifact({
@@ -1179,7 +1196,7 @@ export class Runtime {
       sessionId: session.id,
       agent: agent.name,
       title,
-      format: args.format === 'html' ? 'html' : 'markdown',
+      format,
       content,
       createdAt: Date.now(),
     });
@@ -1280,4 +1297,8 @@ export class Runtime {
     await Promise.race([Promise.allSettled(pending.map((r) => r.done)), new Promise((r) => setTimeout(r, 8000))]);
     // Anything still marked running is picked up by recover() on the next start.
   }
+}
+
+function docFormat(v: unknown): DocFormat {
+  return v === 'html' || v === 'concepts' ? v : 'markdown';
 }

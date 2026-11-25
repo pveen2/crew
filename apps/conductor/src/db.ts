@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type {
   CrewEvent,
   CrewEventBody,
+  DocFormat,
   EventBase,
   InboxItem,
   InboxKind,
@@ -224,7 +225,7 @@ export interface ArtifactRow {
   sessionId: string;
   agent: string;
   title: string;
-  format: 'markdown' | 'html';
+  format: DocFormat;
   content: string;
   createdAt: number;
 }

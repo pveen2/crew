@@ -5,6 +5,7 @@ import { useSyncExternalStore } from 'react';
 import type {
   AgentActivity,
   AttachmentUpload,
+  BrandFont,
   ConnectionStatus,
   CrewEvent,
   InboxItem,
@@ -100,7 +101,7 @@ export interface PreviewDoc {
   id: string;
   title: string;
   /** 'web' is a browser tab: `content` is its current URL. */
-  format: 'markdown' | 'html' | 'web';
+  format: 'markdown' | 'html' | 'concepts' | 'web';
   content: string;
   from: string;
   ts: number;
@@ -123,6 +124,8 @@ export interface AppState {
   inbox: Record<string, InboxItem>;
   roles: RoleSummary[];
   teamName: string;
+  /** The team's brand fonts (crew.config.ts `fonts`), for concept boards. */
+  teamFonts: BrandFont[];
   /** Example questions on the New thread screen, from the team. */
   suggestions: string[];
   activity: AgentActivity[];
@@ -247,6 +250,7 @@ let state: AppState = {
   inbox: {},
   roles: [],
   teamName: '',
+  teamFonts: [],
   suggestions: [],
   activity: [],
   details: {},
@@ -330,6 +334,7 @@ async function refreshState(): Promise<void> {
     inbox: Object.fromEntries(s.inbox.map((i) => [i.id, i])),
     roles: s.roles,
     teamName: s.team.name,
+    teamFonts: s.team.fonts ?? [],
     suggestions: s.team.suggestions,
     activity: s.activity,
   });
@@ -634,11 +639,11 @@ async function toUploads(files: File[] = []): Promise<AttachmentUpload[]> {
   );
 }
 
-const attachmentUrls = new Map<string, Promise<string>>();
-/** An attached image as a blob: URL (fetched with the app token, cached). */
-export function attachmentUrl(threadId: string, file: string): Promise<string> {
+const attachmentBlobs = new Map<string, Promise<Blob>>();
+/** An attached image's bytes, fetched from the conductor with the app token (cached). */
+function attachmentBlob(threadId: string, file: string): Promise<Blob> {
   const key = `${threadId}/${file}`;
-  let p = attachmentUrls.get(key);
+  let p = attachmentBlobs.get(key);
   if (!p) {
     p = (async () => {
       if (!conn) throw new Error('Not connected to the conductor');
@@ -646,10 +651,50 @@ export function attachmentUrl(threadId: string, file: string): Promise<string> {
         headers: { authorization: `Bearer ${conn.token}` },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return URL.createObjectURL(await res.blob());
+      return res.blob();
     })();
+    p.catch(() => attachmentBlobs.delete(key));
+    attachmentBlobs.set(key, p);
+  }
+  return p;
+}
+
+const attachmentUrls = new Map<string, Promise<string>>();
+/** An attached image as a blob: URL, for the app's own <img> tags (cached). */
+export function attachmentUrl(threadId: string, file: string): Promise<string> {
+  const key = `${threadId}/${file}`;
+  let p = attachmentUrls.get(key);
+  if (!p) {
+    p = attachmentBlob(threadId, file).then((blob) => URL.createObjectURL(blob));
     p.catch(() => attachmentUrls.delete(key));
     attachmentUrls.set(key, p);
+  }
+  return p;
+}
+
+const brandFontLoads = new Map<string, Promise<string | null>>();
+/**
+ * Loads a team font into the app and resolves with the CSS family to use, or null when the
+ * team has none for this role. Registered under a Crew name so it never clashes with app fonts.
+ */
+export function loadBrandFont(font: BrandFont): Promise<string | null> {
+  const family = `crew-brand-${font.role}`;
+  const key = `${font.role}/${font.family}/${font.weight ?? ''}/${font.style ?? ''}`;
+  let p = brandFontLoads.get(key);
+  if (!p) {
+    p = (async () => {
+      if (!conn) throw new Error('Not connected to the conductor');
+      const res = await fetch(`${conn.url}/api/brand-fonts/${font.role}`, { headers: { authorization: `Bearer ${conn.token}` } });
+      if (!res.ok) return null;
+      const face = new FontFace(family, await res.arrayBuffer(), {
+        weight: String(font.weight ?? 400),
+        style: font.style ?? 'normal',
+      });
+      document.fonts.add(await face.load());
+      return family;
+    })();
+    p.catch(() => brandFontLoads.delete(key));
+    brandFontLoads.set(key, p);
   }
   return p;
 }
@@ -663,18 +708,16 @@ export function attachmentDataUrl(threadId: string, file: string): Promise<strin
   const key = `${threadId}/${file}`;
   let p = attachmentDataUrls.get(key);
   if (!p) {
-    p = attachmentUrl(threadId, file)
-      .then((url) => fetch(url))
-      .then((res) => res.blob())
-      .then(
-        (blob) =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = () => reject(reader.error ?? new Error('Could not read the image'));
-            reader.readAsDataURL(blob);
-          }),
-      );
+    // Straight from the bytes: the app's CSP has no blob: in connect-src, so fetch() on a blob: URL fails.
+    p = attachmentBlob(threadId, file).then(
+      (blob) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error ?? new Error('Could not read the image'));
+          reader.readAsDataURL(blob);
+        }),
+    );
     p.catch(() => attachmentDataUrls.delete(key));
     attachmentDataUrls.set(key, p);
   }
