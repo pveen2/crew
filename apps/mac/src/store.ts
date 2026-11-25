@@ -6,6 +6,9 @@ import type {
   AgentActivity,
   AttachmentUpload,
   BrandFont,
+  DocResponse,
+  DocStatus,
+  DocSummary,
   ConnectionStatus,
   CrewEvent,
   InboxItem,
@@ -92,6 +95,7 @@ export type View =
   | { name: 'threads' }
   | { name: 'done' }
   | { name: 'inbox'; itemId?: string }
+  | { name: 'docs'; docId?: string }
   | { name: 'agents' }
   | { name: 'team' }
   | { name: 'settings' }
@@ -103,6 +107,8 @@ export interface PreviewDoc {
   /** 'web' is a browser tab: `content` is its current URL. */
   format: 'markdown' | 'html' | 'concepts' | 'web';
   content: string;
+  /** The doc behind it (Docs tab), when there is one. */
+  artifactId?: string;
   from: string;
   ts: number;
 }
@@ -150,6 +156,9 @@ export interface AppState {
   /** Width of the Inbox list in px, set by dragging; null = default. Kept on this Mac. */
   inboxListWidth: number | null;
   inboxFilter: 'all' | 'unread';
+  /** Docs the owner was shown (Docs tab), by id. Null until loaded. */
+  docs: Record<string, DocSummary> | null;
+  docsFilter: 'all' | DocStatus;
   /** Inbox items the owner has looked at. Kept on this Mac only; the conductor has no read state. */
   inboxRead: Record<string, true>;
   /** Threads that could not be loaded (missing or failed), with the reason. */
@@ -176,6 +185,7 @@ function viewFromHash(): View {
   const [name, a, b] = location.hash.replace(/^#\/?/, '').split('/').map((x) => (x ? decode(x) : x));
   if (name === 'thread' && a) return { name: 'thread', threadId: a, sessionId: b || undefined };
   if (name === 'inbox') return { name, itemId: a || undefined };
+  if (name === 'docs') return { name, docId: a || undefined };
   if (name === 'threads' || name === 'agents' || name === 'done' || name === 'team' || name === 'settings') return { name };
   return { name: 'new', role: (name === 'new' && a) || undefined };
 }
@@ -186,6 +196,8 @@ function hashOf(view: View): string {
       return `#thread/${view.threadId}${view.sessionId ? `/${view.sessionId}` : ''}`;
     case 'inbox':
       return view.itemId ? `#inbox/${encodeURIComponent(view.itemId)}` : '#inbox';
+    case 'docs':
+      return view.docId ? `#docs/${encodeURIComponent(view.docId)}` : '#docs';
     case 'new':
       return view.role ? `#new/${encodeURIComponent(view.role)}` : '#new';
     default:
@@ -267,6 +279,8 @@ let state: AppState = {
   previewWidth: loadWidth(PREVIEW_WIDTH_KEY),
   inboxListWidth: loadWidth(INBOX_LIST_WIDTH_KEY),
   inboxFilter: 'all',
+  docs: null,
+  docsFilter: 'all',
   inboxRead: loadRead(),
   loadErrors: {},
   newDraft: null,
@@ -379,6 +393,9 @@ function onMessage(msg: ServerMessage): void {
       scheduleStateRefresh();
       break;
     case 'turn':
+      break;
+    case 'doc':
+      set((s) => (s.docs ? { docs: { ...s.docs, [msg.doc.id]: msg.doc } } : {}));
       break;
     case 'event': {
       const e = msg.event;
@@ -593,6 +610,32 @@ export function setShowSpend(showSpend: boolean): void {
   } catch {
     /* storage unavailable: the choice lasts for this session */
   }
+}
+
+export async function loadDocs(): Promise<void> {
+  const docs = await api<DocSummary[]>('GET', '/api/docs');
+  set({ docs: Object.fromEntries(docs.map((d) => [d.id, d])) });
+}
+
+const docContents = new Map<string, Promise<DocResponse>>();
+/** A doc with its content (cached: a doc's content never changes, only its status). */
+export function loadDoc(id: string): Promise<DocResponse> {
+  let p = docContents.get(id);
+  if (!p) {
+    p = api<DocResponse>('GET', `/api/docs/${encodeURIComponent(id)}`);
+    p.catch(() => docContents.delete(id));
+    docContents.set(id, p);
+  }
+  return p;
+}
+
+export async function setDocStatus(id: string, status: DocStatus): Promise<void> {
+  const doc = await api<DocSummary>('POST', `/api/docs/${encodeURIComponent(id)}/status`, { status });
+  set((s) => ({ docs: { ...(s.docs ?? {}), [doc.id]: doc } }));
+}
+
+export function setDocsFilter(docsFilter: 'all' | DocStatus): void {
+  set({ docsFilter });
 }
 
 export function setInboxFilter(inboxFilter: 'all' | 'unread'): void {

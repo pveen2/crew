@@ -14,6 +14,9 @@ import type {
   CrewEvent,
   CrewEventBody,
   DocFormat,
+  DocResponse,
+  DocStatus,
+  DocSummary,
   Engine,
   InboxItem,
   InboxKind,
@@ -30,7 +33,7 @@ import type {
 import { parseConceptBoard } from '@crew/protocol';
 import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
-import type { SessionRow, Store } from './db.ts';
+import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
 
@@ -1237,7 +1240,7 @@ export class Runtime {
     let title = typeof args.title === 'string' ? args.title.trim() : '';
     let content = typeof args.content === 'string' ? args.content : '';
     let format = docFormat(args.format);
-    const artifactId = typeof args.artifactId === 'string' ? args.artifactId.trim() : '';
+    let artifactId = typeof args.artifactId === 'string' ? args.artifactId.trim() : '';
     if (artifactId) {
       const a = this.store.artifact(artifactId);
       if (!a || a.threadId !== session.threadId) throw new Error(`No artifact ${artifactId} in this thread.`);
@@ -1249,8 +1252,16 @@ export class Runtime {
     if (format === 'concepts') content = JSON.stringify(parseConceptBoard(content));
     title ||= 'Preview';
 
+    // Everything the owner is shown is a doc (Docs tab): content written inline becomes one too.
+    const now = Date.now();
+    if (!artifactId) {
+      artifactId = newId('a');
+      this.store.insertArtifact({ id: artifactId, threadId: session.threadId, sessionId: session.id, agent: agent.name, title, format, content, createdAt: now });
+    }
+    this.store.markShown(artifactId, now);
     const previewId = newId('p');
-    this.emit(session, this.running.get(session.id)?.turnId ?? null, { type: 'preview', previewId, title, format, content });
+    this.emit(session, this.running.get(session.id)?.turnId ?? null, { type: 'preview', previewId, title, format, content, artifactId });
+    this.broadcastDoc(artifactId);
     // Only the thread owner's previews go to the Inbox; specialists' drafts usually feed into it.
     if (session.depth === 0) this.addInbox(session, 'draft', `Draft ready: ${title}`, `${agent.label} put "${title}" in the preview panel.`, { previewId });
     return `Shown to the owner in the preview panel as "${title}".`;
@@ -1281,7 +1292,59 @@ export class Runtime {
   private readArtifact(session: SessionRow, id: string): string {
     const a = this.store.artifact(id.trim());
     if (!a || a.threadId !== session.threadId) throw new Error(`No artifact ${id} in this thread.`);
-    return `# ${a.title}\n\n(artifact ${a.id} by ${a.agent}, ${a.format})\n\n${a.content}`;
+    const status = a.status === 'approved' ? ', APPROVED by the owner: this is the version that counts' : '';
+    return `# ${a.title}\n\n(artifact ${a.id} by ${a.agent}, ${a.format}${status})\n\n${a.content}`;
+  }
+
+  // -------------------------------------------------------------------------
+  // Docs: what the owner has been shown, and whether they approved it
+
+  private docSummary(a: Omit<ArtifactRow, 'content'>): DocSummary {
+    return {
+      id: a.id,
+      threadId: a.threadId,
+      threadTitle: this.store.thread(a.threadId)?.title ?? '',
+      agent: a.agent,
+      title: a.title,
+      format: a.format,
+      status: a.status ?? 'draft',
+      createdAt: a.createdAt,
+      shownAt: a.shownAt ?? a.createdAt,
+      approvedAt: a.approvedAt ?? null,
+    };
+  }
+
+  private broadcastDoc(id: string): void {
+    const a = this.store.artifact(id);
+    if (a?.shownAt) this.broadcast({ kind: 'doc', doc: this.docSummary(a) });
+  }
+
+  docs(): DocSummary[] {
+    return this.store.docs().map((a) => this.docSummary(a));
+  }
+
+  doc(id: string): DocResponse | undefined {
+    const a = this.store.artifact(id);
+    if (!a?.shownAt) return undefined;
+    return { ...this.docSummary(a), content: a.content };
+  }
+
+  /**
+   * The owner approves a doc (or takes it back to draft). The thread shows it, and agents see it
+   * when they read the artifact, so the approved version is the one they build on.
+   */
+  setDocStatus(id: string, status: DocStatus): DocSummary {
+    const before = this.store.artifact(id);
+    if (!before?.shownAt) throw new Error('No such doc');
+    const a = this.store.setDocStatus(id, status, Date.now())!;
+    const thread = this.store.thread(a.threadId);
+    const root = thread && this.store.session(thread.rootSessionId);
+    if (root && before.status !== status) {
+      this.emit(root, null, { type: 'status', text: status === 'approved' ? `Owner approved "${a.title}" (artifact ${a.id}).` : `Owner moved "${a.title}" (artifact ${a.id}) back to draft.` });
+    }
+    const doc = this.docSummary(a);
+    this.broadcast({ kind: 'doc', doc });
+    return doc;
   }
 
   private saveMemory(session: SessionRow, agent: LoadedAgent, memory: string, maxEntries: number, text: string): string {

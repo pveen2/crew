@@ -6,6 +6,7 @@ import type {
   CrewEvent,
   CrewEventBody,
   DocFormat,
+  DocStatus,
   EventBase,
   InboxItem,
   InboxKind,
@@ -229,6 +230,10 @@ export interface ArtifactRow {
   format: DocFormat;
   content: string;
   createdAt: number;
+  status?: DocStatus;
+  /** Set once the owner has seen it in the preview: it is then a doc in the Docs tab. */
+  shownAt?: number | null;
+  approvedAt?: number | null;
 }
 
 export interface MemoryRow {
@@ -256,12 +261,58 @@ export class Store {
     'ALTER TABLE turns ADD COLUMN cost_usd REAL',
     'ALTER TABLE turns ADD COLUMN input_tokens INTEGER',
     'ALTER TABLE turns ADD COLUMN output_tokens INTEGER',
+    "ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
+    'ALTER TABLE artifacts ADD COLUMN approved_at INTEGER',
     ]) {
       try {
         this.db.exec(sql);
       } catch {
         // Column already exists.
       }
+    }
+    try {
+      this.db.exec('ALTER TABLE artifacts ADD COLUMN shown_at INTEGER');
+      this.backfillShownDocs();
+    } catch {
+      // Column already exists: the backfill ran before.
+    }
+    this.db.exec('CREATE INDEX IF NOT EXISTS artifacts_shown ON artifacts(shown_at)');
+  }
+
+  /**
+   * Once, for databases from before the Docs tab: every preview the owner was shown becomes a
+   * doc. A preview of an artifact matches it by content; a preview written inline becomes one.
+   */
+  private backfillShownDocs(): void {
+    const previews = this.all("SELECT e.id, e.thread_id, e.session_id, e.ts, e.body, s.role FROM events e LEFT JOIN sessions s ON s.id = e.session_id WHERE e.type = 'preview' ORDER BY e.id");
+    for (const p of previews) {
+      let body: { previewId?: string; title?: string; format?: DocFormat; content?: string; artifactId?: string };
+      try {
+        body = JSON.parse(String(p.body)) as typeof body;
+      } catch {
+        continue;
+      }
+      if (!body.content) continue;
+      const match = this.get('SELECT id FROM artifacts WHERE thread_id = ? AND content = ? ORDER BY created_at DESC LIMIT 1', p.thread_id as string, body.content);
+      const artifactId = match ? (match.id as string) : `a_${body.previewId ?? `e${String(p.id)}`}`;
+      if (match) {
+        this.run('UPDATE artifacts SET shown_at = ? WHERE id = ?', Number(p.ts), artifactId);
+      } else {
+        this.run(
+          'INSERT OR IGNORE INTO artifacts (id, thread_id, session_id, agent, title, format, content, created_at, shown_at) VALUES (?,?,?,?,?,?,?,?,?)',
+          artifactId,
+          p.thread_id as string,
+          p.session_id as string,
+          String(p.role ?? ''),
+          body.title || 'Preview',
+          body.format ?? 'markdown',
+          body.content,
+          Number(p.ts),
+          Number(p.ts),
+        );
+      }
+      // The app links a preview to its doc by this id.
+      this.run('UPDATE events SET body = ? WHERE id = ?', JSON.stringify({ ...body, artifactId }), Number(p.id));
     }
   }
 
@@ -457,19 +508,22 @@ export class Store {
   }
   artifact(id: string): ArtifactRow | undefined {
     const r = this.get('SELECT * FROM artifacts WHERE id = ?', id);
-    return (
-      r && {
-        id: r.id as string,
-        threadId: r.thread_id as string,
-        sessionId: r.session_id as string,
-        agent: r.agent as string,
-        title: r.title as string,
-        format: r.format as ArtifactRow['format'],
-        content: r.content as string,
-        createdAt: Number(r.created_at),
-      }
-    );
+    return r && toArtifact(r);
   }
+  /** Docs: artifacts the owner has been shown, newest first. Without content. */
+  docs(): Array<Omit<ArtifactRow, 'content'>> {
+    return this.all(
+      "SELECT id, thread_id, session_id, agent, title, format, '' AS content, created_at, status, shown_at, approved_at FROM artifacts WHERE shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 500",
+    ).map(toArtifact);
+  }
+  markShown(id: string, at: number): void {
+    this.run('UPDATE artifacts SET shown_at = ? WHERE id = ?', at, id);
+  }
+  setDocStatus(id: string, status: DocStatus, at: number): ArtifactRow | undefined {
+    this.run('UPDATE artifacts SET status = ?, approved_at = ? WHERE id = ?', status, status === 'approved' ? at : null, id);
+    return this.artifact(id);
+  }
+
 
   // Memory -------------------------------------------------------------------
 
@@ -492,4 +546,20 @@ export class Store {
   deleteMemory(id: string): void {
     this.run('DELETE FROM memories WHERE id = ?', id);
   }
+}
+
+function toArtifact(r: Row): ArtifactRow {
+  return {
+    id: r.id as string,
+    threadId: r.thread_id as string,
+    sessionId: r.session_id as string,
+    agent: r.agent as string,
+    title: r.title as string,
+    format: r.format as ArtifactRow['format'],
+    content: r.content as string,
+    createdAt: Number(r.created_at),
+    status: (r.status as DocStatus | undefined) ?? 'draft',
+    shownAt: r.shown_at == null ? null : Number(r.shown_at),
+    approvedAt: r.approved_at == null ? null : Number(r.approved_at),
+  };
 }

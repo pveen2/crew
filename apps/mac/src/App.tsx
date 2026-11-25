@@ -5,6 +5,7 @@ import { isPhone, navigate, openExternal, openUrl, toggleNav, toggleSidebar, use
 import { Sidebar } from './components/Sidebar';
 import { ServerLoginDialog } from './components/ServerLoginDialog';
 import { ThreadView } from './components/ThreadView';
+import { DocsView } from './components/DocsView';
 import { InboxView } from './components/InboxView';
 import { AgentsView } from './components/AgentsView';
 import { TeamView } from './components/TeamView';
@@ -90,6 +91,7 @@ export function App() {
           {view.name === 'threads' && <ThreadsView />}
           {view.name === 'done' && <ThreadsView done key="done" />}
           {view.name === 'inbox' && <InboxView itemId={view.itemId} />}
+          {view.name === 'docs' && <DocsView docId={view.docId} />}
           {view.name === 'agents' && <AgentsView />}
           {view.name === 'team' && <TeamView />}
           {view.name === 'settings' && <SettingsView />}

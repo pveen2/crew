@@ -44,6 +44,7 @@ export function Sidebar() {
           <IconButton tone="dark" size="md" icon="inbox" label="Inbox" pressed={view.name === 'inbox'} onClick={() => navigate({ name: 'inbox' })} />
           {inboxItems.length > 0 && <span className="cr-dot cr-dot--notification" aria-hidden />}
         </span>
+        <IconButton tone="dark" size="md" icon="document" label="Docs" pressed={view.name === 'docs'} onClick={() => navigate({ name: 'docs' })} />
         <IconButton tone="dark" size="md" icon="agents" label="Agents" pressed={view.name === 'agents'} onClick={() => navigate({ name: 'agents' })} />
         <span className="cr-spacer" />
         <IconButton tone="dark" size="md" icon="checkCircle" label="Done" pressed={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
@@ -82,6 +83,7 @@ export function Sidebar() {
         selected={view.name === 'inbox'}
         onClick={() => navigate({ name: 'inbox' })}
       />
+      <NavItem icon="document" label="Docs" selected={view.name === 'docs'} onClick={() => navigate({ name: 'docs' })} />
       <NavItem
         icon="agents"
         label="Agents"

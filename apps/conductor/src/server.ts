@@ -178,6 +178,21 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         return;
       }
 
+      // Docs (the Docs tab): GET /api/docs, GET /api/docs/<id>, POST /api/docs/<id>/status
+      if (a === 'docs') {
+        if (req.method === 'GET' && !id) return send(res, 200, runtime.docs());
+        if (req.method === 'GET' && id && !action) {
+          const doc = runtime.doc(id);
+          return doc ? send(res, 200, doc) : send(res, 404, { error: 'No such doc' });
+        }
+        if (req.method === 'POST' && id && action === 'status') {
+          const body = await readJson<{ status?: string }>(req);
+          if (body.status !== 'draft' && body.status !== 'approved') return send(res, 400, { error: 'status must be draft or approved' });
+          if (!runtime.doc(id)) return send(res, 404, { error: 'No such doc' });
+          return send(res, 200, runtime.setDocStatus(id, body.status));
+        }
+      }
+
       // A team font, for concept boards: /api/brand-fonts/<role>
       if (a === 'brand-fonts' && id && req.method === 'GET') {
         const file = await runtime.brandFontFile(id);
