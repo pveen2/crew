@@ -1025,9 +1025,23 @@ body,
   background: var(--cr-color-bg-surface-secondary);
   overflow: auto;
 }
+.md img {
+  max-width: 100%;
+  height: auto;
+}
 .md pre code {
   padding: 0;
   background: transparent;
+}
+.md-table {
+  /* Only a table that still doesn't fit after wrapping scrolls, inside this
+     box, so the pane around it never moves sideways. */
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 0.85em;
+}
+.md-table > table {
+  margin: 0;
 }
 .md table {
   /* A table wider than the column scrolls on its own, not the whole pane. */
@@ -1039,6 +1053,9 @@ body,
 }
 .md th,
 .md td {
+  /* Long words may break inside a cell, so a wide table shrinks to fit the
+     pane instead of pushing it into a sideways scroll. */
+  overflow-wrap: anywhere;
   padding: var(--cr-space-150) var(--cr-space-200);
   border-bottom: 1px solid var(--cr-color-border-subtle);
   text-align: left;
@@ -1074,9 +1091,6 @@ body,
 }
 .md--question p {
   margin-bottom: var(--cr-space-150);
-}
-.md table {
-  overflow-wrap: normal;
 }
 .no-shrink {
   flex: 0 0 auto;

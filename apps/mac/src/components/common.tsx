@@ -29,8 +29,22 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
 });
 
+/** Puts each table in its own scroll box, so a wide one never scrolls the pane. Done on the DOM, not the string, so text that looks like a tag is left alone. */
+function wrapTables(html: string): string {
+  if (!html.includes('<table')) return html;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = html;
+  for (const table of tpl.content.querySelectorAll('table')) {
+    const box = document.createElement('div');
+    box.className = 'md-table';
+    table.replaceWith(box);
+    box.append(table);
+  }
+  return tpl.innerHTML;
+}
+
 export function Markdown({ text, className }: { text: string; className?: string }) {
-  const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY), [text]);
+  const html = useMemo(() => wrapTables(DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY)), [text]);
   return <div className={`md ${className ?? ''}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
