@@ -433,6 +433,8 @@ function onMessage(msg: ServerMessage): void {
     case 'turn':
       break;
     case 'doc':
+      // While a Docs snapshot is loading, keep updates to replay on top of it.
+      docUpdatesDuringLoad?.push(msg.doc);
       set((s) => (s.docs ? { docs: { ...s.docs, [msg.doc.id]: msg.doc } } : {}));
       break;
     case 'event': {
@@ -653,9 +655,28 @@ export function setShowSpend(showSpend: boolean): void {
   }
 }
 
+/** Doc updates that arrived while a snapshot was loading: newer than it, so applied after. */
+let docUpdatesDuringLoad: DocSummary[] | null = null;
+let docLoads = 0;
+
 export async function loadDocs(): Promise<void> {
-  const docs = await api<DocSummary[]>('GET', '/api/docs');
-  set({ docs: Object.fromEntries(docs.map((d) => [d.id, d])) });
+  docUpdatesDuringLoad ??= [];
+  docLoads++;
+  try {
+    const docs = await api<DocSummary[]>('GET', '/api/docs');
+    const byId: Record<string, DocSummary> = Object.fromEntries(docs.map((d) => [d.id, d]));
+    for (const d of docUpdatesDuringLoad ?? []) byId[d.id] = d;
+    set({ docs: byId });
+  } finally {
+    if (--docLoads === 0) docUpdatesDuringLoad = null;
+  }
+}
+
+/** One doc's summary by id, for a doc that is not in the list yet. */
+export async function ensureDoc(id: string): Promise<void> {
+  const d = await loadDoc(id);
+  const { content: _content, ...summary } = d;
+  set((s) => (s.docs && !s.docs[id] ? { docs: { ...s.docs, [id]: summary } } : {}));
 }
 
 const docContents = new Map<string, Promise<DocResponse>>();

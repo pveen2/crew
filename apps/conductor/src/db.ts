@@ -272,16 +272,44 @@ export class Store {
     }
     try {
       this.db.exec('ALTER TABLE artifacts ADD COLUMN shown_at INTEGER');
-      this.backfillShownDocs();
     } catch {
-      // Column already exists: the backfill ran before.
+      // Column already exists.
     }
-    this.db.exec('CREATE INDEX IF NOT EXISTS artifacts_shown ON artifacts(shown_at)');
+    this.db.exec('CREATE INDEX IF NOT EXISTS artifacts_shown ON artifacts(thread_id, shown_at)');
+    this.db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, done_at INTEGER NOT NULL)');
+    this.docsBackfilled = this.runOnce('docs-backfill', () => this.backfillShownDocs());
+  }
+
+  /** False while the Docs backfill has not completed: legacy draft Inbox items must stay. */
+  readonly docsBackfilled: boolean;
+
+  /**
+   * Runs a data migration once, in one transaction, and records it only when it completed.
+   * A failure rolls back and is retried on the next start.
+   */
+  private runOnce(name: string, fn: () => void): boolean {
+    if (this.get('SELECT 1 FROM migrations WHERE name = ?', name)) return true;
+    try {
+      this.db.exec('BEGIN');
+      fn();
+      this.run('INSERT INTO migrations (name, done_at) VALUES (?, ?)', name, Date.now());
+      this.db.exec('COMMIT');
+      return true;
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // No transaction left to roll back.
+      }
+      console.error(`Migration ${name} failed; it runs again on the next start.`, err);
+      return false;
+    }
   }
 
   /**
-   * Once, for databases from before the Docs tab: every preview the owner was shown becomes a
-   * doc. A preview of an artifact matches it by content; a preview written inline becomes one.
+   * For databases from before the Docs tab: every preview the owner was shown becomes a doc.
+   * A preview links to an existing artifact only when exactly one artifact in its thread, made
+   * before it, has the same content; otherwise it gets its own snapshot keyed by the event.
    */
   private backfillShownDocs(): void {
     const previews = this.all("SELECT e.id, e.thread_id, e.session_id, e.ts, e.body, s.role FROM events e LEFT JOIN sessions s ON s.id = e.session_id WHERE e.type = 'preview' ORDER BY e.id");
@@ -293,26 +321,40 @@ export class Store {
         continue;
       }
       if (!body.content) continue;
-      const match = this.get('SELECT id FROM artifacts WHERE thread_id = ? AND content = ? ORDER BY created_at DESC LIMIT 1', p.thread_id as string, body.content);
-      const artifactId = match ? (match.id as string) : `a_${body.previewId ?? `e${String(p.id)}`}`;
-      if (match) {
-        this.run('UPDATE artifacts SET shown_at = ? WHERE id = ?', Number(p.ts), artifactId);
+      const threadId = p.thread_id as string;
+      const ts = Number(p.ts);
+      let artifactId: string | undefined;
+      // Already linked (a build that recorded it): keep it when it really is in this thread.
+      if (body.artifactId && this.get('SELECT 1 FROM artifacts WHERE id = ? AND thread_id = ?', body.artifactId, threadId)) {
+        artifactId = body.artifactId;
       } else {
+        // Only artifacts agents saved: never a snapshot this backfill made for another preview.
+        const matches = this.all(
+          "SELECT id FROM artifacts WHERE thread_id = ? AND content = ? AND created_at <= ? AND id NOT LIKE 'a-e%' LIMIT 2",
+          threadId,
+          body.content,
+          ts,
+        );
+        if (matches.length === 1) artifactId = matches[0]!.id as string;
+      }
+      if (!artifactId) {
+        // "a-": agents' artifacts are always "a_<random>", so a snapshot id can never clash.
+        artifactId = `a-e${String(p.id)}`;
         this.run(
-          'INSERT OR IGNORE INTO artifacts (id, thread_id, session_id, agent, title, format, content, created_at, shown_at) VALUES (?,?,?,?,?,?,?,?,?)',
+          'INSERT OR IGNORE INTO artifacts (id, thread_id, session_id, agent, title, format, content, created_at) VALUES (?,?,?,?,?,?,?,?)',
           artifactId,
-          p.thread_id as string,
+          threadId,
           p.session_id as string,
           String(p.role ?? ''),
           body.title || 'Preview',
           body.format ?? 'markdown',
           body.content,
-          Number(p.ts),
-          Number(p.ts),
+          ts,
         );
       }
+      this.run('UPDATE artifacts SET shown_at = MAX(COALESCE(shown_at, 0), ?) WHERE id = ?', ts, artifactId);
       // The app links a preview to its doc by this id.
-      this.run('UPDATE events SET body = ? WHERE id = ?', JSON.stringify({ ...body, artifactId }), Number(p.id));
+      if (body.artifactId !== artifactId) this.run('UPDATE events SET body = ? WHERE id = ?', JSON.stringify({ ...body, artifactId }), Number(p.id));
     }
   }
 
@@ -511,9 +553,12 @@ export class Store {
     return r && toArtifact(r);
   }
   /** Docs: artifacts the owner has been shown, newest first. Without content. */
-  docs(): Array<Omit<ArtifactRow, 'content'>> {
-    return this.all(
-      "SELECT id, thread_id, session_id, agent, title, format, '' AS content, created_at, status, shown_at, approved_at FROM artifacts WHERE shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 500",
+  docs(threadId?: string): Array<Omit<ArtifactRow, 'content'>> {
+    const cols = "id, thread_id, session_id, agent, title, format, '' AS content, created_at, status, shown_at, approved_at";
+    return (
+      threadId
+        ? this.all(`SELECT ${cols} FROM artifacts WHERE shown_at IS NOT NULL AND thread_id = ? ORDER BY shown_at DESC`, threadId)
+        : this.all(`SELECT ${cols} FROM artifacts WHERE shown_at IS NOT NULL ORDER BY shown_at DESC`)
     ).map(toArtifact);
   }
   /** Status of the doc the owner was shown last in a thread, if any. */
@@ -521,8 +566,16 @@ export class Store {
     const r = this.get('SELECT status FROM artifacts WHERE thread_id = ? AND shown_at IS NOT NULL ORDER BY shown_at DESC LIMIT 1', threadId);
     return r ? (r.status as DocStatus) : undefined;
   }
+  /**
+   * Marks a doc as shown now. Within a thread, shown_at strictly increases, so the doc shown
+   * last is the latest even when two are shown in the same millisecond.
+   */
   markShown(id: string, at: number): void {
-    this.run('UPDATE artifacts SET shown_at = ? WHERE id = ?', at, id);
+    this.run(
+      'UPDATE artifacts SET shown_at = MAX(?, (SELECT COALESCE(MAX(a.shown_at), 0) + 1 FROM artifacts a WHERE a.thread_id = artifacts.thread_id)) WHERE id = ?',
+      at,
+      id,
+    );
   }
   setDocStatus(id: string, status: DocStatus, at: number): ArtifactRow | undefined {
     this.run('UPDATE artifacts SET status = ?, approved_at = ? WHERE id = ?', status, status === 'approved' ? at : null, id);
