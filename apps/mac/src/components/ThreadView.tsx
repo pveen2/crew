@@ -670,7 +670,7 @@ function EventRow({ threadId, event, session, answer }: { threadId: string; even
     case 'approval_done':
       return (
         <StatusLine tone={event.approved ? 'secondary' : 'caution'} icon={event.approved ? 'check' : 'alert'}>
-          {event.approved ? 'Approved' : 'Denied'}: {event.toolName.replace(/^mcp__crew__/, '')}
+          {event.approved ? 'Approved' : event.stopped ? 'Not decided, the work was stopped' : 'Denied'}: {event.toolName.replace(/^mcp__crew__/, '')}
         </StatusLine>
       );
     case 'preview':

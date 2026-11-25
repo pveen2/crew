@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import type { InboxItem } from '@crew/protocol';
 import { BlockStack, Button, Card, Disclosure, InlineStack, Text } from '@crew/ui';
 import { decideApproval } from '../store';
@@ -6,16 +6,40 @@ import { Markdown, RoleFace, useRoleLabel } from './common';
 
 /** Deny, the "always" choices (not for ask-every-time tools), and Approve. Shared by the Inbox and the thread. */
 export function ApprovalActions({ item }: { item: InboxItem }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const decide = async (approved: boolean, always?: 'tool' | 'all') => {
+    setBusy(true);
+    setError('');
+    try {
+      await decideApproval(item.id, approved, always);
+    } catch (err) {
+      setError((err as Error).message || 'Could not send your decision. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <>
-      <Button onClick={() => void decideApproval(item.id, false)}>Deny</Button>
+      {error ? (
+        <Text as="span" variant="bodySm" tone="critical" role="alert">
+          {error}
+        </Text>
+      ) : null}
+      <Button disabled={busy} onClick={() => void decide(false)}>
+        Deny
+      </Button>
       {item.askEveryTime ? null : (
         <>
-          <Button onClick={() => void decideApproval(item.id, true, 'tool')}>Always allow this tool</Button>
-          <Button onClick={() => void decideApproval(item.id, true, 'all')}>Approve all in this thread</Button>
+          <Button disabled={busy} onClick={() => void decide(true, 'tool')}>
+            Always allow this tool
+          </Button>
+          <Button disabled={busy} onClick={() => void decide(true, 'all')}>
+            Approve all in this thread
+          </Button>
         </>
       )}
-      <Button variant="primary" onClick={() => void decideApproval(item.id, true)}>
+      <Button variant="primary" disabled={busy} onClick={() => void decide(true)}>
         Approve
       </Button>
     </>

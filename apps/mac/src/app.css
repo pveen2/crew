@@ -523,6 +523,9 @@ body,
   max-height: 45vh;
   overflow-y: auto;
 }
+.thread-approvals > * {
+  flex-shrink: 0;
+}
 .session-status {
   padding: 0 var(--cr-space-150);
   color: var(--cr-color-text-secondary);

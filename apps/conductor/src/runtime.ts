@@ -1301,7 +1301,7 @@ export class Runtime {
       else signal.addEventListener('abort', () => settle(false), { once: true });
     });
     if (this.store.inboxItem(item.id)?.status === 'open') this.resolveInbox(item.id);
-    this.emit(session, turnId, { type: 'approval_done', inboxId: item.id, toolName, approved });
+    this.emit(session, turnId, { type: 'approval_done', inboxId: item.id, toolName, approved, ...(!approved && signal.aborted ? { stopped: true } : {}) });
     this.refreshThread(session.threadId);
     if (!approved) {
       throw new Error(`The owner denied ${toolName}. Do not try again another way; carry on without it or explain what is blocked.`);
