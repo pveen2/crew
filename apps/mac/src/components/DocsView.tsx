@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DocResponse, DocSummary } from '@crew/protocol';
 import { BlockStack, Badge, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Spinner, Text, cx } from '@crew/ui';
 import { ensureDoc, isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocsFilter, setInboxListWidth, useApp, type PreviewDoc } from '../store';
@@ -22,7 +22,12 @@ export function DocsView({ docId }: { docId?: string }) {
   const listWidth = useApp((s) => s.inboxListWidth);
   const now = useNow(30_000);
 
-  useEffect(() => void loadDocs(), []);
+  const [loadError, setLoadError] = useState(false);
+  const reload = useCallback(() => {
+    setLoadError(false);
+    loadDocs().catch(() => setLoadError(true));
+  }, []);
+  useEffect(reload, [reload]);
   // A link to a doc the list does not have (yet): fetch that one.
   const missing = Boolean(docs && docId && !docs[docId]);
   useEffect(() => {
@@ -58,7 +63,12 @@ export function DocsView({ docId }: { docId?: string }) {
         </PanelHeader>
         <div className="pane-scroll">
           <BlockStack gap="025" padding="200">
-            {docs === null ? (
+            {docs === null && loadError ? (
+              <BlockStack gap="200" inlineAlign="start" className="list-empty">
+                <Text tone="secondary">Couldn’t load Docs.</Text>
+                <Button onClick={reload}>Retry</Button>
+              </BlockStack>
+            ) : docs === null ? (
               <div className="list-empty">
                 <Spinner label="Loading docs" />
               </div>
