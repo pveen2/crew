@@ -1,9 +1,15 @@
-import { BlockStack, Card, InlineStack, Panel, Switch, Text } from '@crew/ui';
-import { setShowSpend, useApp } from '../store';
+import { BlockStack, Card, InlineStack, Panel, SegmentedControl, Switch, Text } from '@crew/ui';
+import { setShowSpend, setSidebarTheme, useApp, type SidebarTheme } from '../store';
+
+const SIDEBAR_THEMES: Array<{ value: SidebarTheme; label: string }> = [
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Sand' },
+];
 
 /** App preferences. Kept on this Mac. */
 export function SettingsView() {
   const showSpend = useApp((s) => s.showSpend);
+  const sidebarTheme = useApp((s) => s.sidebarTheme);
 
   return (
     <Panel as="main" className="pane-main pane-page">
@@ -16,6 +22,20 @@ export function SettingsView() {
               How Crew looks on this Mac.
             </Text>
           </BlockStack>
+
+          <Card>
+            <InlineStack gap="400" className="settings-row">
+              <BlockStack className="settings-row__text">
+                <Text id="setting-sidebar" variant="bodyLg" weight="medium">
+                  Sidebar
+                </Text>
+                <Text variant="bodySm" tone="secondary">
+                  Dark, or a light sand colour next to the white page.
+                </Text>
+              </BlockStack>
+              <SegmentedControl label="Sidebar" items={SIDEBAR_THEMES} value={sidebarTheme} onValueChange={setSidebarTheme} />
+            </InlineStack>
+          </Card>
 
           <Card>
             <InlineStack gap="400" className="settings-row">

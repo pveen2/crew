@@ -532,7 +532,7 @@
   transform: translate(-50%, var(--cr-space-150));
   padding: var(--cr-space-100) var(--cr-space-200);
   border-radius: var(--cr-radius-200);
-  background: var(--cr-color-bg-sidebar);
+  background: var(--cr-color-bg-fill-brand);
   color: var(--cr-color-text-on-fill);
   font-size: var(--cr-font-size-300);
   font-weight: var(--cr-font-weight-medium);
@@ -1039,6 +1039,10 @@
   font-variant-numeric: tabular-nums;
 }
 .cr-nav-item__shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cr-space-100);
+  font-family: inherit;
   font-size: var(--cr-font-size-288);
   color: var(--cr-color-text-sidebar-secondary);
 }

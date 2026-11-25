@@ -150,6 +150,8 @@ export interface AppState {
   navOpen: boolean;
   /** Show what threads and agents spent (Settings). On unless switched off; kept on this Mac. */
   showSpend: boolean;
+  /** Sidebar colours: the dark default or a light one (Settings). Kept on this Mac. */
+  sidebarTheme: SidebarTheme;
   previewDevice: 'desktop' | 'phone';
   /** Width of the preview pane in px, set by dragging; null = the default split. Kept on this Mac. */
   previewWidth: number | null;
@@ -253,6 +255,7 @@ function loadRead(): Record<string, true> {
 
 const SIDEBAR_KEY = 'crew.sidebar.collapsed';
 const SHOW_SPEND_KEY = 'crew.settings.showSpend';
+const SIDEBAR_THEME_KEY = 'crew.settings.sidebarTheme';
 const PREVIEW_WIDTH_KEY = 'crew.preview.width';
 const INBOX_LIST_WIDTH_KEY = 'crew.inbox.listWidth';
 function loadWidth(key: string): number | null {
@@ -271,6 +274,22 @@ function loadFlag(key: string, fallback = false): boolean {
     return fallback;
   }
 }
+
+export type SidebarTheme = 'dark' | 'light';
+function loadSidebarTheme(): SidebarTheme {
+  try {
+    return localStorage.getItem(SIDEBAR_THEME_KEY) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+/** Sets the theme on <html>, where tokens.css swaps the sidebar colours, and the phone status bar colour. */
+function applySidebarTheme(theme: SidebarTheme): void {
+  if (typeof document === 'undefined') return;
+  document.documentElement.dataset.sidebar = theme;
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f8f5ed' : '#111111');
+}
+applySidebarTheme(loadSidebarTheme());
 
 /** The app in a phone-sized window (the web app on an iPhone): one pane at a time. */
 export function isPhone(): boolean {
@@ -312,6 +331,7 @@ let state: AppState = {
   sidebarCollapsed: loadFlag(SIDEBAR_KEY),
   navOpen: false,
   showSpend: loadFlag(SHOW_SPEND_KEY, true),
+  sidebarTheme: loadSidebarTheme(),
   previewDevice: 'desktop',
   previewWidth: loadWidth(PREVIEW_WIDTH_KEY),
   inboxListWidth: loadWidth(INBOX_LIST_WIDTH_KEY),
@@ -650,6 +670,16 @@ export function setShowSpend(showSpend: boolean): void {
   set({ showSpend });
   try {
     localStorage.setItem(SHOW_SPEND_KEY, showSpend ? '1' : '0');
+  } catch {
+    /* storage unavailable: the choice lasts for this session */
+  }
+}
+
+export function setSidebarTheme(sidebarTheme: SidebarTheme): void {
+  set({ sidebarTheme });
+  applySidebarTheme(sidebarTheme);
+  try {
+    localStorage.setItem(SIDEBAR_THEME_KEY, sidebarTheme);
   } catch {
     /* storage unavailable: the choice lasts for this session */
   }

@@ -75,7 +75,16 @@ export function NavItem({ icon, label, count, dot, shortcut, selected, variant =
           {count}
         </span>
       ) : null}
-      {shortcut ? <kbd className="cr-nav-item__shortcut">{shortcut}</kbd> : null}
+      {shortcut ? (
+        <kbd className="cr-nav-item__shortcut" aria-label={shortcut}>
+          {/* One key per span, so the keys get space between them (⌘ N, not ⌘N). */}
+          {[...shortcut].map((key, i) => (
+            <span key={i} aria-hidden="true">
+              {key}
+            </span>
+          ))}
+        </kbd>
+      ) : null}
     </button>
   );
 }
