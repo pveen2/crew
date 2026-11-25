@@ -843,6 +843,7 @@ body,
 }
 .answer-form {
   display: flex;
+  align-items: center;
   gap: var(--cr-space-200);
 }
 .answer-form .cr-text-field {

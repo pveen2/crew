@@ -824,6 +824,14 @@
 .cr-text-field--disabled {
   opacity: var(--cr-opacity-disabled);
 }
+/* A field for writing a message (edit a message, answer a question): the
+   same size as the message text it becomes, like the composer. */
+.cr-text-field--message {
+  height: var(--cr-height-control-xl);
+}
+.cr-text-field--message input {
+  font-size: var(--cr-font-size-375);
+}
 
 /* ------------------------------------------------------------------ composer */
 
@@ -845,13 +853,19 @@
   align-items: center;
   gap: var(--cr-space-150);
   flex: 0 0 auto;
-  min-height: var(--cr-height-control-sm);
+  min-height: var(--cr-height-control-xl);
 }
+.cr-composer .cr-icon-button--primary {
+  width: var(--cr-height-nav);
+  height: var(--cr-height-nav);
+}
+/* What you type is the size of the message it becomes (.md in the app). */
 .cr-composer textarea {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: var(--cr-height-control-sm);
-  padding: var(--cr-space-075) var(--cr-space-100);
+  min-height: var(--cr-height-control-xl);
+  padding: var(--cr-space-150) var(--cr-space-100);
+  font-size: var(--cr-font-size-375);
   border: 0;
   outline: none;
   resize: none;
@@ -860,7 +874,7 @@
   line-height: var(--cr-line-height-normal);
 }
 .cr-composer--tall textarea {
-  min-height: calc(var(--cr-height-control-sm) * 3);
+  min-height: calc(var(--cr-height-control-xl) * 3);
   padding: var(--cr-space-200) var(--cr-space-150);
 }
 .cr-composer--tall {
