@@ -25,7 +25,7 @@ export function InboxView({ itemId }: { itemId?: string }) {
   const inbox = useApp((s) => s.inbox);
   const now = useNow(30_000);
   const items = useMemo(
-    () => Object.values(inbox).sort((a, b) => KIND[a.kind].order - KIND[b.kind].order || b.createdAt - a.createdAt),
+    () => Object.values(inbox).sort((a, b) => (KIND[a.kind]?.order ?? 9) - (KIND[b.kind]?.order ?? 9) || b.createdAt - a.createdAt),
     [inbox],
   );
 
@@ -82,7 +82,8 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
   const thread = useApp((s) => s.threads[item.threadId]);
   const role = useItemRole(item);
   const roleLabel = useRoleLabel(role);
-  const kind = KIND[item.kind];
+  // A newer conductor may send kinds this build does not know yet.
+  const kind = KIND[item.kind] ?? { label: 'Update', icon: 'alert' as IconName, order: 9 };
   const openThread = () =>
     navigate({ name: 'thread', threadId: item.threadId, sessionId: item.sessionId === thread?.rootSessionId ? undefined : item.sessionId });
 

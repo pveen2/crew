@@ -37,7 +37,7 @@ import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from
 import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
-import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, openPullRequest, themePreview } from './code.ts';
+import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, openPullRequest, snapshot, themePreview } from './code.ts';
 
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
 
@@ -933,7 +933,7 @@ export class Runtime {
         const title = this.store.thread(session.threadId)?.title ?? '';
         const fresh = !existsSync(join(session.workdir, 'repo', '.git'));
         if (fresh) this.emit(session, turnId, { type: 'status', text: `Getting a fresh copy of ${crew.config.code?.repo ?? 'the code repo'}…` });
-        await ensureCheckout(codeSettings(crew.config.code), session.workdir, session.threadId, title);
+        await ensureCheckout(codeSettings(crew.config.code), session.workdir, session.id, title);
       }
       translateAgent({
         crew,
@@ -1152,7 +1152,7 @@ export class Runtime {
     const settings = codeSettings(crew.config.code);
     const turnId = this.running.get(session.id)?.turnId ?? null;
     if (tool === 'theme_preview') {
-      const p = await themePreview(settings, session.workdir, crew.config.shopify?.store);
+      const p = await themePreview(settings, session.workdir, session.id, crew.config.shopify?.store, signal);
       this.emit(session, turnId, { type: 'status', text: `Theme preview of ${p.branch}: ${p.previewUrl}` });
       return [
         `Pushed ${p.branch} to the development theme ${p.themeId}.`,
@@ -1162,24 +1162,26 @@ export class Runtime {
       ].filter(Boolean).join('\n');
     }
     if (tool === 'code_review') {
-      const { repo, stat, diff } = await branchDiff(settings, session.workdir);
+      const { stat, diff } = await branchDiff(settings, session.workdir, session.id, signal);
       if (!stat) return `There are no changes against ${settings.base} to review.`;
       const max = 150_000;
       const shown = diff.length > max ? `${diff.slice(0, max)}\n… (diff cut at ${max} characters; read the rest of the files yourself)` : diff;
-      const rules = ['AGENTS.md', settings.themePath ? join(settings.themePath, 'AGENTS.md') : '']
-        .filter(Boolean)
-        .map((f) => join(repo, f))
-        .filter((f) => existsSync(f))
-        .map((f) => readFileSync(f, 'utf8'))
-        .join('\n\n---\n\n');
-      const { engine, model, reasoning } = parseModel(settings.reviewer);
-      this.emit(session, turnId, { type: 'status', text: `Code review by ${model}…` });
-      const dir = join(paths.run, `review-${session.id}-${Date.now()}`);
-      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      // The reviewer works in a snapshot of the branch: no symlinks, hooks or tool settings the agent could have planted.
+      const dir = await snapshot(session.workdir, session.id, undefined, signal);
+      const runDir = `${dir}-run`;
       try {
+        const rules = ['AGENTS.md', settings.themePath ? join(settings.themePath, 'AGENTS.md') : '']
+          .filter(Boolean)
+          .map((f) => join(dir, f))
+          .filter((f) => existsSync(f))
+          .map((f) => readFileSync(f, 'utf8'))
+          .join('\n\n---\n\n');
+        const { engine, model, reasoning } = parseModel(settings.reviewer);
+        this.emit(session, turnId, { type: 'status', text: `Code review by ${model}…` });
+        mkdirSync(runDir, { recursive: true, mode: 0o700 });
         const result = await engines[engine].run({
-          workdir: repo,
-          runDir: dir,
+          workdir: dir,
+          runDir,
           model,
           reasoning,
           permissions: 'read-only',
@@ -1196,17 +1198,24 @@ export class Runtime {
         return `Review by ${model}:\n\n${result.finalText.trim()}`;
       } finally {
         rmSync(dir, { recursive: true, force: true });
+        rmSync(runDir, { recursive: true, force: true });
       }
     }
     // open_pull_request
     const title = String(args.title ?? '').trim();
     const body = String(args.body ?? '').trim();
     if (!title || !body) throw new Error('open_pull_request needs a title and a body.');
-    const pr = await openPullRequest(settings, session.workdir, {
-      title,
-      body: `${body}\n\n---\nOpened by the ${crew.agents[session.role]?.label ?? session.role} in Crew.`,
-      commitMessage: typeof args.commitMessage === 'string' ? args.commitMessage : undefined,
-    });
+    const pr = await openPullRequest(
+      settings,
+      session.workdir,
+      session.id,
+      {
+        title,
+        body: `${body}\n\n---\nOpened by the ${crew.agents[session.role]?.label ?? session.role} in Crew.`,
+        commitMessage: typeof args.commitMessage === 'string' ? args.commitMessage : undefined,
+      },
+      signal,
+    );
     if (pr.created) {
       // The owner merges: the pull request waits for them in the Inbox.
       this.addInbox(session, 'pull_request', `Pull request #${pr.number}: ${title}`, `${body.split('\n\n')[0]!.slice(0, 600)}\n\n\`${pr.branch}\` · ${pr.stat.split('\n').pop()?.trim() ?? ''}`, { url: pr.url });

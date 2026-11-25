@@ -85,7 +85,7 @@ export interface AgentDefinition {
   /**
    * 'read-only' (default); 'draft': may write files in its own drafts/ folder; 'code': works in its own
    * branch of the team's code repo (CrewConfig.code) with a sandboxed shell, and gets theme_preview,
-   * open_pull_request and code_review. Claude Code and Codex only.
+   * open_pull_request and code_review. Claude Code only.
    */
   permissions?: Permissions;
   /**

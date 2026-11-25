@@ -221,8 +221,9 @@ async function loadAgent(root: string, dir: string, name: string, isLead: boolea
   const { engine, model, reasoning } = parseModel(def.model);
   if (permissions === 'code') {
     if (isLead) throw new Error(`${where}: the lead delegates; give 'code' to a specialist`);
-    // The shell runs in the CLI's own sandbox; only these two have one Crew can lock down.
-    if (engine !== 'claude-code' && engine !== 'codex') throw new Error(`${where}: 'code' runs on claude-code or codex only`);
+    // The shell runs in Claude Code's OS sandbox, which Crew can keep away from secrets on disk.
+    // Codex's sandbox does not restrict reads, so a Codex shell could read .env.local.
+    if (engine !== 'claude-code') throw new Error(`${where}: 'code' runs on claude-code only`);
   }
 
   const instructions = readText(join(dir, 'instructions.md'));

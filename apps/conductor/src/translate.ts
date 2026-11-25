@@ -10,7 +10,7 @@
 // Plus context/brand/ (read-only copy) and, for draft permissions, drafts/. The
 // conductor adds attachments/ (the thread's images, read-only) before each turn.
 
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Engine } from '@crew/protocol';
 import { subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
@@ -168,6 +168,15 @@ export function translateAgent(opts: TranslateOptions): string[] {
   const { crew, agent, workdir } = opts;
   const written: string[] = [];
   mkdirSync(workdir, { recursive: true });
+  // An agent that can write its own folder (a code agent's shell) could swap these for symlinks
+  // to send the writes and deletes below somewhere else. Remove such links first.
+  for (const p of ['AGENTS.md', '.agents', SKILLS_DIR, 'context', 'context/brand', 'drafts', 'attachments']) {
+    try {
+      if (lstatSync(join(workdir, p)).isSymbolicLink()) rmSync(join(workdir, p), { force: true });
+    } catch {
+      // Not there.
+    }
+  }
 
   // Sessions started before the eve layout may still hold engine-specific files; a
   // resumed CLI must not read stale instructions or skills from them.

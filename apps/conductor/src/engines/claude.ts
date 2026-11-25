@@ -59,11 +59,18 @@ export const claudeCode: EngineAdapter = {
     mkdirSync(opts.runDir, { recursive: true, mode: 0o700 });
 
     const env = claudeEnv();
+    const code = opts.permissions === 'code' && !opts.oneShot;
     const mcpServers: Record<string, unknown> = {};
     for (const [name, s] of Object.entries(opts.mcpServers)) {
-      // Secrets reach the MCP server through the inherited process environment.
-      Object.assign(env, s.secretEnv);
-      mcpServers[name] = { type: 'stdio', command: s.command, args: s.args, env: s.env };
+      if (code) {
+        // A code agent has a shell, which inherits Claude Code's environment. Its MCP secrets go
+        // in the MCP config instead: a 0600 file in runDir, which the agent cannot read (deny paths).
+        mcpServers[name] = { type: 'stdio', command: s.command, args: s.args, env: { ...s.env, ...s.secretEnv } };
+      } else {
+        // Secrets reach the MCP server through the inherited process environment.
+        Object.assign(env, s.secretEnv);
+        mcpServers[name] = { type: 'stdio', command: s.command, args: s.args, env: s.env };
+      }
     }
     const mcpFile = join(opts.runDir, 'claude-mcp.json');
     writeFileSync(mcpFile, JSON.stringify({ mcpServers }, null, 2), { mode: 0o600 });
@@ -73,9 +80,11 @@ export const claudeCode: EngineAdapter = {
       // Claude Code writes absolute paths as //abs; cover the path itself and anything below it.
       for (const tool of ['Read', 'Edit', 'Write', 'Glob', 'Grep']) deny.push(`${tool}(/${p})`, `${tool}(/${p}/**)`);
     }
-    const code = opts.permissions === 'code' && !opts.oneShot;
     const settings: Record<string, unknown> = { permissions: { deny } };
     if (code) {
+      // Claude Code reads project settings (hooks!) from .claude/ in its working folder. The
+      // folder exists before the sandbox starts, so the sandbox can keep it read-only.
+      mkdirSync(join(opts.workdir, '.claude'), { recursive: true });
       // The shell runs only inside Claude Code's OS sandbox (Seatbelt on macOS, bubblewrap on
       // Linux): it writes only in its own folder (the checkout is repo/), never Crew's setup files
       // there, reads none of the deny paths and has no network. It refuses to start rather than
@@ -88,7 +97,7 @@ export const claudeCode: EngineAdapter = {
         allowUnsandboxedCommands: false,
         filesystem: {
           allowWrite: [join(opts.workdir, 'repo')],
-          denyWrite: ['AGENTS.md', '.agents', 'context', 'attachments'].map((f) => join(opts.workdir, f)),
+          denyWrite: ['AGENTS.md', 'CLAUDE.md', '.claude', '.mcp.json', '.agents', 'context', 'attachments'].map((f) => join(opts.workdir, f)),
           denyRead: opts.denyPaths,
         },
         network: { allowedDomains: [], strictAllowlist: true },
