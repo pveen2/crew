@@ -138,5 +138,33 @@ export const META_WRITE_TOOLS = [
   'ads_experiment_lift_create_test',
 ] as const;
 
-/** Changes that start or raise spend. The approval card says so. */
+/** Changes that always start or raise spend. The approval card says so. */
 export const META_SPEND_TOOLS: readonly string[] = ['ads_activate_entity', 'ads_boost_ig_post'];
+
+/** Fields that set how much Meta may spend or bid. */
+const SPEND_FIELDS = new Set(['daily_budget', 'lifetime_budget', 'spend_cap', 'daily_spend_cap', 'lifetime_spend_cap', 'bid_amount', 'bid_cap', 'budget', 'budget_amount']);
+/** Fields that switch something on, with the values that do. */
+const STATUS_FIELDS = new Set(['status', 'configured_status', 'status_option']);
+const ON_VALUES = new Set(['ACTIVE', 'ACTIVATED', 'ON']);
+
+/**
+ * Whether a change may start or raise spend: the spend tools, or any change
+ * that sets a budget, a spend cap or a bid, or switches something on (for
+ * example ads_update_entity with status ACTIVE, or a duplicate made active).
+ * Errs on the side of yes.
+ */
+export function metaChangeSpends(tool: string, args: unknown): boolean {
+  if (META_SPEND_TOOLS.includes(tool)) return true;
+  const walk = (value: unknown): boolean => {
+    if (Array.isArray(value)) return value.some(walk);
+    if (!value || typeof value !== 'object') return false;
+    for (const [k, v] of Object.entries(value)) {
+      const key = k.toLowerCase();
+      if (SPEND_FIELDS.has(key) && v !== null && v !== undefined && v !== '') return true;
+      if (STATUS_FIELDS.has(key) && typeof v === 'string' && ON_VALUES.has(v.trim().toUpperCase())) return true;
+      if (walk(v)) return true;
+    }
+    return false;
+  };
+  return walk(args);
+}

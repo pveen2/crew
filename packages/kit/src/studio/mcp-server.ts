@@ -1,6 +1,7 @@
 // Read-only Studio MCP server (stdio). Started by the agent CLI through
 // connection.ts (studioConnection). It forwards reads to the remote Studio MCP
-// and adds wait_for_generation. Generating images is not here: that spends
+// and adds wait_for_generation and look_at_output. list_files needs a Studio
+// that offers it (Wakey Studio since November 2026). Generating images is not here: that spends
 // money and goes through the studio_generate tool, which asks the owner first.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -50,6 +51,15 @@ server.registerTool(
     annotations: read,
   },
   ({ limit }) => forward('list_outputs', limit ? { limit } : {}),
+);
+server.registerTool(
+  'list_files',
+  {
+    description: `Recent videos (kind "video", the default) or documents (kind "document": PDF, HTML) in ${name}, newest first, with their public CDN URLs. Includes files the owner uploaded.`,
+    inputSchema: { kind: z.enum(['video', 'document']).optional(), limit: z.number().int().min(1).max(60).optional() },
+    annotations: read,
+  },
+  ({ kind, limit }) => forward('list_files', { ...(kind ? { kind } : {}), ...(limit ? { limit } : {}) }),
 );
 server.registerTool(
   'get_output',

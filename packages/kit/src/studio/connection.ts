@@ -13,6 +13,7 @@ export const STUDIO_READ_TOOLS = [
   'list_scene_presets',
   'list_reference_photos',
   'list_outputs',
+  'list_files',
   'get_output',
   'get_generation',
   'wait_for_generation',
@@ -21,7 +22,7 @@ export const STUDIO_READ_TOOLS = [
 
 export const studioConnection = (opts: { url: string; name?: string }) =>
   defineConnection({
-    description: `${opts.name ?? 'Studio'} image workspace: models, scene presets, reference photos, generated images and job status (reading; generate with studio_generate)`,
+    description: `${opts.name ?? 'Studio'} image workspace: models, scene presets, reference photos, images (generated and uploaded), videos and documents, and job status (reading; generate with studio_generate)`,
     command: process.execPath,
     args: [fileURLToPath(new URL('./mcp-server.ts', import.meta.url))],
     env: {

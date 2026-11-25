@@ -3,7 +3,8 @@ import { defineTool } from '@crew/sdk/define';
 import { callStudio, studioFromEnv } from './client.ts';
 
 // Starts one image generation in Studio. It costs money, so every call waits in
-// the owner's Inbox; the owner sees the summary, the prompt and the settings.
+// the owner's Inbox, even after "allow for this thread"; the card's title is
+// the summary, and the owner sees the prompt and the settings.
 // It never retries: a retry after an unclear failure can start (and pay for) a
 // second job. Wait for the result with the connection's wait_for_generation.
 export const studioGenerateTool = (opts: { url: string; name?: string }) =>
@@ -28,6 +29,9 @@ export const studioGenerateTool = (opts: { url: string; name?: string }) =>
       referenceIds: z.array(z.string().min(1).max(200)).max(8).optional().describe('Up to 8 ids from list_reference_photos (e.g. the real packshots).'),
     }),
     approval: 'user-approval',
+    alwaysAsk: true,
+    env: ['STUDIO_MCP_TOKEN', 'STUDIO_MCP_URL'],
+    approvalTitle: ({ summary, outputCount }) => `Spends money: ${summary}${(outputCount ?? 1) > 1 ? ` (${outputCount} images)` : ''}`,
     async execute({ summary: _summary, ...args }) {
       const clean = Object.fromEntries(Object.entries(args).filter(([, v]) => v !== undefined));
       return callStudio(studioFromEnv(opts.url), 'generate', { outputCount: 1, ...clean });

@@ -3,6 +3,7 @@
 
 export { metaAdsConnection } from './connection.ts';
 export { metaAdsChangeTool } from './tool.ts';
-export { META_READ_TOOLS, META_WRITE_TOOLS, META_SPEND_TOOLS } from './tools.ts';
+export { META_READ_TOOLS, META_WRITE_TOOLS, META_SPEND_TOOLS, metaChangeSpends } from './tools.ts';
+export { resolveAdAccounts, type MetaAdAccounts } from './accounts.ts';
 export { AccountGuard, allowedAccountsFromEnv } from './guard.ts';
 export { callMeta, listMetaTools, metaFromEnv, META_ADS_MCP_URL, type MetaEndpoint } from './client.ts';

@@ -123,6 +123,22 @@ export interface ToolDefinition<S extends z.ZodRawShape = z.ZodRawShape> {
   inputSchema: z.ZodObject<S>;
   /** Default approval when the agent's own `approval` callback returns undefined. */
   approval?: 'user-approval';
+  /**
+   * The Inbox title for an approval of this call, e.g. what changes and what it
+   * costs. Defaults to "<Agent> wants to run <tool>".
+   */
+  approvalTitle?: (input: z.infer<z.ZodObject<S>>) => string | undefined;
+  /**
+   * Every call waits for the owner, even after "allow for this thread". For
+   * tools that spend money or change things outside Crew.
+   */
+  alwaysAsk?: boolean;
+  /**
+   * Crew environment variables `execute` reads (tokens, URLs). Tools run in the
+   * agent's bridge process, which gets nothing else from the conductor's
+   * environment, on every engine.
+   */
+  env?: string[];
   execute(input: z.infer<z.ZodObject<S>>, ctx: ToolContext): Promise<unknown> | unknown;
 }
 
