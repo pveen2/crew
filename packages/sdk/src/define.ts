@@ -209,6 +209,20 @@ export interface CrewConfig {
    * or folder at `to` inside context/brand/. Default: lib/brand.
    */
   brand?: string | BrandSource[];
+  /**
+   * The brand's fonts, for drafts the app draws itself (ad concept boards).
+   * `file` is relative to the team folder (woff2, woff, otf or ttf). `text` is
+   * the default; `accent` sets the words a headline marks with *asterisks*.
+   * Without them the app uses its own font.
+   */
+  fonts?: { text?: FontSource; accent?: FontSource };
+}
+
+export interface FontSource {
+  family: string;
+  file: string;
+  weight?: number;
+  style?: 'normal' | 'italic';
 }
 
 export function defineCrew(config: CrewConfig): CrewConfig {

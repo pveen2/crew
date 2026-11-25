@@ -9,7 +9,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Engine, Permissions } from '@crew/protocol';
+import type { BrandFont, Engine, Permissions } from '@crew/protocol';
 import {
   kindOf,
   parseModel,
@@ -85,6 +85,8 @@ export interface LoadedCrew {
   rules: string;
   /** Copied read-only into each session's context/brand/: absolute `from`, `to` relative to context/brand/ ('' = its root). */
   brand: Array<{ from: string; to: string }>;
+  /** crew.config.ts `fonts`, with `file` made absolute. */
+  fonts: Array<BrandFont & { file: string }>;
   limits: { turnTimeoutMinutes: number; threadTurnTimeoutMinutes: number };
 }
 
@@ -270,6 +272,7 @@ export async function loadCrew(root: string = TEAM_ROOT): Promise<LoadedCrew> {
     agents,
     rules: readText(join(root, 'lib', 'rules.md')),
     brand: brandSources(root, raw.brand),
+    fonts: brandFonts(root, raw.fonts),
     limits: {
       turnTimeoutMinutes: leadDef.limits?.turnTimeoutMinutes ?? 20,
       threadTurnTimeoutMinutes: leadDef.limits?.threadTurnTimeoutMinutes ?? 45,
@@ -284,6 +287,16 @@ function brandSources(root: string, brand: CrewConfig['brand']): LoadedCrew['bra
     if (typeof e !== 'string') return { from, to: e.to };
     // A folder's contents go to the root of context/brand/; a file keeps its name.
     return { from, to: existsSync(from) && statSync(from).isDirectory() ? '' : basename(from) };
+  });
+}
+
+function brandFonts(root: string, fonts: CrewConfig['fonts']): LoadedCrew['fonts'] {
+  return (['text', 'accent'] as const).flatMap((role) => {
+    const f = fonts?.[role];
+    if (!f) return [];
+    if (!f.family?.trim() || !f.file) throw new Error(`crew.config.ts: fonts.${role} needs a family and a file`);
+    if (!/\.(woff2?|otf|ttf)$/i.test(f.file)) throw new Error(`crew.config.ts: fonts.${role}.file must be woff2, woff, otf or ttf`);
+    return [{ role, family: f.family.trim(), weight: f.weight, style: f.style, file: resolve(root, f.file) }];
   });
 }
 

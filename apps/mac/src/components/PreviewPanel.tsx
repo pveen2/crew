@@ -4,6 +4,7 @@ import tokensCss from '@crew/ui/tokens.css?raw';
 import documentCss from '@crew/ui/document.css?raw';
 import { attachmentDataUrl, closePreview, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
 import { Markdown, RoleFace, ago, useRoleLabel } from './common';
+import { ConceptBoard, conceptBoardText } from './ConceptBoard';
 
 /** What every HTML document gets first: the Crew tokens and the document look. */
 const DOCUMENT_CSS = `${tokensCss}\n${documentCss}`;
@@ -188,6 +189,10 @@ export function DocView({ doc, device = 'desktop', threadId }: { doc: PreviewDoc
         // Popups are allowed only so target="_blank" links reach the window-open handler, which opens them in the browser.
         // Rendered once its images are in, so the frame loads one time.
         html?.id === doc.id && html.source === doc.content ? <iframe title={doc.title} sandbox="allow-popups allow-popups-to-escape-sandbox" srcDoc={html.ready} /> : null
+      ) : doc.format === 'concepts' ? (
+        <div className="doc-scroll">
+          <ConceptBoard content={doc.content} docId={doc.id} threadId={threadId} />
+        </div>
       ) : (
         <div className="doc-scroll">
           <Markdown text={doc.content} className="md--doc" />
@@ -221,7 +226,7 @@ export function PreviewPanel({ threadId, docs }: { threadId: string; docs: Previ
             label={copied ? 'Copied' : doc.format === 'web' ? 'Copy link' : 'Copy document'}
             iconSize={14}
             onClick={() => {
-              void navigator.clipboard.writeText(doc.content);
+              void navigator.clipboard.writeText(doc.format === 'concepts' ? conceptBoardText(doc.content) : doc.content);
               setCopied(true);
               setTimeout(() => setCopied(false), 1200);
             }}
