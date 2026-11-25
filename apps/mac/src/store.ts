@@ -2,6 +2,7 @@
 // then live updates over the WebSocket. The app never runs agent logic.
 
 import { useSyncExternalStore } from 'react';
+import { applyTouchIcon, isTouchIcon, type TouchIcon } from './touchIcon';
 import type {
   AgentActivity,
   AttachmentUpload,
@@ -152,6 +153,8 @@ export interface AppState {
   showSpend: boolean;
   /** Sidebar colours: the dark default or a light one (Settings). Kept on this Mac. */
   sidebarTheme: SidebarTheme;
+  /** Which icon an iPhone gets when the web app is added to the home screen (Settings). Kept on this device. */
+  touchIcon: TouchIcon;
   previewDevice: 'desktop' | 'phone';
   /** Width of the preview pane in px, set by dragging; null = the default split. Kept on this Mac. */
   previewWidth: number | null;
@@ -256,6 +259,7 @@ function loadRead(): Record<string, true> {
 const SIDEBAR_KEY = 'crew.sidebar.collapsed';
 const SHOW_SPEND_KEY = 'crew.settings.showSpend';
 const SIDEBAR_THEME_KEY = 'crew.settings.sidebarTheme';
+const TOUCH_ICON_KEY = 'crew.settings.touchIcon';
 const PREVIEW_WIDTH_KEY = 'crew.preview.width';
 const INBOX_LIST_WIDTH_KEY = 'crew.inbox.listWidth';
 function loadWidth(key: string): number | null {
@@ -264,6 +268,14 @@ function loadWidth(key: string): number | null {
     return Number.isFinite(n) && n > 0 ? n : null;
   } catch {
     return null;
+  }
+}
+function loadTouchIcon(): TouchIcon {
+  try {
+    const v = localStorage.getItem(TOUCH_ICON_KEY);
+    return isTouchIcon(v) ? v : 'orange';
+  } catch {
+    return 'orange';
   }
 }
 function loadFlag(key: string, fallback = false): boolean {
@@ -332,6 +344,7 @@ let state: AppState = {
   navOpen: false,
   showSpend: loadFlag(SHOW_SPEND_KEY, true),
   sidebarTheme: loadSidebarTheme(),
+  touchIcon: loadTouchIcon(),
   previewDevice: 'desktop',
   previewWidth: loadWidth(PREVIEW_WIDTH_KEY),
   inboxListWidth: loadWidth(INBOX_LIST_WIDTH_KEY),
@@ -664,6 +677,16 @@ export function markRead(ids: string[]): void {
     }
     return { inboxRead };
   });
+}
+
+export function setTouchIcon(touchIcon: TouchIcon): void {
+  set({ touchIcon });
+  applyTouchIcon(touchIcon);
+  try {
+    localStorage.setItem(TOUCH_ICON_KEY, touchIcon);
+  } catch {
+    /* storage unavailable: the choice lasts for this session */
+  }
 }
 
 export function setShowSpend(showSpend: boolean): void {

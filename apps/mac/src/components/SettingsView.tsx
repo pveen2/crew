@@ -1,5 +1,6 @@
 import { BlockStack, Card, InlineStack, Panel, SegmentedControl, Switch, Text } from '@crew/ui';
-import { setShowSpend, setSidebarTheme, useApp, type SidebarTheme } from '../store';
+import { setShowSpend, setSidebarTheme, setTouchIcon, useApp, type SidebarTheme } from '../store';
+import type { TouchIcon } from '../touchIcon';
 
 const SIDEBAR_THEMES: Array<{ value: SidebarTheme; label: string }> = [
   { value: 'dark', label: 'Dark' },
@@ -10,6 +11,7 @@ const SIDEBAR_THEMES: Array<{ value: SidebarTheme; label: string }> = [
 export function SettingsView() {
   const showSpend = useApp((s) => s.showSpend);
   const sidebarTheme = useApp((s) => s.sidebarTheme);
+  const touchIcon = useApp((s) => s.touchIcon);
 
   return (
     <Panel as="main" className="pane-main pane-page">
@@ -51,6 +53,31 @@ export function SettingsView() {
               <Switch checked={showSpend} onChange={setShowSpend} labelledBy="setting-spend" describedBy="setting-spend-help" />
             </InlineStack>
           </Card>
+
+          {!window.crewHost && (
+            <Card>
+              <InlineStack gap="400" className="settings-row">
+                <BlockStack className="settings-row__text">
+                  <Text variant="bodyLg" weight="medium">
+                    Home screen icon
+                  </Text>
+                  <Text variant="bodySm" tone="secondary">
+                    The icon your phone uses when you add Crew to the home screen. After changing it, remove Crew from the
+                    home screen and add it again.
+                  </Text>
+                </BlockStack>
+                <SegmentedControl<TouchIcon>
+                  label="Home screen icon"
+                  value={touchIcon}
+                  onValueChange={setTouchIcon}
+                  items={[
+                    { value: 'orange', label: 'Orange' },
+                    { value: 'brunette', label: 'Brunette' },
+                  ]}
+                />
+              </InlineStack>
+            </Card>
+          )}
         </BlockStack>
       </div>
     </Panel>
