@@ -30,7 +30,14 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 });
 
 export function Markdown({ text, className }: { text: string; className?: string }) {
-  const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY), [text]);
+  const html = useMemo(
+    () =>
+      DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY)
+        // Each table gets its own scroll box, so a wide one never scrolls the pane.
+        .replace(/<table\b/g, '<div class="md-table"><table')
+        .replace(/<\/table>/g, '</table></div>'),
+    [text],
+  );
   return <div className={`md ${className ?? ''}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
