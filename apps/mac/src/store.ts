@@ -26,6 +26,7 @@ import type {
   Turn,
   ServerLogin,
 } from '@crew/protocol';
+import { namePeople } from '@crew/protocol';
 
 /** An update the sidebar offers. */
 export interface UpdateInfo {
@@ -318,12 +319,11 @@ export function inScope(thread: Thread | undefined, s: Pick<AppState, 'me' | 'sc
   return s.scope === 'all' || isMine(thread, s.me);
 }
 
-/** "juliette@…" → "Juliette", as the conductor names people. */
+/** "juliette@…" → "Juliette" ("Paul Veen" when there are two Pauls), as the conductor names people. */
 export function personName(email: string, people: Person[] = state.people): string {
   const known = people.find((p) => p.email === email);
   if (known) return known.name;
-  const first = email.split('@')[0]!.split(/[._+-]/)[0] || email;
-  return first.charAt(0).toUpperCase() + first.slice(1);
+  return namePeople([...people.map((p) => p.email), email]).get(email.toLowerCase()) ?? email;
 }
 
 const SIDEBAR_KEY = 'crew.sidebar.collapsed';

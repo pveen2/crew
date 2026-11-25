@@ -34,7 +34,7 @@ import type {
   TurnStatus,
   Usage,
 } from '@crew/protocol';
-import { parseConceptBoard } from '@crew/protocol';
+import { namePeople, parseConceptBoard } from '@crew/protocol';
 import { parseModel } from '@crew/sdk/define';
 import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew, type LoadedTool } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
@@ -166,11 +166,6 @@ function killOrphan(pid: number | null, sessionId: string): void {
 /** What an agent answers when people are talking to each other: nothing is shown. */
 const QUIET = '[quiet]';
 
-/** "juliette@…" → "Juliette", "paul.van.veen@…" → "Paul". */
-export function personName(email: string): string {
-  const first = email.split('@')[0]!.split(/[._+-]/)[0] || email;
-  return first.charAt(0).toUpperCase() + first.slice(1);
-}
 
 const newId = (prefix: string) => `${prefix}_${randomBytes(6).toString('base64url')}`;
 
@@ -407,7 +402,7 @@ export class Runtime {
     } else {
       const waiting = this.waitingFor(t.id, t.rootSessionId);
       statusText = waiting.length
-        ? `Waiting for ${waiting.map(personName).join(', ')}`
+        ? `Waiting for ${waiting.map((e) => this.nameOf(e)).join(', ')}`
         : this.store.latestDocStatusOfThread(t.id) === 'draft'
           ? 'Draft to review'
           : 'Done';
@@ -416,7 +411,7 @@ export class Runtime {
     if (t.dm) {
       const last = this.store.lastMessageOfThread(t.id);
       if (last?.type === 'message') {
-        const who = last.role === 'assistant' ? (this.store.session(last.sessionId)?.role ?? 'Agent') : last.by ? personName(last.by) : '';
+        const who = last.role === 'assistant' ? (this.store.session(last.sessionId)?.role ?? 'Agent') : last.by ? this.nameOf(last.by) : '';
         meta.lastMessage = snippet(`${who ? `${who}: ` : ''}${last.text}`, 120);
       }
       if (t.status === 'running') meta.statusText = statusText;
@@ -438,10 +433,16 @@ export class Runtime {
     this.store.touchPerson(key, now);
   }
 
-  /** Everyone who has signed in, plus anyone named in a thread. */
+  /** Everyone who has signed in, with names that tell people with the same first name apart. */
   people(): Person[] {
-    const emails = new Set(this.store.people());
-    return [...emails].map((email) => ({ email, name: personName(email) }));
+    const names = namePeople(this.store.people());
+    return [...names].map(([email, name]) => ({ email, name }));
+  }
+
+  /** Someone's name as the team sees it: "Juliette", or "Paul Veen" when there are two Pauls. */
+  nameOf(email: string): string {
+    const e = email.toLowerCase();
+    return namePeople([...this.store.people(), e]).get(e) ?? e;
   }
 
   /** Threads from before people were recorded go to the first admin. */
@@ -454,16 +455,16 @@ export class Runtime {
     const thread = this.store.thread(session.threadId);
     for (const email of mentions) {
       if (this.store.openMentions(session.threadId, email).length) continue;
-      this.addInbox(session, 'mention', `${personName(by)} tagged you in ${thread?.title ?? 'a thread'}`, snippet(text, 600), { for: email, by });
+      this.addInbox(session, 'mention', `${this.nameOf(by)} tagged you in ${thread?.title ?? 'a thread'}`, snippet(text, 600), { for: email, by });
     }
   }
 
   /** The messages the agent held off on, for its next prompt. */
   private heldSummary(held: CrewEvent[]): string {
-    const lines = held.map((e) => (e.type === 'message' ? `- ${e.by ? personName(e.by) : 'Someone'}: ${e.text}` : '')).filter(Boolean);
+    const lines = held.map((e) => (e.type === 'message' ? `- ${e.by ? this.nameOf(e.by) : 'Someone'}: ${e.text}` : '')).filter(Boolean);
     const thread = held[0] && this.store.thread(held[0].threadId);
     if (thread?.dm && this.agentAbsent(thread.id, thread.rootSessionId)) {
-      return `This is a direct message between ${this.store.peopleOfThread(thread.id).map(personName).join(' and ')}. They have just called you in. What they wrote before:\n${lines.join('\n')}`;
+      return `This is a direct message between ${this.store.peopleOfThread(thread.id).map((e) => this.nameOf(e)).join(' and ')}. They have just called you in. What they wrote before:\n${lines.join('\n')}`;
     }
     return `While you waited, people in this thread talked to each other (you held off because they tagged a person, not you):\n${lines.join('\n')}`;
   }
@@ -482,7 +483,7 @@ export class Runtime {
     const held = this.store.heldMessages(threadId, session.id);
     if (!held.length) return { sessionId: session.id };
     for (const h of held) this.emit(session, null, { type: 'message_delivery', messageId: h.id, state: 'released' });
-    const who = by ? personName(by) : 'The owner';
+    const who = by ? this.nameOf(by) : 'The owner';
     const prompt = `${this.heldSummary(held)}\n\n${who} asked you to go ahead without waiting for an answer.`;
     const images = held.flatMap((e) => (e.type === 'message' ? (e.attachments ?? []).map((a) => a.file) : []));
     void this.enqueueTurn(session.id, prompt, { turnId: newId('u'), images });
@@ -561,7 +562,7 @@ export class Runtime {
       const crew = await loadCrew();
       const now = Date.now();
       threadId = newId('t');
-      const title = members.filter((m) => m !== by).map(personName).join(', ');
+      const title = members.filter((m) => m !== by).map((e) => this.nameOf(e)).join(', ');
       this.store.insertThread({ id: threadId, title, status: 'idle', rootSessionId: 'pending', createdAt: now, updatedAt: now, archived: false, benched: [], createdBy: by, dm: true });
       for (const m of members) this.store.addThreadPerson(threadId, m);
       const root = this.createSession(crew, threadId, crew.lead, null);
@@ -664,7 +665,7 @@ export class Runtime {
       if (e.type === 'message' && !removed.has(e.id)) {
         const text = edited.get(e.id) ?? e.text;
         if (e.role === 'user') {
-          const name = e.by ? personName(e.by) : undefined;
+          const name = e.by ? this.nameOf(e.by) : undefined;
           items.push({ kind: 'message', from: 'person', ...(name ? { name } : {}), text, ...(e.attachments?.length ? { attachments: e.attachments } : {}), ts: e.ts });
         }
         else if (text.trim()) items.push({ kind: 'message', from: 'agent', agent, text, ts: e.ts });
@@ -873,7 +874,7 @@ export class Runtime {
     // An answer names its question: with several open, a bare "Yes" is ambiguous.
     // With several people in the thread the agent is told who wrote, and what it held off on.
     const multi = Boolean(by) && this.store.peopleOfThread(threadId).length > 1;
-    const sender = multi && by ? personName(by) : 'The owner';
+    const sender = multi && by ? this.nameOf(by) : 'The owner';
     const held = session.depth === 0 ? this.store.heldMessages(threadId, session.id) : [];
     const heldNote = held.length ? `${this.heldSummary(held)}\n\nThen ${multi ? sender : 'the owner'} wrote:\n\n` : multi ? `${sender} wrote:\n\n` : '';
     const quietNote = multi && !question ? `\n\n(Several people work in this thread. If this is people talking to each other and nothing is asked of you, answer with exactly ${QUIET} and nothing else.)` : '';

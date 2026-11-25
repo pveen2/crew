@@ -604,3 +604,34 @@ export function parseConceptBoard(json: string): ConceptBoard {
   });
   return { intro: str(b.intro, 'intro'), aspect: aspect as ConceptBoard['aspect'], concepts };
 }
+
+// ---------------------------------------------------------------------------
+// People's names, from their sign-in emails.
+
+function capital(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Names for everyone on a team server. "juliette@…" is Juliette. When two people
+ * share a first name both get their last name too ("paul.veen@…" is Paul Veen);
+ * when that is not enough (or there is none), their email's domain.
+ */
+export function namePeople(emails: Iterable<string>): Map<string, string> {
+  const list = [...new Set([...emails].map((e) => e.toLowerCase()))];
+  const parts = (email: string) => (email.split('@')[0] ?? email).split(/[._+-]+/).filter(Boolean);
+  const first = (email: string) => capital(parts(email)[0] ?? email);
+  const full = (email: string) => parts(email).map(capital).join(' ') || email;
+  const count = (names: string[], n: string) => names.filter((x) => x === n).length;
+  const firsts = list.map(first);
+  const out = new Map<string, string>();
+  list.forEach((email, i) => {
+    out.set(email, count(firsts, firsts[i]!) > 1 ? full(email) : firsts[i]!);
+  });
+  // Still the same (paul@a.com and paul@b.com): add the domain.
+  const names = list.map((e) => out.get(e)!);
+  list.forEach((email, i) => {
+    if (count(names, names[i]!) > 1) out.set(email, `${names[i]} (${email.split('@')[1] ?? email})`);
+  });
+  return out;
+}
