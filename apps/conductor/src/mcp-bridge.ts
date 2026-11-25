@@ -167,7 +167,7 @@ server.registerTool(
     description:
       "Ask the owner one question only they can answer (a decision, missing information, permission). It shows as a card in the thread and in the owner's Inbox. " +
       'Ask only when the likely readings lead to different work, or the choice costs money or cannot be undone; otherwise act on the likeliest reading and state the assumption. ' +
-      'One question per call, one short sentence. When the answer is one of a few choices, pass them as options: the owner answers with one click, and can still type something else, so never add an "Other" option. ' +
+      'One question per call, one short sentence (under 240 characters, one question mark); a question with choices written into its text, or a second question, is refused. When the answer is one of a few choices, pass them as options: the owner answers with one click, and can still type something else, so never add an "Other" option. ' +
       'Put the option you would pick in recommended. Set multiSelect when more than one option can apply. After calling this, end your turn without restating the question; the answer arrives as a new message.',
     inputSchema: {
       question: z.string().min(1).describe('One short question. No numbered list of choices: put those in options.'),
