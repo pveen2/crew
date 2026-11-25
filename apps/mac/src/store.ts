@@ -287,7 +287,7 @@ function loadSidebarTheme(): SidebarTheme {
 function applySidebarTheme(theme: SidebarTheme): void {
   if (typeof document === 'undefined') return;
   document.documentElement.dataset.sidebar = theme;
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f4eee2' : '#111111');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'light' ? '#f8f5ed' : '#111111');
 }
 applySidebarTheme(loadSidebarTheme());
 
