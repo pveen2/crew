@@ -1039,6 +1039,10 @@
   font-variant-numeric: tabular-nums;
 }
 .cr-nav-item__shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cr-space-100);
+  font-family: inherit;
   font-size: var(--cr-font-size-288);
   color: var(--cr-color-text-sidebar-secondary);
 }

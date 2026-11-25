@@ -42,15 +42,16 @@
   --cr-blue-300: #7cb1ff; /* focus ring on the dark sidebar: 7:1 on #232323 */
   --cr-green-50: #e6f4ec;
   --cr-green-600: #29845a;
-  /* Sand: the light sidebar (warm off-white, not gray) */
-  --cr-sand-50: #f3efe6;
-  --cr-sand-100: #ebe6db;
-  --cr-sand-200: #e4ddcf;
-  --cr-sand-300: #ddd5c5;
-  --cr-sand-600: #655f55; /* 4.7:1 on sand-200, 5.5:1 on sand-50 */
-  --cr-sand-700: #4a463f;
-  --cr-sand-900: #2b2925;
-  --cr-sand-950: #1a1916;
+  /* Sand: the light sidebar. Warm and a little golden, so it reads as sand next
+     to the white panel, not as beige-gray. Text is warm brown, not gray. */
+  --cr-sand-50: #f4eee2;
+  --cr-sand-100: #ece4d5;
+  --cr-sand-200: #e4dac7;
+  --cr-sand-300: #d8cbb3;
+  --cr-sand-600: #675c4c; /* 4.7:1 on sand-200, 5.7:1 on sand-50 */
+  --cr-sand-700: #4b4235;
+  --cr-sand-900: #2e281f;
+  --cr-sand-950: #1d1912;
 
   /* Agent faces (crew-icons): disc colour per agent, ring and mouth in ink */
   --cr-face-gm: #f0531f;
@@ -266,7 +267,7 @@
   --cr-color-bg-sidebar-hover: var(--cr-sand-100);
   --cr-color-bg-sidebar-selected: var(--cr-sand-200);
   --cr-color-border-sidebar: var(--cr-sand-300);
-  --cr-color-border-sidebar-divider: var(--cr-sand-200);
+  --cr-color-border-sidebar-divider: var(--cr-sand-100);
   --cr-color-text-sidebar: var(--cr-sand-900);
   --cr-color-text-sidebar-strong: var(--cr-sand-950);
   --cr-color-text-sidebar-muted: var(--cr-sand-700);
