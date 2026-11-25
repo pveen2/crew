@@ -147,7 +147,7 @@ body,
   cursor: pointer;
 }
 .sidebar-brand:hover {
-  background: rgb(255 255 255 / 0.06);
+  background: var(--cr-color-bg-sidebar-hover);
 }
 .team-form {
   padding: var(--cr-space-400);
@@ -1226,7 +1226,7 @@ body,
 }
 
 /* Face tooltips in the dark sidebar: light, so they stand out. */
-.sidebar .cr-tip {
+:root:not([data-sidebar='light']) .sidebar .cr-tip {
   background: var(--cr-color-bg-surface);
   color: var(--cr-color-text);
 }
