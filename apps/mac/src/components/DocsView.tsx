@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { DocResponse, DocSummary } from '@crew/protocol';
 import { BlockStack, Badge, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Spinner, Text, cx } from '@crew/ui';
-import { isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocsFilter, setInboxListWidth, useApp, type PreviewDoc } from '../store';
+import { ensureDoc, isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocsFilter, setInboxListWidth, useApp, type PreviewDoc } from '../store';
 import { PaneResizer } from './PaneResizer';
 import { RoleFace, age, useNow } from './common';
 import { DocSourceBar, DocView } from './PreviewPanel';
@@ -23,6 +23,11 @@ export function DocsView({ docId }: { docId?: string }) {
   const now = useNow(30_000);
 
   useEffect(() => void loadDocs(), []);
+  // A link to a doc the list does not have (yet): fetch that one.
+  const missing = Boolean(docs && docId && !docs[docId]);
+  useEffect(() => {
+    if (missing && docId) void ensureDoc(docId).catch(() => undefined);
+  }, [missing, docId]);
 
   const all = useMemo(() => Object.values(docs ?? {}).sort((a, b) => b.shownAt - a.shownAt), [docs]);
   const items = filter === 'all' ? all : all.filter((d) => d.status === filter || d.id === docId);

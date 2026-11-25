@@ -162,7 +162,7 @@ async function loadSkills(root: string, dir: string): Promise<SkillDir[]> {
 }
 
 /** Crew's own tools (MCP server `crew`). A team tool or subagent with one of these names would clash with it. */
-export const CREW_TOOL_NAMES = ['rename_thread', 'ask_owner', 'show_preview', 'save_artifact', 'read_artifact', 'approve'];
+export const CREW_TOOL_NAMES = ['rename_thread', 'ask_owner', 'show_preview', 'save_artifact', 'read_artifact', 'list_docs', 'approve'];
 
 async function loadTools(dir: string): Promise<LoadedTool[]> {
   const tools: LoadedTool[] = [];

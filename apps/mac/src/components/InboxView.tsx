@@ -31,10 +31,11 @@ export function InboxView({ itemId }: { itemId?: string }) {
   useEffect(() => ensureThreads(items.map((i) => i.threadId)), [items]);
   // Everything is on screen at once: looking at the Inbox reads it.
   useEffect(() => markRead(items.map((i) => i.id)), [items]);
-  // A link to one item (#inbox/<id>) scrolls to it.
+  // A link to one item (#inbox/<id>) scrolls to it, once its card is there.
+  const targetShown = Boolean(itemId && inbox[itemId]);
   useEffect(() => {
-    if (itemId) document.getElementById(`inbox-${itemId}`)?.scrollIntoView({ block: 'center' });
-  }, [itemId]);
+    if (itemId && targetShown) document.getElementById(`inbox-${itemId}`)?.scrollIntoView({ block: 'center' });
+  }, [itemId, targetShown]);
 
   return (
     <Panel as="main" className="pane-main" aria-label="Inbox">
@@ -83,8 +84,10 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
   const openThread = () =>
     navigate({ name: 'thread', threadId: item.threadId, sessionId: item.sessionId === thread?.rootSessionId ? undefined : item.sessionId });
 
-  // A question's title is its first line: show the rest only when there is more.
-  const body = item.kind === 'needs_you' ? item.body.split('\n').slice(1).join('\n').trim() : item.body;
+  // A question's title is its first line, cut at 140 characters: drop that line from the body
+  // only when the title shows all of it.
+  const [firstLine, ...rest] = item.body.split('\n');
+  const body = item.kind === 'needs_you' && firstLine?.trim() === item.title.trim() ? rest.join('\n').trim() : item.body;
 
   return (
     <Card id={`inbox-${item.id}`} padded className={cx('inbox-card', `inbox-card--${item.kind}`, focused && 'inbox-card--focused')}>

@@ -1105,6 +1105,8 @@ export class Runtime {
         return this.saveArtifact(session, agent, args);
       case 'read_artifact':
         return this.readArtifact(session, String(args.id ?? ''));
+      case 'list_docs':
+        return this.listDocs(session);
       default:
         throw new Error(`Unknown tool ${tool}`);
     }
@@ -1264,7 +1266,7 @@ export class Runtime {
     // Only the thread owner's previews go to the Inbox; specialists' drafts usually feed into it.
     // Drafts go to Docs, not the Inbox: the Inbox is only for what blocks an agent.
     this.refreshThread(session.threadId);
-    return `Shown to the owner in the preview panel as "${title}".`;
+    return `Shown to the owner in the preview panel as "${title}" (artifact ${artifactId}). The owner can approve it; list_docs shows which docs are approved.`;
   }
 
   private saveArtifact(session: SessionRow, agent: LoadedAgent, args: Record<string, unknown>): string {
@@ -1294,6 +1296,13 @@ export class Runtime {
     if (!a || a.threadId !== session.threadId) throw new Error(`No artifact ${id} in this thread.`);
     const status = a.status === 'approved' ? ', APPROVED by the owner: this is the version that counts' : '';
     return `# ${a.title}\n\n(artifact ${a.id} by ${a.agent}, ${a.format}${status})\n\n${a.content}`;
+  }
+
+  /** For agents: the docs the owner was shown in this thread, newest first, with their status. */
+  private listDocs(session: SessionRow): string {
+    const docs = this.store.docs(session.threadId);
+    if (!docs.length) return 'No docs have been shown to the owner in this thread yet.';
+    return docs.map((d) => `- ${d.id}: "${d.title}" by ${d.agent || 'unknown'}, ${d.status === 'approved' ? 'APPROVED' : 'draft'}`).join('\n');
   }
 
   // -------------------------------------------------------------------------
@@ -1374,7 +1383,9 @@ export class Runtime {
   recover(): number {
     // Approvals were waiting on turns that no longer exist. Draft items are from builds before
     // the Docs tab, where drafts now live.
-    for (const item of this.store.openInbox().filter((i) => i.kind === 'approval' || i.kind === 'draft')) this.store.resolveInbox(item.id);
+    for (const item of this.store.openInbox().filter((i) => i.kind === 'approval' || (i.kind === 'draft' && this.store.docsBackfilled))) {
+      this.store.resolveInbox(item.id);
+    }
     const turns = this.store.turnsWithStatus('running');
     const threads = new Set<string>();
     for (const t of turns) {

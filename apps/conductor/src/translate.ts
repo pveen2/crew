@@ -63,6 +63,7 @@ export function crewTools(crew: LoadedCrew, agent: LoadedAgent, canDelegate: boo
   });
   if (!agent.isLead) tools.push({ name: 'save_artifact', description: 'Save long work and get an id to hand back.' });
   tools.push({ name: 'read_artifact', description: 'Read an artifact by id.' });
+  tools.push({ name: 'list_docs', description: "List this thread's docs shown to the owner, with ids and which are approved." });
   for (const m of agent.memories) {
     tools.push({ name: `${m.name}__save_memory`, description: `Add an entry to your ${m.name} memory.` });
     tools.push({ name: `${m.name}__remove_memory`, description: `Remove an entry from your ${m.name} memory by id.` });
