@@ -83,6 +83,8 @@ interface QueuedMessage {
 }
 
 const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
+/** What the app may fetch from a thread's folder: images, and videos kept from a page (agent_browser_keep_media). */
+const ATTACHMENT_TYPES: Record<string, string> = { ...IMAGE_TYPES, 'video/mp4': 'mp4', 'video/webm': 'webm' };
 const MAX_IMAGES = 8;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -1051,7 +1053,7 @@ export class Runtime {
     const p = join(paths.attachments, threadId, file);
     if (!existsSync(p)) return undefined;
     const ext = file.split('.').pop() ?? '';
-    const mime = Object.entries(IMAGE_TYPES).find(([, e]) => e === ext)?.[0] ?? 'application/octet-stream';
+    const mime = Object.entries(ATTACHMENT_TYPES).find(([, e]) => e === ext)?.[0] ?? 'application/octet-stream';
     return { mime, data: readFileSync(p) };
   }
 

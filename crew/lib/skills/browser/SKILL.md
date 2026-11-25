@@ -15,18 +15,36 @@ slower and costs more.
 3. Act on a ref (`click`, `fill`, `select`, `press`), then take a new
    snapshot. Refs change after every page update; never reuse old ones.
 4. Dismiss cookie banners with the "reject" or "necessary only" option.
-5. To show the owner what a page shows (an ad, a product photo), take
-   `agent_browser_screenshot` with `keep: true` and a `selector` for just
-   that element: one kept screenshot per item, never a whole screen with
-   several items on it. Use a snapshot ref (`@e12`) or a CSS selector that
-   matches that item first on the page (`img[alt*="…"]`). A selector with
-   `/` (XPath) is refused. Look at the image you get back and retry if it
-   is the wrong item; if no selector isolates the item, keep the screen and
-   say which part of it shows the item. You get back
-   `attachments/shot-….png`; list those paths in your report so an HTML
-   document can show them with `<img src="attachments/shot-….png">`. Image
-   URLs from a page often expire or are blocked; a kept screenshot does not.
+5. To show the owner what a page shows (an ad, a product photo), keep the
+   file itself: read its address with `agent_browser_get_attr` (name `src` of an
+   `<img>`, `src` and `poster` of a `<video>`) and pass it straight to
+   `agent_browser_keep_media`. You get back `attachments/media-….jpg` (or
+   `.mp4`): the real image or video at full size. Page links expire, so keep
+   each one as soon as you read it. Only when there is no file to read (the
+   item is drawn by the page), take `agent_browser_screenshot` with
+   `keep: true` and a `selector` for just that item, never a whole screen
+   with several items on it. A selector with `/` (XPath) is refused. List
+   every kept path next to its item in your report, so an HTML document can
+   show it with `<img src="attachments/…">` or
+   `<video src="attachments/….mp4" poster="attachments/….jpg">`.
 6. Close the session with `agent_browser_close` when you are done.
+
+## Meta Ad Library
+
+The results page shows ads three in a row, and its images have no refs.
+Note each ad's Library ID there, then open the ad on its own:
+`https://www.facebook.com/ads/library/?id=<Library ID>`. It opens in a
+dialog with that one ad.
+
+- Image ad: `agent_browser_get_attr` with selector
+  `[role=dialog] img[referrerpolicy]` and name `src`, then
+  `agent_browser_keep_media` with that URL.
+- Video ad: selector `[role=dialog] video`, name `src` for the video and
+  `poster` for its cover image (usually 1080×1920); keep both. The
+  browser cannot play the video, but the file downloads fine.
+- Carousel: each card is another `img[referrerpolicy]` or `video` in the
+  dialog; read them in turn with a more specific selector, or keep the
+  first and say it is a carousel.
 
 ## Rules
 
