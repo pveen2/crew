@@ -178,7 +178,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         return;
       }
 
-      // Docs (the Docs tab): GET /api/docs, GET /api/docs/<id>, POST /api/docs/<id>/status
+      // Docs (the Docs tab): GET /api/docs, GET /api/docs/<id>, POST /api/docs/<id>/status, POST /api/docs/<id>/archive
       if (a === 'docs') {
         if (req.method === 'GET' && !id) return send(res, 200, runtime.docs());
         if (req.method === 'GET' && id && !action) {
@@ -191,6 +191,13 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
           if (status !== 'draft' && status !== 'approved') return send(res, 400, { error: 'status must be draft or approved' });
           if (!runtime.doc(id)) return send(res, 404, { error: 'No such doc' });
           return send(res, 200, runtime.setDocStatus(id, status));
+        }
+        if (req.method === 'POST' && id && action === 'archive') {
+          const body = await readJson<unknown>(req);
+          const archived = body && typeof body === 'object' ? (body as { archived?: unknown }).archived : undefined;
+          if (typeof archived !== 'boolean') return send(res, 400, { error: 'archived must be true or false' });
+          if (!runtime.doc(id)) return send(res, 404, { error: 'No such doc' });
+          return send(res, 200, runtime.setDocArchived(id, archived));
         }
       }
 

@@ -353,6 +353,8 @@ export interface DocSummary {
   /** When it was last put in the preview. */
   shownAt: number;
   approvedAt: number | null;
+  /** When the owner archived it: out of the Docs list, still readable. Null while it is not. */
+  archivedAt: number | null;
 }
 
 export interface DocResponse extends DocSummary {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DocResponse, DocSummary } from '@crew/protocol';
 import { BlockStack, Badge, Button, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Spinner, Text, cx } from '@crew/ui';
-import { ensureDoc, isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocsFilter, setInboxListWidth, useApp, type PreviewDoc } from '../store';
+import { ensureDoc, isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocArchived, setDocsFilter, setInboxListWidth, useApp, type DocsFilter, type PreviewDoc } from '../store';
 import { PaneResizer } from './PaneResizer';
 import { RoleFace, age, useNow } from './common';
 import { DocSourceBar, DocView } from './PreviewPanel';
@@ -14,7 +14,8 @@ const FORMAT: Record<DocSummary['format'], string> = {
 
 /**
  * Docs: everything agents put in front of the owner, across threads, newest first. Each doc is a
- * Draft until the owner approves it; the approved version is the one agents build on.
+ * Draft until the owner approves it; the approved version is the one agents build on. Docs the
+ * owner is done with go to the archive: out of the list, still there under Archived.
  */
 export function DocsView({ docId }: { docId?: string }) {
   const docs = useApp((s) => s.docs);
@@ -35,7 +36,8 @@ export function DocsView({ docId }: { docId?: string }) {
   }, [missing, docId]);
 
   const all = useMemo(() => Object.values(docs ?? {}).sort((a, b) => b.shownAt - a.shownAt), [docs]);
-  const items = filter === 'all' ? all : all.filter((d) => d.status === filter || d.id === docId);
+  // The doc that is open stays in the list after it is archived (or restored), until another is picked.
+  const items = all.filter((d) => d.id === docId || inFilter(d, filter));
   const selected = (docId && docs?.[docId]) || undefined;
 
   useEffect(() => {
@@ -58,6 +60,7 @@ export function DocsView({ docId }: { docId?: string }) {
               { value: 'all', label: 'All' },
               { value: 'draft', label: 'Draft' },
               { value: 'approved', label: 'Approved' },
+              { value: 'archived', label: 'Archived' },
             ]}
           />
         </PanelHeader>
@@ -74,7 +77,15 @@ export function DocsView({ docId }: { docId?: string }) {
               </div>
             ) : items.length === 0 ? (
               <Text tone="secondary" className="list-empty">
-                {all.length ? (filter === 'approved' ? 'Nothing approved yet.' : 'No drafts waiting.') : 'Docs agents show you appear here.'}
+                {filter === 'archived'
+                  ? 'Nothing archived. Archive a doc you are done with to clear it from the list.'
+                  : all.length
+                    ? filter === 'approved'
+                      ? 'Nothing approved yet.'
+                      : filter === 'draft'
+                        ? 'No drafts waiting.'
+                        : 'Everything is archived.'
+                    : 'Docs agents show you appear here.'}
               </Text>
             ) : (
               items.map((d) => <DocRow key={d.id} doc={d} selected={d.id === selected?.id} now={now} />)
@@ -102,6 +113,12 @@ export function DocsView({ docId }: { docId?: string }) {
   );
 }
 
+function inFilter(d: DocSummary, filter: DocsFilter): boolean {
+  if (filter === 'archived') return Boolean(d.archivedAt);
+  if (d.archivedAt) return false;
+  return filter === 'all' || d.status === filter;
+}
+
 function DocRow({ doc, selected, now }: { doc: DocSummary; selected: boolean; now: number }) {
   const unread = useApp((s) => isNewDoc(doc, s.docsSeen));
   return (
@@ -114,6 +131,7 @@ function DocRow({ doc, selected, now }: { doc: DocSummary; selected: boolean; no
       meta={age(doc.shownAt, now)}
       subtitle={
         <>
+          {doc.archivedAt ? <span>Archived · </span> : null}
           {doc.status === 'approved' ? <Badge tone="success">Approved</Badge> : <span>Draft</span>}
           {` · ${FORMAT[doc.format]}`}
           {doc.threadTitle ? ` · ${doc.threadTitle}` : ''}
@@ -159,6 +177,7 @@ function DocDetail({ summary }: { summary: DocSummary }) {
         </InlineStack>
         <span className="cr-spacer" />
         <span className="inbox-detail-actions">
+          <ArchiveButton summary={summary} />
           <Button onClick={openThread}>Open thread</Button>
         </span>
       </PanelHeader>
@@ -171,5 +190,19 @@ function DocDetail({ summary }: { summary: DocSummary }) {
         <div className="pane-center">{error ? <Text tone="critical">{error}</Text> : <Spinner label="Loading" />}</div>
       )}
     </>
+  );
+}
+
+function ArchiveButton({ summary }: { summary: DocSummary }) {
+  const [busy, setBusy] = useState(false);
+  const archived = Boolean(summary.archivedAt);
+  const toggle = () => {
+    setBusy(true);
+    void setDocArchived(summary.id, !archived).finally(() => setBusy(false));
+  };
+  return (
+    <Button disabled={busy} onClick={toggle} title={archived ? 'Put it back in the Docs list' : 'Clear it from the Docs list. It stays under Archived.'}>
+      {archived ? 'Restore' : 'Archive'}
+    </Button>
   );
 }
