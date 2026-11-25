@@ -37,7 +37,7 @@ import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from
 import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
-import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, mergePullRequest, openPullRequest, snapshot, themePreview } from './code.ts';
+import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, mergePullRequest, openPullRequest, pullRequestState, snapshot, themePreview } from './code.ts';
 
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
 
@@ -363,6 +363,41 @@ export class Runtime {
     const what = item.title.replace(/^Pull request /, '').split(':')[0];
     if (session) this.emit(session, null, { type: 'status', text: `The owner merged pull request ${what} (${method}): ${item.url}` });
     return this.resolveInbox(id) ?? item;
+  }
+
+  /**
+   * A pull request merged or closed on GitHub leaves the Inbox too. Checked every minute while
+   * any pull request item is open; nothing calls GitHub otherwise.
+   */
+  watchPullRequests(everyMs = 60_000): () => void {
+    let busy = false;
+    const tick = async () => {
+      if (busy || this.shuttingDown) return;
+      const items = this.store.openInbox().filter((i) => i.kind === 'pull_request' && i.url);
+      if (!items.length) return;
+      busy = true;
+      try {
+        const settings = codeSettings((await loadCrew()).config.code);
+        for (const item of items) {
+          const state = await pullRequestState(settings, item.url!).catch((err) => {
+            console.warn(`[runtime] could not check ${item.url}:`, (err as Error).message);
+            return 'open' as const;
+          });
+          if (state === 'open' || this.store.inboxItem(item.id)?.status !== 'open') continue;
+          const session = this.store.session(item.sessionId);
+          if (session) this.emit(session, null, { type: 'status', text: `Pull request ${state} on GitHub: ${item.url}` });
+          this.resolveInbox(item.id);
+        }
+      } catch (err) {
+        console.warn('[runtime] pull request check failed:', (err as Error).message);
+      } finally {
+        busy = false;
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), everyMs);
+    timer.unref();
+    return () => clearInterval(timer);
   }
 
   private resolveInboxOf(threadId: string, kinds: InboxKind[], sessionId?: string): void {

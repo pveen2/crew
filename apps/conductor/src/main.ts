@@ -22,6 +22,7 @@ const crew = await loadCrew();
 const store = new Store(paths.db);
 const runtime = new Runtime(store);
 const interrupted = runtime.recover();
+runtime.watchPullRequests();
 
 // A server keeps one token across restarts (CREW_TOKEN); on a Mac it is new every start.
 const fixedToken = process.env.CREW_TOKEN?.trim();

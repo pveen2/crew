@@ -474,22 +474,34 @@ ${diff}
 // Merge, by the owner from the Inbox (never by an agent)
 
 /** Merges an open pull request on the code repo, with a method the repo allows. GitHub's own rules (required reviews, checks) still apply. */
-export async function mergePullRequest(s: CodeSettings, url: string): Promise<{ sha: string; method: string }> {
+function pullNumber(s: CodeSettings, url: string): string {
   const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
   if (!m || `${m[1]}/${m[2]}`.toLowerCase() !== s.repo.toLowerCase()) throw new Error(`${url} is not a pull request on ${s.repo}.`);
+  return m[3]!;
+}
+
+/** Whether a pull request is still open, or was merged or closed on GitHub. */
+export async function pullRequestState(s: CodeSettings, url: string): Promise<'open' | 'merged' | 'closed'> {
+  const n = pullNumber(s, url);
+  const pr = await api<{ state: string; merged: boolean }>('GET', `/repos/${s.owner}/${s.name}/pulls/${n}`, `Bearer ${await githubToken(s)}`);
+  return pr.merged ? 'merged' : pr.state === 'open' ? 'open' : 'closed';
+}
+
+export async function mergePullRequest(s: CodeSettings, url: string): Promise<{ sha: string; method: string }> {
+  const n = pullNumber(s, url);
   const auth = `Bearer ${await githubToken(s)}`;
   const base = `/repos/${s.owner}/${s.name}`;
-  const pr = await api<{ state: string; merged: boolean; mergeable: boolean | null; head: { sha: string }; title: string }>('GET', `${base}/pulls/${m[3]}`, auth);
-  if (pr.merged) throw new Error(`Pull request #${m[3]} is already merged.`);
-  if (pr.state !== 'open') throw new Error(`Pull request #${m[3]} is closed.`);
-  if (pr.mergeable === false) throw new Error(`Pull request #${m[3]} has conflicts with ${s.base}: ask the developer to update the branch.`);
+  const pr = await api<{ state: string; merged: boolean; mergeable: boolean | null; head: { sha: string }; title: string }>('GET', `${base}/pulls/${n}`, auth);
+  if (pr.merged) throw new Error(`Pull request #${n} is already merged.`);
+  if (pr.state !== 'open') throw new Error(`Pull request #${n} is closed.`);
+  if (pr.mergeable === false) throw new Error(`Pull request #${n} has conflicts with ${s.base}: ask the developer to update the branch.`);
   const repo = await api<{ allow_merge_commit?: boolean; allow_squash_merge?: boolean; allow_rebase_merge?: boolean }>('GET', base, auth);
   const method = repo.allow_squash_merge !== false ? 'squash' : repo.allow_merge_commit !== false ? 'merge' : repo.allow_rebase_merge !== false ? 'rebase' : 'merge';
   // sha: refuse if the branch moved after the owner looked at it.
-  const res = await api<{ sha: string }>('PUT', `${base}/pulls/${m[3]}/merge`, auth, {
+  const res = await api<{ sha: string }>('PUT', `${base}/pulls/${n}/merge`, auth, {
     merge_method: method,
     sha: pr.head.sha,
-    ...(method === 'squash' ? { commit_title: `${pr.title} (#${m[3]})` } : {}),
+    ...(method === 'squash' ? { commit_title: `${pr.title} (#${n})` } : {}),
   });
   return { sha: res.sha, method };
 }
