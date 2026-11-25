@@ -129,8 +129,9 @@ export interface ToolDefinition<S extends z.ZodRawShape = z.ZodRawShape> {
    */
   approvalTitle?: (input: z.infer<z.ZodObject<S>>) => string | undefined;
   /**
-   * Every call waits for the owner, even after "allow for this thread". For
-   * tools that spend money or change things outside Crew.
+   * Every call waits for the owner, even after "allow for this thread" (and
+   * even without `approval`). For tools that spend money or change things
+   * outside Crew. An agent's `approval` callback can still deny the call.
    */
   alwaysAsk?: boolean;
   /**

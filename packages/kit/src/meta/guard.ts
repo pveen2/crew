@@ -16,10 +16,16 @@ import { callMeta, type MetaEndpoint } from './client.ts';
 
 export const normAccount = (id: unknown) => String(id ?? '').trim().replace(/^act_/, '');
 
-/** META_AD_ACCOUNTS: comma-separated ad account ids (with or without act_). */
+/**
+ * The connection's ad accounts, set by metaAdsConnection: comma-separated ids
+ * (with or without act_). A CREW_ name, so it never clashes with a variable a
+ * team names with fromEnv (agents' MCP secrets share one process environment).
+ */
+export const META_ACCOUNTS_VAR = 'CREW_META_AD_ACCOUNTS';
+
 export function allowedAccountsFromEnv(): string[] {
-  const ids = (process.env.META_AD_ACCOUNTS ?? '').split(',').map(normAccount).filter(Boolean);
-  if (!ids.length) throw new Error('Meta Ads: no ad accounts are allowed for this agent (META_AD_ACCOUNTS is empty).');
+  const ids = (process.env[META_ACCOUNTS_VAR] ?? '').split(',').map(normAccount).filter(Boolean);
+  if (!ids.length) throw new Error(`Meta Ads: no ad accounts are allowed for this agent (${META_ACCOUNTS_VAR} is empty).`);
   return ids;
 }
 

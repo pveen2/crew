@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, extname, join, sep } from 'node:path';
 import { z } from 'zod';
 import { defineTool } from '@crew/sdk/define';
@@ -27,17 +27,22 @@ function kindOf(ext: string): { kind: Kind; contentType: string } | null {
 const MAX_BYTES = 8 * 1024 * 1024;
 const FOLDERS = ['drafts', 'attachments'];
 
-/** A file in the session's drafts/ or attachments/, after following links. */
+/**
+ * A file in the session's drafts/ or attachments/. Both must be real folders in
+ * the session folder (an agent that can write could swap one for a link to
+ * somewhere else), and the file, links followed, must be inside one of them.
+ */
 function sessionFile(rel: string): string {
-  const root = process.cwd();
+  const cwd = process.cwd();
+  if (!existsSync(join(cwd, 'AGENTS.md'))) throw new Error('studio_upload only runs in an agent session.');
+  const root = realpathSync(cwd);
+  const target = join(root, rel);
+  const real = existsSync(target) ? realpathSync(target) : null;
   for (const folder of FOLDERS) {
     const base = join(root, folder);
-    if (!existsSync(base)) continue;
-    const realBase = realpathSync(base);
-    const target = join(root, rel);
-    if (!existsSync(target)) continue;
-    const real = realpathSync(target);
-    if (real.startsWith(realBase + sep)) return real;
+    const st = lstatSync(base, { throwIfNoEntry: false });
+    if (!st?.isDirectory()) continue; // missing, or a link: never trusted
+    if (real && real.startsWith(base + sep) && statSync(real).isFile()) return real;
   }
   throw new Error(`${rel}: not a file in drafts/ or attachments/.`);
 }

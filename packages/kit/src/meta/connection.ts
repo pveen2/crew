@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConnection, fromEnv } from '@crew/sdk/define';
 import { checkAdAccounts, isEnvRef, type MetaAdAccounts } from './accounts.ts';
+import { META_ACCOUNTS_VAR } from './guard.ts';
 import { META_READ_TOOLS } from './tools.ts';
 
 // Read access to Meta ads (Facebook and Instagram) through Meta's hosted Ads
@@ -24,7 +25,7 @@ export const metaAdsConnection = (opts: { adAccounts: MetaAdAccounts; name?: str
       // In the installed Mac app process.execPath is the Crew binary (Electron).
       ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       ...(process.env.META_ADS_MCP_URL?.trim() ? { META_ADS_MCP_URL: process.env.META_ADS_MCP_URL.trim() } : {}),
-      META_AD_ACCOUNTS: isEnvRef(opts.adAccounts) ? fromEnv(opts.adAccounts.fromEnv) : opts.adAccounts.join(','),
+      [META_ACCOUNTS_VAR]: isEnvRef(opts.adAccounts) ? fromEnv(opts.adAccounts.fromEnv) : opts.adAccounts.join(','),
       META_ACCESS_TOKEN: fromEnv('META_ACCESS_TOKEN'),
     },
     toolTimeoutSec: 120,

@@ -1252,7 +1252,7 @@ export class Runtime {
     signal: AbortSignal,
     tool?: Pick<LoadedTool, 'approvalTitle' | 'alwaysAsk'>,
   ): Promise<void> {
-    const decision = agent.def.approval?.({ toolName, input, agent: agent.name }) ?? toolDefault;
+    const decision = agent.def.approval?.({ toolName, input, agent: agent.name }) ?? toolDefault ?? (tool?.alwaysAsk ? 'user-approval' : undefined);
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
     // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.

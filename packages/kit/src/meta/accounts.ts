@@ -14,6 +14,7 @@ export function checkAdAccounts(v: MetaAdAccounts | undefined, who: string): voi
   if (!v || (Array.isArray(v) ? !v.length : !isEnvRef(v) || !v.fromEnv.trim())) {
     throw new Error(`${who}: list the ad accounts the agent may use in adAccounts, or pass fromEnv('NAME')`);
   }
+  if (isEnvRef(v) && v.fromEnv.startsWith('CREW_')) throw new Error(`${who}: CREW_ names are Crew's own; name the ad accounts variable something else`);
 }
 
 /** The ids now. Throws when the environment value is empty. */

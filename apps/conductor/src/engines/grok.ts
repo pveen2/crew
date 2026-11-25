@@ -86,8 +86,9 @@ export const grok: EngineAdapter = {
         `command = ${tomlString(s.command)}`,
         `args = [${s.args.map(tomlString).join(', ')}]`,
         // Grok has no env forwarding by name: the bridge token goes in the file
-        // (it only works for this session). Other secrets are inherited from the process.
-        `env = ${tomlInlineTable({ ...s.env, ...(name === 'crew' ? s.secretEnv : {}) })}`,
+        // (it only works for this session). Other secrets, including the tokens the
+        // agent's own tools ask for, are inherited from the process, never written here.
+        `env = ${tomlInlineTable({ ...s.env, ...(name === 'crew' && s.secretEnv.CREW_BRIDGE_TOKEN ? { CREW_BRIDGE_TOKEN: s.secretEnv.CREW_BRIDGE_TOKEN } : {}) })}`,
         'enabled = true',
         'startup_timeout_sec = 30',
         `tool_timeout_sec = ${s.toolTimeoutSec}`,
