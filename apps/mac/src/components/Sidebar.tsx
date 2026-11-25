@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
 import { isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
+import { offerMacApp } from '../macApp';
 import { RoleFaces, age, usageLabel, usageTitle, useNow } from './common';
 
 export function Sidebar() {
@@ -148,6 +149,7 @@ export function Sidebar() {
 
       <div className="sidebar-footer">
         <NavItem icon="settings" label="Settings" selected={view.name === 'settings'} onClick={() => navigate({ name: 'settings' })} />
+        {offerMacApp && <NavItem icon="download" label="Get the Mac app" onClick={() => navigate({ name: 'settings' })} />}
         <UpdateButton working={workingCount} label="Update team" check={window.crewHost?.teamCheck} apply={window.crewHost?.teamApply} />
         <UpdateButton working={workingCount} label="Update Crew" check={window.crewHost?.updateCheck} apply={window.crewHost?.updateApply} />
         <Connections />
