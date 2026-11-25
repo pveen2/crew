@@ -3,7 +3,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Face, FaceStack, type FaceSize } from '@crew/ui';
 import type { Usage } from '@crew/protocol';
-import { useApp } from '../store';
+import { personName, setScope, useApp, type Scope } from '../store';
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -166,4 +166,48 @@ export function usageTitle(u: Usage | null | undefined): string {
   lines.push(`${tokenCount(u.inputTokens)} tokens in, ${tokenCount(u.outputTokens)} out`);
   lines.push('Runs on your subscriptions, so this is what it would cost per token, not what is billed.');
   return lines.join('\n');
+}
+
+const PERSON_COLORS = ['#3b6cf6', '#e0538f', '#16a37f', '#d97706', '#8b5cf6', '#0e9fb8', '#dc4c3f', '#5b7c99'];
+
+/** A colleague on the team server: a round face with their initial, coloured by email. */
+export function PersonFace({ email, size = 16, title }: { email: string; size?: number; title?: string }) {
+  const name = useApp((s) => personName(email, s.people));
+  // FNV-1a: spreads similar emails over the colours.
+  let h = 2166136261;
+  for (const c of email) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+  return (
+    <span
+      className="person-face"
+      role="img"
+      aria-label={name}
+      title={title ?? name}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.55), background: PERSON_COLORS[h % PERSON_COLORS.length] }}
+    >
+      {name.charAt(0).toUpperCase()}
+    </span>
+  );
+}
+
+/** A colleague's name, from the people the conductor knows. */
+export function usePersonName(email: string | null | undefined): string {
+  return useApp((s) => (email ? personName(email, s.people) : ''));
+}
+
+/** Mine / All, for Threads and the Inbox. Only on a team server (someone is signed in). */
+export function ScopeToggle({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
+  const me = useApp((s) => s.me);
+  const scope = useApp((s) => s.scope);
+  if (!me) return null;
+  const option = (value: Scope, label: string) => (
+    <button type="button" role="radio" aria-checked={scope === value} className="scope-toggle__option" onClick={() => setScope(value)}>
+      {label}
+    </button>
+  );
+  return (
+    <span className={`scope-toggle scope-toggle--${tone}`} role="radiogroup" aria-label="Whose threads">
+      {option('mine', 'Mine')}
+      {option('all', 'All')}
+    </span>
+  );
 }

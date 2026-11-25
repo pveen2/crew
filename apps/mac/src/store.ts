@@ -21,6 +21,7 @@ import type {
   Thread,
   ThreadDetailResponse,
   ThreadShare,
+  Person,
   Turn,
   ServerLogin,
 } from '@crew/protocol';
@@ -145,6 +146,12 @@ export interface AppState {
   sharing: boolean;
   /** Each loaded thread's share link; null when it is not shared. */
   shares: Record<string, ThreadShare | null>;
+  /** Team server: who is signed in (null on a Mac: one person, no Mine/All). */
+  me: string | null;
+  /** Team server: everyone who has signed in. */
+  people: Person[];
+  /** Threads and Inbox: only mine, or the whole team's. */
+  scope: Scope;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -266,6 +273,45 @@ function loadRead(): Record<string, true> {
   }
 }
 
+export type Scope = 'mine' | 'all';
+const SCOPE_KEY = 'crew.scope';
+function loadScope(): Scope {
+  try {
+    return localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'mine';
+  } catch {
+    return 'mine';
+  }
+}
+
+/** Threads and Inbox: show only mine, or the whole team's. Remembered on this device. */
+export function setScope(scope: Scope): void {
+  set({ scope });
+  try {
+    localStorage.setItem(SCOPE_KEY, scope);
+  } catch {
+    /* storage unavailable: the choice lasts for this session */
+  }
+}
+
+/** Mine: I started it, wrote in it or was tagged. Without people (a Mac) everything is mine. */
+export function isMine(thread: Thread | undefined, me: string | null): boolean {
+  if (!me || !thread) return true;
+  return thread.createdBy === me || Boolean(thread.people?.includes(me));
+}
+
+/** Whether a thread shows under the current scope. */
+export function inScope(thread: Thread | undefined, s: Pick<AppState, 'me' | 'scope'>): boolean {
+  return s.scope === 'all' || isMine(thread, s.me);
+}
+
+/** "juliette@…" → "Juliette", as the conductor names people. */
+export function personName(email: string, people: Person[] = state.people): string {
+  const known = people.find((p) => p.email === email);
+  if (known) return known.name;
+  const first = email.split('@')[0]!.split(/[._+-]/)[0] || email;
+  return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
 const SIDEBAR_KEY = 'crew.sidebar.collapsed';
 const SHOW_SPEND_KEY = 'crew.settings.showSpend';
 const SIDEBAR_THEME_KEY = 'crew.settings.sidebarTheme';
@@ -345,6 +391,9 @@ let state: AppState = {
   activity: [],
   sharing: false,
   shares: {},
+  me: null,
+  people: [],
+  scope: loadScope(),
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -435,6 +484,8 @@ async function refreshState(): Promise<void> {
     suggestions: s.team.suggestions,
     activity: s.activity,
     sharing: Boolean(s.sharing),
+    me: s.me ?? null,
+    people: s.people ?? [],
   });
 }
 

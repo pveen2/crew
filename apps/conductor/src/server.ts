@@ -59,6 +59,13 @@ function corsHeaders(res: ServerResponse): void {
 }
 
 export function startServer(runtime: Runtime, opts: { port: number; token: string }) {
+  // Threads from before people were recorded were the first admin's: Crew had one person then.
+  const firstAdmin = [...admins][0];
+  if (accessEnabled && firstAdmin) {
+    const claimed = runtime.claimUnownedThreads(firstAdmin);
+    if (claimed) console.log(`[people] ${claimed} earlier thread(s) now belong to ${firstAdmin}`);
+  }
+
   const server = createServer(async (req, res) => {
     corsHeaders(res);
     if (req.method === 'OPTIONS') {
@@ -150,6 +157,8 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       if (accessEnabled) {
         email = await accessEmail(req);
         if (!email) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
+        email = email.toLowerCase();
+        runtime.touchPerson(email);
       } else {
         const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
         if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
@@ -162,7 +171,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
       const [, a, id, action] = parts;
 
-      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.state()), sharing: accessEnabled });
+      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.state()), sharing: accessEnabled, me: email, people: accessEnabled ? runtime.people() : [] });
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
       if (req.method === 'GET' && a === 'spend') {
         const days = Math.min(366, Math.max(1, Math.round(Number(url.searchParams.get('days') ?? 30)) || 30));
@@ -203,7 +212,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (req.method === 'POST' && !id) {
           const body = await readJson<CreateThreadRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : []));
+          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : [], email));
         }
         if (req.method === 'GET' && id && !action) {
           const detail = runtime.threadDetail(id);
@@ -225,7 +234,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (req.method === 'POST' && id && action === 'messages') {
           const body = await readJson<SendMessageRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments));
+          return send(res, 200, runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments, email));
         }
         if (req.method === 'POST' && id && action === 'resume') {
           runtime.resumeThread(id);

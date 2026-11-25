@@ -47,6 +47,7 @@ import { PaneResizer } from './PaneResizer';
 import {
   Elapsed,
   Markdown,
+  PersonFace,
   RoleFace,
   RoleFaces,
   ago,
@@ -57,6 +58,7 @@ import {
   usageLabel,
   usageTitle,
   useNow,
+  usePersonName,
   useRoleLabel,
   useRoleLabels,
 } from './common';
@@ -546,8 +548,19 @@ function chatEvents(events: CrewEvent[], session: Session): CrewEvent[] {
 function OwnerMessage({ threadId, event, session }: { threadId: string; event: Ev<'message'>; session: Session }) {
   const events = useApp((s) => s.details[threadId]?.events);
   const dropped = events ? deliveryOf(event, events, session).state === 'dropped' : false;
+  const me = useApp((s) => s.me);
+  const colleague = me && event.by && event.by !== me ? event.by : null;
+  const name = usePersonName(colleague);
   return (
-    <div className="owner-message">
+    <div className={colleague ? 'person-message' : 'owner-message'}>
+      {colleague ? (
+        <span className="person-message__who">
+          <PersonFace email={colleague} size={16} />
+          <Text as="span" variant="caption" weight="medium" tone="secondary">
+            {name} · {clock(event.ts)}
+          </Text>
+        </span>
+      ) : null}
       <div className="bubble">
         {event.attachments?.length ? <MessageImages threadId={threadId} attachments={event.attachments} /> : null}
         <Markdown text={event.text} />
@@ -910,6 +923,8 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
   const stick = useRef(true);
   const now = useNow(30_000);
   const labels = useRoleLabels();
+  const me = useApp((s) => s.me);
+  const starter = usePersonName(me && thread?.createdBy && thread.createdBy !== me ? thread.createdBy : null);
 
   const rootId = thread?.rootSessionId ?? '';
   const session = data?.sessions[sessionId ?? rootId];
@@ -979,6 +994,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 {thread.title}
               </Text>
               <Text variant="caption" tone="secondary" leading="tight" truncate>
+                {starter ? `Started by ${starter} · ` : ''}
                 {thread.roles.map((r) => labels[r] ?? r).join(', ')}
                 {thread.benched?.length ? ` · without ${thread.benched.map((r) => labels[r] ?? r).join(', ')}` : ''} · started {ago(thread.createdAt, now)}
                 {showSpend && usageLabel(thread.usage) ? (
@@ -992,6 +1008,13 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
           )}
           <span className="cr-spacer" />
           <span className="header-faces phone-hide">
+            {me && (thread.people?.length ?? 0) > 1 ? (
+              <span className="list-trailing" aria-label="People in this thread">
+                {thread.people!.map((p) => (
+                  <PersonFace key={p} email={p} size={20} />
+                ))}
+              </span>
+            ) : null}
             <RoleFaces roles={thread.roles} size="md" />
           </span>
           {session.depth === 0 && (

@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
+import { inScope, isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
 import { offerMacApp } from '../macApp';
-import { RoleFaces, age, usageLabel, usageTitle, useNow } from './common';
+import { PersonFace, RoleFaces, ScopeToggle, age, usageLabel, usageTitle, useNow } from './common';
 
 export function Sidebar() {
   const view = useApp((s) => s.view);
   const showSpend = useApp((s) => s.showSpend);
   const teamName = useApp((s) => s.teamName) || 'Crew';
   const threads = useApp((s) => s.threads);
+  const me = useApp((s) => s.me);
+  const scope = useApp((s) => s.scope);
   const doneCount = useApp((s) => Object.keys(s.done).length);
   const inbox = useApp((s) => s.inbox);
   const inboxRead = useApp((s) => s.inboxRead);
@@ -22,8 +24,12 @@ export function Sidebar() {
   const collapsed = useApp((s) => s.sidebarCollapsed);
   const now = useNow(1000);
 
-  const sorted = useMemo(() => Object.values(threads).sort((a, b) => b.updatedAt - a.updatedAt), [threads]);
-  const inboxItems = Object.values(inbox);
+  const sorted = useMemo(
+    () => Object.values(threads).filter((t) => inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
+    [threads, me, scope],
+  );
+  // The Inbox count follows Mine / All too. An item whose thread is not loaded counts.
+  const inboxItems = Object.values(inbox).filter((i) => !threads[i.threadId] || inScope(threads[i.threadId], { me, scope }));
   const unreadInbox = inboxItems.filter((i) => !inboxRead[i.id]);
   const unreadThreads = new Set(unreadInbox.map((i) => i.threadId));
   const workingCount = activity.filter((a) => a.status === 'running').length;
@@ -96,14 +102,16 @@ export function Sidebar() {
       />
 
       <div className="sidebar-section">
-        <span>Active threads</span>
-        <span className="numeric">{sorted.length || ''}</span>
+        <span>{me ? 'Threads' : 'Active threads'}</span>
+        {me ? <ScopeToggle tone="dark" /> : <span className="numeric">{sorted.length || ''}</span>}
       </div>
 
       <div className="sidebar-threads">
         {sorted.length === 0 && (
           <Text variant="caption" tone="sidebarSecondary" className="sidebar-empty">
-            No threads yet. Start one with New thread.
+            {me && scope === 'mine' && Object.keys(threads).length
+              ? 'None of yours. All shows the whole team’s.'
+              : 'No threads yet. Start one with New thread.'}
           </Text>
         )}
         {sorted.map((t) => {
@@ -139,7 +147,17 @@ export function Sidebar() {
                   ) : null}
                 </>
               }
-              trailing={<RoleFaces roles={t.roles} size="xs" />}
+              trailing={
+                // Under All, someone else's thread shows who started it.
+                me && t.createdBy && t.createdBy !== me ? (
+                  <span className="list-trailing">
+                    <PersonFace email={t.createdBy} size={14} />
+                    <RoleFaces roles={t.roles} size="xs" />
+                  </span>
+                ) : (
+                  <RoleFaces roles={t.roles} size="xs" />
+                )
+              }
             />
           );
         })}

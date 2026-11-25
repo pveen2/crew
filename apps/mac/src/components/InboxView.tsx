@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { InboxItem } from '@crew/protocol';
 import { BlockStack, Button, Card, Disclosure, Icon, InlineStack, Panel, PanelHeader, Text, cx, type IconName } from '@crew/ui';
-import { ensureThreads, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
-import { Markdown, RoleFace, age, useNow, useRoleLabel } from './common';
+import { ensureThreads, inScope, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
+import { Markdown, PersonFace, RoleFace, ScopeToggle, age, useNow, usePersonName, useRoleLabel } from './common';
 import { ApprovalActions } from './ApprovalCard';
 import { QuestionAnswer } from './QuestionAnswer';
 
@@ -24,10 +24,18 @@ const KIND: Record<InboxItem['kind'], { label: string; icon: IconName; order: nu
 
 export function InboxView({ itemId }: { itemId?: string }) {
   const inbox = useApp((s) => s.inbox);
+  const threads = useApp((s) => s.threads);
+  const me = useApp((s) => s.me);
+  const scope = useApp((s) => s.scope);
   const now = useNow(30_000);
+  const all = Object.keys(inbox).length;
   const items = useMemo(
-    () => Object.values(inbox).sort((a, b) => (KIND[a.kind]?.order ?? 9) - (KIND[b.kind]?.order ?? 9) || b.createdAt - a.createdAt),
-    [inbox],
+    () =>
+      Object.values(inbox)
+        // Mine: items from my threads. One whose thread is not loaded (a closed one) shows.
+        .filter((i) => !threads[i.threadId] || inScope(threads[i.threadId], { me, scope }))
+        .sort((a, b) => (KIND[a.kind]?.order ?? 9) - (KIND[b.kind]?.order ?? 9) || b.createdAt - a.createdAt),
+    [inbox, threads, me, scope],
   );
 
   // Know which agent raised each item.
@@ -47,9 +55,10 @@ export function InboxView({ itemId }: { itemId?: string }) {
           Inbox
         </Text>
         <span className="cr-spacer" />
-        <Text as="span" tone="secondary">
-          {items.length ? `${items.length} waiting on you` : ''}
+        <Text as="span" tone="secondary" className="phone-hide">
+          {items.length ? `${items.length} waiting${scope === 'all' && me ? '' : ' on you'}` : ''}
         </Text>
+        <ScopeToggle />
       </PanelHeader>
       <div className="pane-scroll">
         {items.length === 0 ? (
@@ -57,6 +66,11 @@ export function InboxView({ itemId }: { itemId?: string }) {
             <BlockStack gap="200" inlineAlign="center">
               <Icon name="checkCircle" size={16} />
               <Text tone="secondary">Nothing is waiting on you.</Text>
+              {all > 0 && (
+                <Text variant="bodySm" tone="tertiary">
+                  {all} waiting in the team’s threads, under All.
+                </Text>
+              )}
               <Text variant="bodySm" tone="tertiary">
                 Drafts to review are in Docs.
               </Text>
@@ -81,6 +95,9 @@ function useItemRole(item: InboxItem): string {
 
 function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: number; focused: boolean; autoFocus: boolean }) {
   const thread = useApp((s) => s.threads[item.threadId]);
+  const me = useApp((s) => s.me);
+  const owner = me && thread?.createdBy && thread.createdBy !== me ? thread.createdBy : null;
+  const ownerName = usePersonName(owner);
   const role = useItemRole(item);
   const roleLabel = useRoleLabel(role);
   // A newer conductor may send kinds this build does not know yet.
@@ -102,8 +119,9 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
             {kind.label}
           </Text>
           <Text as="span" variant="bodySm" tone="secondary" truncate className="grow">
-            {[roleLabel, thread?.title].filter(Boolean).join(' · ')}
+            {[roleLabel, thread?.title, ownerName && `${ownerName}’s thread`].filter(Boolean).join(' · ')}
           </Text>
+          {owner ? <PersonFace email={owner} size={16} /> : null}
           <Text as="span" variant="bodySm" tone="tertiary">
             {age(item.createdAt, now)}
           </Text>

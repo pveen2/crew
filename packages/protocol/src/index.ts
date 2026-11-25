@@ -30,6 +30,17 @@ export interface Thread {
   benched: string[];
   /** What every turn in the thread used so far, all agents together. */
   usage: Usage;
+  /** Team server: who started the thread (their sign-in email). Null on a Mac, and for threads from before. */
+  createdBy?: string | null;
+  /** Team server: everyone in the thread (started it, wrote in it, or was tagged), by email. */
+  people?: string[];
+}
+
+/** Someone on the team server, known from their sign-in. */
+export interface Person {
+  email: string;
+  /** From the email: "juliette@…" is Juliette. */
+  name: string;
 }
 
 /**
@@ -118,6 +129,8 @@ export type CrewEventBody =
       role: 'user' | 'assistant';
       text: string;
       from?: string;
+      /** Team server: who sent it (their sign-in email). */
+      by?: string;
       attachments?: Attachment[];
       /**
        * An owner message sent while the agent was working. 'steer': written into
@@ -251,6 +264,10 @@ export interface StateResponse {
   activity: AgentActivity[];
   /** Threads can get a read-only share link (a team server behind Cloudflare Access). */
   sharing?: boolean;
+  /** Team server: who is signed in. Null or missing on a Mac (one person). */
+  me?: string | null;
+  /** Team server: everyone who has signed in, for names and faces. */
+  people?: Person[];
 }
 
 /** One day of work, in the owner's time zone. Cost is at API prices (see Usage). */
@@ -307,7 +324,17 @@ export interface ThreadShare {
 }
 
 export type SharedItem =
-  | { kind: 'message'; from: 'person' | 'agent'; /** Agent messages: who wrote it. */ agent?: string; text: string; attachments?: Attachment[]; ts: number }
+  | {
+      kind: 'message';
+      from: 'person' | 'agent';
+      /** Agent messages: which agent wrote it. */
+      agent?: string;
+      /** A person's message on a team server: their first name (not their email). */
+      name?: string;
+      text: string;
+      attachments?: Attachment[];
+      ts: number;
+    }
   /** A Markdown draft the agent showed. HTML and concept boards carry no content. */
   | { kind: 'doc'; agent: string; title: string; format: DocFormat; content?: string; ts: number };
 

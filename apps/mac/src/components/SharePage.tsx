@@ -92,8 +92,15 @@ function SharedRow({ token, item, previous }: { token: string; item: SharedItem;
     );
   }
   if (item.from === 'person') {
+    // Name a person where their messages start, once more than one person wrote.
+    const named = item.name && !(previous?.kind === 'message' && previous.from === 'person' && previous.name === item.name);
     return (
       <div className="owner-message">
+        {named ? (
+          <Text variant="caption" weight="medium" tone="secondary">
+            {item.name}
+          </Text>
+        ) : null}
         <div className="bubble">
           {item.attachments?.length ? (
             <div className="share-images">

@@ -126,6 +126,19 @@ CREATE TABLE IF NOT EXISTS verdicts (
   ts INTEGER NOT NULL
 );
 
+-- Team server: who is in which thread (started it, wrote in it, was tagged),
+-- and everyone who has signed in.
+CREATE TABLE IF NOT EXISTS thread_people (
+  thread_id TEXT NOT NULL REFERENCES threads(id),
+  email TEXT NOT NULL,
+  PRIMARY KEY (thread_id, email)
+);
+CREATE TABLE IF NOT EXISTS people (
+  email TEXT PRIMARY KEY,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+);
+
 -- Read-only share links (team server): one per thread, a snapshot taken when
 -- shared or updated. Stopping sharing deletes the row, so the link stops working.
 CREATE TABLE IF NOT EXISTS shares (
@@ -149,6 +162,7 @@ function toThread(r: Row): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     updatedAt: Number(r.updated_at),
     archived: Boolean(r.archived),
     benched: parseList(r.benched),
+    createdBy: (r.created_by as string | null) ?? null,
   };
 }
 
@@ -281,6 +295,7 @@ export class Store {
     "ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
     'ALTER TABLE artifacts ADD COLUMN approved_at INTEGER',
     'ALTER TABLE artifacts ADD COLUMN archived_at INTEGER',
+    'ALTER TABLE threads ADD COLUMN created_by TEXT',
     ]) {
       try {
         this.db.exec(sql);
@@ -427,13 +442,46 @@ export class Store {
     this.run('DELETE FROM shares WHERE thread_id = ?', threadId);
   }
 
+  // People (team server) -----------------------------------------------------
+
+  addThreadPerson(threadId: string, email: string): void {
+    this.run('INSERT OR IGNORE INTO thread_people (thread_id, email) VALUES (?, ?)', threadId, email.toLowerCase());
+  }
+  peopleOfThread(threadId: string): string[] {
+    return this.all('SELECT email FROM thread_people WHERE thread_id = ? ORDER BY rowid', threadId).map((r) => r.email as string);
+  }
+  touchPerson(email: string, now = Date.now()): void {
+    this.run(
+      'INSERT INTO people (email, first_seen, last_seen) VALUES (?, ?, ?) ON CONFLICT(email) DO UPDATE SET last_seen = excluded.last_seen',
+      email.toLowerCase(), now, now,
+    );
+  }
+  /** Everyone who has signed in, most recently seen first. */
+  people(): string[] {
+    return this.all('SELECT email FROM people ORDER BY last_seen DESC').map((r) => r.email as string);
+  }
+  /**
+   * Threads from before people were recorded belong to whoever ran Crew then:
+   * the first admin. Returns how many were claimed.
+   */
+  claimUnownedThreads(email: string): number {
+    const ids = this.all('SELECT id FROM threads WHERE created_by IS NULL').map((r) => r.id as string);
+    if (!ids.length) return 0;
+    this.transaction(() => {
+      this.run('UPDATE threads SET created_by = ? WHERE created_by IS NULL', email.toLowerCase());
+      for (const id of ids) this.addThreadPerson(id, email);
+    });
+    return ids.length;
+  }
+
   // Threads ------------------------------------------------------------------
 
   insertThread(t: Omit<Thread, 'roles' | 'statusText' | 'usage'>): void {
     this.run(
-      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched) VALUES (?,?,?,?,?,?,?,?)',
-      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched),
+      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, created_by) VALUES (?,?,?,?,?,?,?,?,?)',
+      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.createdBy ?? null,
     );
+    if (t.createdBy) this.addThreadPerson(t.id, t.createdBy);
   }
   thread(id: string): Omit<Thread, 'roles' | 'statusText' | 'usage'> | undefined {
     const r = this.get('SELECT * FROM threads WHERE id = ?', id);

@@ -21,6 +21,7 @@ import type {
   Engine,
   InboxItem,
   InboxKind,
+  Person,
   QuestionOption,
   RoleSummary,
   ServerMessage,
@@ -160,6 +161,12 @@ function killOrphan(pid: number | null, sessionId: string): void {
   } catch {
     // Not running any more.
   }
+}
+
+/** "juliette@…" → "Juliette", "paul.van.veen@…" → "Paul". */
+export function personName(email: string): string {
+  const first = email.split('@')[0]!.split(/[._+-]/)[0] || email;
+  return first.charAt(0).toUpperCase() + first.slice(1);
 }
 
 const newId = (prefix: string) => `${prefix}_${randomBytes(6).toString('base64url')}`;
@@ -395,7 +402,31 @@ export class Runtime {
     } else {
       statusText = this.store.latestDocStatusOfThread(t.id) === 'draft' ? 'Draft to review' : 'Done';
     }
-    return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id) };
+    return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id), people: this.store.peopleOfThread(t.id) };
+  }
+
+  // -------------------------------------------------------------------------
+  // People (team server)
+
+  private seen = new Map<string, number>();
+  /** Records that someone signed in is using Crew (at most once a minute per person). */
+  touchPerson(email: string): void {
+    const key = email.toLowerCase();
+    const now = Date.now();
+    if (now - (this.seen.get(key) ?? 0) < 60_000) return;
+    this.seen.set(key, now);
+    this.store.touchPerson(key, now);
+  }
+
+  /** Everyone who has signed in, plus anyone named in a thread. */
+  people(): Person[] {
+    const emails = new Set(this.store.people());
+    return [...emails].map((email) => ({ email, name: personName(email) }));
+  }
+
+  /** Threads from before people were recorded go to the first admin. */
+  claimUnownedThreads(email: string): number {
+    return this.store.claimUnownedThreads(email);
   }
 
   async roles(): Promise<RoleSummary[]> {
@@ -519,7 +550,10 @@ export class Runtime {
     for (const e of events) {
       if (e.type === 'message' && !removed.has(e.id)) {
         const text = edited.get(e.id) ?? e.text;
-        if (e.role === 'user') items.push({ kind: 'message', from: 'person', text, ...(e.attachments?.length ? { attachments: e.attachments } : {}), ts: e.ts });
+        if (e.role === 'user') {
+          const name = e.by ? personName(e.by) : undefined;
+          items.push({ kind: 'message', from: 'person', ...(name ? { name } : {}), text, ...(e.attachments?.length ? { attachments: e.attachments } : {}), ts: e.ts });
+        }
         else if (text.trim()) items.push({ kind: 'message', from: 'agent', agent, text, ts: e.ts });
       } else if (e.type === 'needs_you') {
         const options = e.options?.length ? '\n\n' + e.options.map((o) => `- ${o.label}${o.detail ? ` (${o.detail})` : ''}`).join('\n') : '';
@@ -560,7 +594,7 @@ export class Runtime {
     return session;
   }
 
-  async createThread(text: string, roleName?: string, uploads?: AttachmentUpload[], benchedNames: string[] = []): Promise<Thread> {
+  async createThread(text: string, roleName?: string, uploads?: AttachmentUpload[], benchedNames: string[] = [], by: string | null = null): Promise<Thread> {
     const crew = await loadCrew();
     const role = roleName ?? crew.lead;
     if (!crew.agents[role]) throw new Error(`Unknown agent "${role}". Agents: ${Object.keys(crew.agents).join(', ')}`);
@@ -574,7 +608,8 @@ export class Runtime {
     const rootId = 'pending';
     const attachments = saveAttachments(threadId, uploads);
     text = text.trim() || (attachments.length ? 'See the attached image.' : text);
-    const thread = { id: threadId, title: titleFrom(text), status: 'running' as const, rootSessionId: rootId, createdAt: now, updatedAt: now, archived: false, benched };
+    const createdBy = by?.toLowerCase() ?? null;
+    const thread = { id: threadId, title: titleFrom(text), status: 'running' as const, rootSessionId: rootId, createdAt: now, updatedAt: now, archived: false, benched, createdBy };
     // Insert the thread first (sessions reference it), then point it at its root.
     this.store.insertThread(thread);
     const root = this.createSession(crew, threadId, role, null);
@@ -582,7 +617,7 @@ export class Runtime {
     const saved = this.withMeta(this.store.thread(threadId)!);
     this.broadcast({ kind: 'thread', thread: saved });
 
-    this.emit(root, null, { type: 'message', role: 'user', text, from: 'owner', ...(attachments.length ? { attachments } : {}) });
+    this.emit(root, null, { type: 'message', role: 'user', text, from: 'owner', ...(createdBy ? { by: createdBy } : {}), ...(attachments.length ? { attachments } : {}) });
     void this.enqueueTurn(root.id, text + attachmentNote(attachments), { images: attachments.map((a) => a.file) });
     void this.autoTitle(crew.agents[crew.lead] ?? crew.agents[role]!, threadId, text);
     return saved;
@@ -657,7 +692,7 @@ export class Runtime {
   }
 
 
-  sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, uploads?: AttachmentUpload[]): { sessionId: string } {
+  sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, uploads?: AttachmentUpload[], by: string | null = null): { sessionId: string } {
     const thread = this.store.thread(threadId);
     if (!thread) throw new Error(`No thread ${threadId}`);
     if (thread.archived) throw new Error('This thread is closed.');
@@ -700,9 +735,15 @@ export class Runtime {
       role: 'user',
       text,
       from: 'owner',
+      ...(by ? { by: by.toLowerCase() } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(answers ? { replyTo: answers } : {}),
     } as const;
+    if (by) {
+      const before = this.store.peopleOfThread(threadId).length;
+      this.store.addThreadPerson(threadId, by);
+      if (this.store.peopleOfThread(threadId).length !== before) this.broadcast({ kind: 'thread', thread: this.withMeta(this.store.thread(threadId)!) });
+    }
 
     // Steer: the agent is working and its engine can take the message into the
     // running turn, so it reads it at its next step. Not when other messages
