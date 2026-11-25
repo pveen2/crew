@@ -754,8 +754,9 @@ export async function setDocStatus(id: string, status: DocStatus): Promise<void>
   set((s) => (s.docs ? { docs: { ...s.docs, [doc.id]: doc } } : {}));
 }
 
-export async function setDocArchived(id: string, archived: boolean): Promise<void> {
-  const doc = await api<DocSummary>('POST', `/api/docs/${encodeURIComponent(id)}/archive`, { archived });
+/** With `thread`, archiving takes every version in the doc's thread (the conductor picks them). */
+export async function setDocArchived(id: string, archived: boolean, thread = false): Promise<void> {
+  const doc = await api<DocSummary>('POST', `/api/docs/${encodeURIComponent(id)}/archive`, { archived, ...(thread && { thread }) });
   set((s) => (s.docs ? { docs: { ...s.docs, [doc.id]: doc } } : {}));
 }
 

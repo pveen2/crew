@@ -841,6 +841,9 @@ body,
   min-width: 0;
   flex: 0 1 auto;
 }
+.detail-title h1 {
+  min-width: 5em;
+}
 .doc-age {
   flex: 0 0 auto;
   white-space: nowrap;
@@ -1514,6 +1517,7 @@ body,
   .inbox-detail-actions {
     display: flex;
     flex: 1 0 100%;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: var(--cr-space-150);
   }

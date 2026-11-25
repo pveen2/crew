@@ -129,15 +129,17 @@ export interface ChipSelectProps<V extends string> {
   disabled?: boolean;
   /** Shown before the selected label, e.g. a Face. */
   prefix?: ReactNode;
+  /** A shorter text for the chip than the selected option's label (the menu keeps the full labels). */
+  display?: ReactNode;
 }
 
 /** A quiet "GM ⌄" chip. A native select sits on top, so keyboard and VoiceOver work as usual. */
-export function ChipSelect<V extends string>({ label, value, options, onChange, disabled, prefix }: ChipSelectProps<V>) {
+export function ChipSelect<V extends string>({ label, value, options, onChange, disabled, prefix, display }: ChipSelectProps<V>) {
   const current = options.find((o) => o.value === value);
   return (
     <span className={cx('cr-chip-select', disabled && 'cr-chip-select--disabled')}>
       {prefix}
-      <span aria-hidden>{current?.label ?? value}</span>
+      <span aria-hidden>{display ?? current?.label ?? value}</span>
       <Icon name="chevronDown" size={12} />
       <select aria-label={label} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value as V)}>
         {options.map((o) => (

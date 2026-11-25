@@ -33,13 +33,11 @@ export function DocsView({ docId }: { docId?: string }) {
 
   const all = useMemo(() => Object.values(docs ?? {}).sort((a, b) => b.shownAt - a.shownAt), [docs]);
   const selected = (docId && docs?.[docId]) || undefined;
-  // The doc that is open keeps its row after it is archived (or approved, or restored), until another is picked.
+  // The doc that is open keeps its row after it is archived (or approved, or restored), until another
+  // doc or another tab is picked.
   const groups = useMemo(() => {
     const list = groupByThread(all.filter((d) => inFilter(d, filter)));
-    // The open version stands for its thread's row, so the row and the header agree.
-    const own = selected ? list.findIndex((g) => g[0]!.threadId === selected.threadId) : -1;
-    if (selected && own >= 0) list[own] = [selected, ...list[own]!.filter((d) => d.id !== selected.id)];
-    else if (selected) {
+    if (selected && !list.some((g) => g[0]!.threadId === selected.threadId)) {
       const at = list.findIndex((g) => g[0]!.shownAt < selected.shownAt);
       list.splice(at < 0 ? list.length : at, 0, [selected]);
     }
@@ -66,7 +64,12 @@ export function DocsView({ docId }: { docId?: string }) {
           <SegmentedControl
             label="Filter"
             value={filter}
-            onValueChange={setDocsFilter}
+            onValueChange={(f) => {
+              if (f === filter) return;
+              // A new tab starts from its own first doc, not the one open in the last tab.
+              setDocsFilter(f);
+              navigate({ name: 'docs' });
+            }}
             items={[
               { value: 'review', label: 'To review' },
               { value: 'approved', label: 'Approved' },
@@ -102,7 +105,7 @@ export function DocsView({ docId }: { docId?: string }) {
                   group={g}
                   versions={versionCounts[g[0]!.threadId] ?? 1}
                   showStatus={filter === 'archived'}
-                  selected={selected?.threadId === g[0]!.threadId}
+                  open={selected?.threadId === g[0]!.threadId ? selected : undefined}
                   now={now}
                 />
               ))
@@ -113,7 +116,7 @@ export function DocsView({ docId }: { docId?: string }) {
       <PaneResizer target="before" label="Resize Docs list" min={260} minOther={420} onResize={setInboxListWidth} onReset={() => setInboxListWidth(null)} />
       <Panel as="main" className={cx('pane-main', !selected && 'phone-hide')}>
         {selected ? (
-          <DocDetail key={selected.id} summary={selected} />
+          <DocDetail key={selected.threadId} summary={selected} />
         ) : (
           <>
             <PanelHeader />
@@ -147,29 +150,36 @@ function groupByThread(docs: DocSummary[]): DocSummary[][] {
   return [...byThread.values()];
 }
 
-/** A thread's docs, newest first: its versions. */
+/** A thread's docs, newest first by when they were made: its versions. Showing one again does not make it newer. */
 function useThreadDocs(threadId: string): DocSummary[] {
   const docs = useApp((s) => s.docs);
   return useMemo(
     () =>
       Object.values(docs ?? {})
         .filter((d) => d.threadId === threadId)
-        .sort((a, b) => b.shownAt - a.shownAt),
+        .sort((a, b) => b.createdAt - a.createdAt || b.shownAt - a.shownAt),
     [docs, threadId],
   );
 }
 
-/** One thread's docs: the newest in view stands for them. Opening it opens that version. */
-function DocRow({ group, versions, showStatus, selected, now }: { group: DocSummary[]; versions: number; showStatus: boolean; selected: boolean; now: number }) {
-  const doc = group[0]!;
-  const unread = useApp((s) => group.some((d) => isNewDoc(d, s.docsSeen)));
+/**
+ * One thread's docs. The row shows the version that is open (so it agrees with the header), else
+ * the newest in view; clicking it opens the newest unread version (else the newest), so a new
+ * version is one click away.
+ */
+function DocRow({ group, versions, showStatus, open, now }: { group: DocSummary[]; versions: number; showStatus: boolean; open?: DocSummary; now: number }) {
+  const firstUnread = useApp((s) => group.find((d) => isNewDoc(d, s.docsSeen)));
+  // Clicking opens the newest unread version, else the newest.
+  const newest = firstUnread ?? group[0]!;
+  const doc = open ?? group[0]!;
+  const unread = Boolean(firstUnread);
   return (
     <ListItem
       title={doc.title}
       tooltip={doc.title}
       unread={unread}
-      selected={selected}
-      onClick={() => navigate({ name: 'docs', docId: doc.id })}
+      selected={Boolean(open)}
+      onClick={() => navigate({ name: 'docs', docId: newest.id })}
       meta={age(doc.shownAt, now)}
       subtitle={
         <>
@@ -191,8 +201,11 @@ function DocRow({ group, versions, showStatus, selected, now }: { group: DocSumm
 function DocDetail({ summary }: { summary: DocSummary }) {
   const [doc, setDoc] = useState<DocResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept across versions of one thread (so the version picker keeps focus); each version loads anew.
   useEffect(() => {
     let live = true;
+    setDoc(null);
+    setError(null);
     loadDoc(summary.id).then(
       (d) => live && setDoc(d),
       (e: Error) => live && setError(e.message),
@@ -202,7 +215,7 @@ function DocDetail({ summary }: { summary: DocSummary }) {
     };
   }, [summary.id]);
 
-  const preview: PreviewDoc | null = doc && { id: doc.id, title: doc.title, format: doc.format, content: doc.content, artifactId: doc.id, from: doc.agent, ts: doc.shownAt };
+  const preview: PreviewDoc | null = doc?.id === summary.id ? { id: doc.id, title: doc.title, format: doc.format, content: doc.content, artifactId: doc.id, from: doc.agent, ts: doc.shownAt } : null;
   const agentLabel = useRoleLabel(summary.agent);
   const openThread = () => {
     navigate({ name: 'thread', threadId: summary.threadId });
@@ -220,9 +233,10 @@ function DocDetail({ summary }: { summary: DocSummary }) {
         </InlineStack>
         <span className="cr-spacer" />
         <span className="inbox-detail-actions">
-          <ArchiveButton summary={summary} />
+          <ArchiveButton key={summary.id} summary={summary} />
           <Button onClick={openThread}>Open thread</Button>
-          <ApproveButton id={summary.id} status={summary.status} size="medium" />
+          {/* Only what the owner can see can be approved. */}
+          {preview ? <ApproveButton id={summary.id} status={summary.status} size="medium" /> : null}
         </span>
       </PanelHeader>
       {preview ? (
@@ -246,32 +260,38 @@ function VersionPicker({ summary }: { summary: DocSummary }) {
       </Text>
     );
   }
+  const status = (d: DocSummary) => (d.status === 'approved' ? (d.archivedAt ? 'Approved, archived' : 'Approved') : d.archivedAt ? 'Archived' : 'Draft');
   const options = versions.map((d, i) => ({
     value: d.id,
-    label: [`Version ${n - i} of ${n}`, age(d.shownAt, now), d.status === 'approved' ? 'Approved' : d.archivedAt ? 'Archived' : ''].filter(Boolean).join(' · '),
+    label: [`v${n - i}`, d.title, age(d.shownAt, now), status(d)].join(' · '),
   }));
-  return <ChipSelect label="Version" value={summary.id} options={options} onChange={(id) => navigate({ name: 'docs', docId: id })} />;
+  const at = versions.findIndex((d) => d.id === summary.id);
+  return (
+    <ChipSelect
+      label="Version"
+      value={summary.id}
+      options={options}
+      display={`v${n - at}/${n}`}
+      onChange={(id) => navigate({ name: 'docs', docId: id })}
+    />
+  );
 }
 
 /** Archive clears the whole thread's docs from the list (every version); Restore brings back the one open. */
 function ArchiveButton({ summary }: { summary: DocSummary }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const versions = useThreadDocs(summary.threadId);
   const archived = Boolean(summary.archivedAt);
-  const toggle = async () => {
+  const toggle = () => {
     setBusy(true);
     setFailed(false);
-    // The open version last: if another version fails, this one still offers Archive to try again.
-    const ids = archived ? [summary.id] : [...versions.filter((d) => !d.archivedAt && d.id !== summary.id).map((d) => d.id), summary.id];
-    const results = await Promise.allSettled(ids.slice(0, -1).map((id) => setDocArchived(id, !archived)));
-    if (results.some((r) => r.status === 'rejected')) setFailed(true);
-    else await setDocArchived(summary.id, !archived).catch(() => setFailed(true));
-    setBusy(false);
+    void setDocArchived(summary.id, !archived, !archived)
+      .catch(() => setFailed(true))
+      .finally(() => setBusy(false));
   };
   return (
-    <Button disabled={busy} onClick={() => void toggle()} title={archived ? 'Put it back in the Docs list' : 'Clear this doc and its versions from the list. They stay under Archived.'}>
-      {failed ? (archived ? 'Restore failed · Retry' : 'Archive failed · Retry') : archived ? 'Restore' : 'Archive'}
+    <Button disabled={busy} onClick={toggle} title={archived ? 'Put it back in the Docs list' : 'Clear this doc and its versions from the list. They stay under Archived.'}>
+      {failed ? 'Failed · Retry' : archived ? 'Restore' : 'Archive'}
     </Button>
   );
 }
