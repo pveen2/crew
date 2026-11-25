@@ -185,7 +185,12 @@ evals/**/<name>.eval.ts        defineEval, plus evals.config.ts
 - **Approvals.** An agent's `approval({ toolName, input })` callback (or a
   tool's own `approval: 'user-approval'`) returns `'user-approval'` to pause the
   call, or `'deny'`. The call waits for the owner in the Inbox (app, or
-  `pnpm crew approve|deny <id>`). The lead requires approval to forget a
+  `pnpm crew approve|deny <id>`). A tool's `approvalTitle(input)` sets the
+  card's title (what changes, what it costs); `alwaysAsk: true` makes every
+  call wait again, even after "allow for this thread" (Studio generations and
+  Meta ad changes). A tool runs in the agent's bridge process and gets
+  nothing from the conductor's environment except the variables it names in
+  `env` (for example `['STUDIO_MCP_TOKEN']`), on every engine. The lead requires approval to forget a
   memory. External MCP connections cannot be paused mid-call; they are limited
   with `tools: { allow: [...] }`.
 - **Evals** start a real thread on the running conductor, wait, then check it:
@@ -328,11 +333,20 @@ Close thread also drop queued turns, and say so in the thread.
   forwards to Meta's hosted Ads MCP server (`https://mcp.facebook.com/ads`)
   with `META_ACCESS_TOKEN`, and offers only the reading tools in
   `META_READ_TOOLS` (`packages/kit/src/meta/tools.ts`). Every change goes
-  through `meta_ads_change`, which waits in the Inbox, and only for the tools in
-  `META_WRITE_TOOLS`; new campaigns, ad sets and ads start paused. Uploading
+  through `meta_ads_change`, which waits in the Inbox every time (never
+  allowed for a whole thread), and only for the tools in
+  `META_WRITE_TOOLS`; new campaigns, ad sets and ads start paused. The card's
+  title is the agent's summary, marked "Spends money" when the change activates
+  something, boosts a post, or sets a budget, spend cap or bid
+  (`metaChangeSpends`). Images and videos go to Meta by public URL
+  (`ads_creative_upload_media`), for example a Studio CDN link: an agent puts
+  a file from its `drafts/` or the owner's `attachments/` into Studio with
+  `studioUploadTool` (`@crew/kit/studio`): images, short videos, PDFs and
+  self-contained HTML, up to 8 MB, each with a public link. Uploading
   customer lists to custom audiences is not offered at all. A tool Meta adds
   later is in neither list. Each agent names its ad accounts
-  (`adAccounts`); `guard.ts` refuses any call for another account, or that
+  (`adAccounts`: a list, or `fromEnv('NAME')` for a comma-separated list in the
+  Crew environment); `guard.ts` refuses any call for another account, or that
   names another account or business the token can see, and lists only the
   agent's own accounts. Ids of objects inside an account are not checked. Meta takes a user token or an Employee-role system
   user token (not Admin-role) with `ads_mcp_management` and `ads_read`, plus

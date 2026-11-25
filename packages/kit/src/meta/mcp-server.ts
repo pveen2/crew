@@ -1,7 +1,7 @@
 // Read-only Meta Ads MCP server (stdio). Started by the agent CLI through
 // connection.ts (metaAdsConnection). It forwards reads to Meta's hosted Ads MCP
 // server with the tools' own descriptions and input schemas, and offers only
-// the tools in META_READ_TOOLS, inside the ad accounts in META_AD_ACCOUNTS
+// the tools in META_READ_TOOLS, inside the ad accounts in CREW_META_AD_ACCOUNTS
 // (guard.ts). Changes are not here: they go through the meta_ads_change tool,
 // which asks the owner first.
 

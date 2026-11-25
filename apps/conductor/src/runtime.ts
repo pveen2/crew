@@ -32,7 +32,7 @@ import type {
 } from '@crew/protocol';
 import { parseConceptBoard } from '@crew/protocol';
 import { parseModel } from '@crew/sdk/define';
-import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
+import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew, type LoadedTool } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
 import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
@@ -252,7 +252,7 @@ export class Runtime {
    * thread and `agent:tool` it asks for (so "Always allow" can clear the rest).
    * An entry is removed the moment it is settled.
    */
-  private readonly approvals = new Map<string, { settle: (approved: boolean) => void; threadId: string; key: string }>();
+  private readonly approvals = new Map<string, { settle: (approved: boolean) => void; threadId: string; key: string; alwaysAsk: boolean }>();
   private listeners = new Set<(msg: ServerMessage) => void>();
   private shuttingDown = false;
 
@@ -321,7 +321,7 @@ export class Runtime {
     kind: InboxKind,
     title: string,
     body: string,
-    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url'> = {},
+    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url' | 'askEveryTime'> = {},
   ): InboxItem {
     const item: InboxItem = {
       id: newId('i'),
@@ -805,8 +805,9 @@ export class Runtime {
           CREW_SUBAGENTS: JSON.stringify(subagents),
           CREW_MEMORIES: JSON.stringify(agent.memories.map((m) => ({ name: m.name, description: m.def.description }))),
         },
-        // Kept off command lines and config files.
-        secretEnv: { CREW_BRIDGE_TOKEN: this.bridgeToken(session.id) },
+        // Kept off command lines and config files. The agent's tools/*.ts run in the bridge and get
+        // the environment values they name in `env`, and nothing else from the conductor's.
+        secretEnv: { ...toolEnv(agent), CREW_BRIDGE_TOKEN: this.bridgeToken(session.id) },
         toolTimeoutSec: 60 * 60,
         approve: 'all',
       },
@@ -1114,7 +1115,7 @@ export class Runtime {
       const name = String(args.tool ?? '');
       const def = agent.tools.find((t) => t.name === name);
       if (!def) throw new Error(`Unknown tool ${name}`);
-      await this.requireApproval(session, agent, name, (args.input ?? {}) as Record<string, unknown>, def.approval, signal);
+      await this.requireApproval(session, agent, name, (args.input ?? {}) as Record<string, unknown>, def.approval, signal, def);
       return 'approved';
     }
 
@@ -1249,24 +1250,34 @@ export class Runtime {
     input: Record<string, unknown>,
     toolDefault: 'user-approval' | undefined,
     signal: AbortSignal,
+    tool?: Pick<LoadedTool, 'approvalTitle' | 'alwaysAsk'>,
   ): Promise<void> {
-    const decision = agent.def.approval?.({ toolName, input, agent: agent.name }) ?? toolDefault;
+    const decision = agent.def.approval?.({ toolName, input, agent: agent.name }) ?? toolDefault ?? (tool?.alwaysAsk ? 'user-approval' : undefined);
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
     // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.
     const key = `${agent.name}:${toolName}`;
     if (signal.aborted) throw new Error('The call was cancelled.');
+    const alwaysAsk = tool?.alwaysAsk === true;
     const allowed = this.store.allowedTools(session.threadId);
-    if (allowed.includes(key) || allowed.includes('*')) return;
+    if (!alwaysAsk && (allowed.includes(key) || allowed.includes('*'))) return;
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
     if (shown.length > 3000) shown = shown.slice(0, 2999) + '…';
+    let title = `${agent.label} wants to run ${toolName}`;
+    try {
+      const custom = tool?.approvalTitle?.(input)?.replace(/\s+/g, ' ').trim();
+      if (custom) title = `${agent.label}: ${custom.length > 200 ? custom.slice(0, 199) + '…' : custom}`;
+    } catch {
+      // A broken title must not block the approval; the default stays.
+    }
     const item = this.addInbox(
       session,
       'approval',
-      `${agent.label} wants to run ${toolName}`,
-      `${agent.label} wants to run \`${toolName}\` with:\n\n\`\`\`json\n${shown}\n\`\`\`\n\nApprove or deny.`,
+      title,
+      `${agent.label} wants to run \`${toolName}\`${alwaysAsk ? ' (asks every time)' : ''} with:\n\n\`\`\`json\n${shown}\n\`\`\`\n\nApprove or deny.`,
+      alwaysAsk ? { askEveryTime: true } : {},
     );
     this.emit(session, turnId, { type: 'approval', inboxId: item.id, toolName, input });
     this.refreshThread(session.threadId);
@@ -1276,7 +1287,7 @@ export class Runtime {
         this.approvals.delete(item.id);
         resolve(ok);
       };
-      this.approvals.set(item.id, { settle, threadId: session.threadId, key });
+      this.approvals.set(item.id, { settle, threadId: session.threadId, key, alwaysAsk });
       if (signal.aborted) settle(false);
       else signal.addEventListener('abort', () => settle(false), { once: true });
     });
@@ -1307,7 +1318,7 @@ export class Runtime {
     const resolved = this.resolveInbox(inboxId) ?? item;
     if (approved && always) {
       for (const [id, other] of [...this.approvals]) {
-        if (other.threadId !== waiter.threadId || (always === 'tool' && other.key !== waiter.key)) continue;
+        if (other.threadId !== waiter.threadId || other.alwaysAsk || (always === 'tool' && other.key !== waiter.key)) continue;
         if (!this.approvals.has(id)) continue; // settled meanwhile
         other.settle(true);
         this.resolveInbox(id);
@@ -1643,4 +1654,15 @@ export class Runtime {
 
 function docFormat(v: unknown): DocFormat {
   return v === 'html' || v === 'concepts' ? v : 'markdown';
+}
+
+/** The Crew environment values an agent's own tools ask for (ToolDefinition.env), where set. */
+function toolEnv(agent: LoadedAgent): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of new Set(agent.tools.flatMap((t) => t.env))) {
+    if (name.startsWith('CREW_')) continue;
+    const v = process.env[name];
+    if (v) out[name] = v;
+  }
+  return out;
 }

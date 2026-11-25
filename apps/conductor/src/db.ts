@@ -215,7 +215,7 @@ function toInbox(r: Row): InboxItem {
     role: (r.role as string | null) ?? '',
     previewId: (r.preview_id as string | null) ?? undefined,
     url: (r.url as string | null) ?? undefined,
-    ...(r.choices ? (JSON.parse(r.choices as string) as Pick<InboxItem, 'options' | 'recommended' | 'multiSelect'>) : {}),
+    ...(r.choices ? (JSON.parse(r.choices as string) as Pick<InboxItem, 'options' | 'recommended' | 'multiSelect' | 'askEveryTime'>) : {}),
     title: r.title as string,
     body: r.body as string,
     status: r.status as InboxItem['status'],
@@ -549,7 +549,11 @@ export class Store {
     this.run(
       'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, url, choices, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
       i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null, i.url ?? null,
-      i.options?.length ? JSON.stringify({ options: i.options, recommended: i.recommended, multiSelect: i.multiSelect }) : null,
+      i.options?.length
+        ? JSON.stringify({ options: i.options, recommended: i.recommended, multiSelect: i.multiSelect })
+        : i.askEveryTime
+          ? JSON.stringify({ askEveryTime: true })
+          : null,
       i.title, i.body, i.status, i.createdAt,
     );
   }

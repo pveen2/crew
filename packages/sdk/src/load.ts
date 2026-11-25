@@ -47,6 +47,9 @@ export interface LoadedTool {
   file: string;
   description: string;
   approval?: 'user-approval';
+  approvalTitle?: (input: Record<string, unknown>) => string | undefined;
+  alwaysAsk?: boolean;
+  env: string[];
 }
 
 export interface LoadedMemory {
@@ -172,7 +175,15 @@ async function loadTools(dir: string): Promise<LoadedTool[]> {
     if (CREW_TOOL_NAMES.includes(name)) throw new Error(`${file}: "${name}" is one of Crew's own tools; pick another name`);
     const def = (await importDefault(file)) as ToolDefinition;
     if (kindOf(def) !== 'tool') throw new Error(`${file}: export default defineTool({...})`);
-    tools.push({ name, file, description: def.description, approval: def.approval });
+    tools.push({
+      name,
+      file,
+      description: def.description,
+      approval: def.approval,
+      approvalTitle: def.approvalTitle as LoadedTool['approvalTitle'],
+      alwaysAsk: def.alwaysAsk === true,
+      env: (def.env ?? []).filter((k) => typeof k === 'string' && /^[A-Z][A-Z0-9_]*$/.test(k)),
+    });
   }
   return tools;
 }
