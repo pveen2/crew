@@ -209,6 +209,24 @@ export function questionOptions(args: Record<string, unknown>): { options?: Ques
   return { options, recommended, ...(args.multiSelect === true ? { multiSelect: true } : {}) };
 }
 
+/**
+ * Why an ask_owner question would show badly as a card, or null. Agents tend
+ * to write choices into the text ("(A) … (B) …") and tack on a second
+ * question, which leaves the owner a wall of bold text and no buttons. The
+ * error goes back to the agent, which asks again properly.
+ */
+export function questionProblem(question: string, hasOptions: boolean): string | null {
+  const inlineChoices = /(^|\s)\(?[A-D1-4][).:]\s/m;
+  const listed = (question.match(/(^|\s)\(?[A-D1-4][).:]\s/gm) ?? []).length;
+  if (!hasOptions && inlineChoices.test(question) && listed >= 2)
+    return 'Put the choices in options (2–4, each a short label plus an optional one-line detail), not in the question text. Ask again with just the question.';
+  if ((question.match(/\?/g) ?? []).length > 1)
+    return 'Ask one question per call. Ask the most important one now and the next after the owner answers.';
+  if (question.length > 240)
+    return 'Keep the question to one short sentence (under 240 characters). Move prices, consequences and context into the options\' detail lines.';
+  return null;
+}
+
 function snippet(text: string, max = 120): string {
   const s = text.replace(/\s+/g, ' ').trim();
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
@@ -1246,6 +1264,8 @@ export class Runtime {
     const question = String(args.question ?? '').trim();
     if (!question) throw new Error('Write the question.');
     const { options, recommended, multiSelect } = questionOptions(args);
+    const problem = questionProblem(question, Boolean(options));
+    if (problem) throw new Error(`Not asked: ${problem}`);
     const item = this.addInbox(session, 'needs_you', question.split('\n')[0]!.slice(0, 140), question, { options, recommended, multiSelect });
     this.emit(session, this.running.get(session.id)?.turnId ?? null, {
       type: 'needs_you',
