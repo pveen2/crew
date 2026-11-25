@@ -205,6 +205,8 @@ export interface InboxItem {
   multiSelect?: boolean;
   /** pull_request: the pull request on GitHub. */
   url?: string;
+  /** approval: the tool asks every time (alwaysAsk); "always allow" does not apply. */
+  askEveryTime?: boolean;
   status: 'open' | 'resolved';
   createdAt: number;
 }

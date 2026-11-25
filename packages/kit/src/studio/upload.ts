@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, extname, join, sep } from 'node:path';
 import { z } from 'zod';
 import { defineTool } from '@crew/sdk/define';
@@ -38,13 +38,46 @@ function sessionFile(rel: string): string {
   const root = realpathSync(cwd);
   const target = join(root, rel);
   const real = existsSync(target) ? realpathSync(target) : null;
-  for (const folder of FOLDERS) {
+  if (real && insideSession(root, real)) return real;
+  throw new Error(`${rel}: not a file in drafts/ or attachments/.`);
+}
+
+/** `real` (a path without links) is a file under a real drafts/ or attachments/ in `root`. */
+function insideSession(root: string, real: string): boolean {
+  return FOLDERS.some((folder) => {
     const base = join(root, folder);
     const st = lstatSync(base, { throwIfNoEntry: false });
-    if (!st?.isDirectory()) continue; // missing, or a link: never trusted
-    if (real && real.startsWith(base + sep) && statSync(real).isFile()) return real;
+    // Missing, or a link: never trusted.
+    return st?.isDirectory() === true && real.startsWith(base + sep) && statSync(real).isFile();
+  });
+}
+
+/**
+ * Reads a checked file through one open handle, then checks again that the
+ * path still has no links, still lies inside the session and is still the file
+ * that was opened. A file swapped between the check and the read is refused.
+ */
+function readChecked(rel: string, path: string): Buffer {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const opened = fstatSync(fd);
+    const root = realpathSync(process.cwd());
+    const now = statSync(path, { throwIfNoEntry: false });
+    if (
+      !opened.isFile() ||
+      realpathSync(path) !== path ||
+      !insideSession(root, path) ||
+      !now ||
+      now.ino !== opened.ino ||
+      now.dev !== opened.dev
+    ) {
+      throw new Error(`${rel} changed while it was being read; nothing was uploaded for it.`);
+    }
+    if (opened.size > MAX_BYTES) throw new Error(`${rel} is over 8 MB.`);
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
   }
-  throw new Error(`${rel}: not a file in drafts/ or attachments/.`);
 }
 
 interface Uploaded {
@@ -90,7 +123,10 @@ export const studioUploadTool = (opts: { url: string; name?: string }) => {
         const size = statSync(path).size;
         if (!size) throw new Error(`${rel} is empty.`);
         if (size > MAX_BYTES) throw new Error(`${rel} is over 8 MB: upload it in ${studio} itself.`);
-        return { rel, path, ...type };
+        // Read now, through the checked handle: later changes to the path do not matter.
+        const bytes = readChecked(rel, path);
+        if (!bytes.length) throw new Error(`${rel} is empty.`);
+        return { rel, path, bytes, ...type };
       });
       if (replace && (checked.length !== 1 || checked[0]!.kind === 'image')) {
         throw new Error('replace works for one video or document at a time; images always get a new link.');
@@ -99,7 +135,7 @@ export const studioUploadTool = (opts: { url: string; name?: string }) => {
       const endpoint = studioFromEnv(opts.url);
       const uploaded: Uploaded[] = [];
       for (const f of checked) {
-        const args = { filename: basename(f.path), contentType: f.contentType, data: readFileSync(f.path).toString('base64'), ...(replace ? { replace } : {}) };
+        const args = { filename: basename(f.path), contentType: f.contentType, data: f.bytes.toString('base64'), ...(replace ? { replace } : {}) };
         try {
           const result = await callStudio(endpoint, f.kind === 'image' ? 'upload_image' : 'upload_file', args);
           uploaded.push({ file: f.rel, kind: f.kind, ...pick(result, f.kind === 'image' ? 'output' : 'file') });

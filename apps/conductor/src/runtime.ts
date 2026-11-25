@@ -321,7 +321,7 @@ export class Runtime {
     kind: InboxKind,
     title: string,
     body: string,
-    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url'> = {},
+    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url' | 'askEveryTime'> = {},
   ): InboxItem {
     const item: InboxItem = {
       id: newId('i'),
@@ -1277,6 +1277,7 @@ export class Runtime {
       'approval',
       title,
       `${agent.label} wants to run \`${toolName}\`${alwaysAsk ? ' (asks every time)' : ''} with:\n\n\`\`\`json\n${shown}\n\`\`\`\n\nApprove or deny.`,
+      alwaysAsk ? { askEveryTime: true } : {},
     );
     this.emit(session, turnId, { type: 'approval', inboxId: item.id, toolName, input });
     this.refreshThread(session.threadId);
