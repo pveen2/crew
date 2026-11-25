@@ -102,7 +102,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
     if (!el || !mention) return;
     const caret = el.selectionStart;
     const insert = `@${o.value} `;
-    const after = value.slice(caret).replace(/^[\w-]*\s?/, '');
+    // The rest of the word the caret was in, and one space after it (never a newline).
+    const after = value.slice(caret).replace(/^[\w-]* ?/, '');
     onChange(value.slice(0, mention.start) + insert + after);
     setMention(null);
     const at = mention.start + insert.length;
@@ -111,6 +112,10 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       el.setSelectionRange(at, at);
     });
   };
+  // Keep the highlighted agent in view while arrowing through a long list.
+  useEffect(() => {
+    if (menuOpen) document.getElementById(`${menuId}-${active}`)?.scrollIntoView({ block: 'nearest' });
+  }, [menuOpen, active]); // eslint-disable-line react-hooks/exhaustive-deps
   const menuId = useMemo(() => `cr-mentions-${Math.random().toString(36).slice(2, 8)}`, []);
   // Fit the box to its text: on every change, and whenever its width changes
   // (a pane resized or a preview opened), since narrower means more lines.
@@ -148,20 +153,20 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       onBlur={() => setMention(null)}
       onPaste={onPaste}
       enterKeyHint={enterSends ? 'send' : 'enter'}
-      role={mentions ? 'combobox' : undefined}
       aria-autocomplete={mentions ? 'list' : undefined}
-      aria-expanded={mentions ? menuOpen : undefined}
       aria-controls={menuOpen ? menuId : undefined}
       aria-activedescendant={menuOpen ? `${menuId}-${active}` : undefined}
       onKeyDown={(e) => {
-        if (menuOpen && !e.nativeEvent.isComposing) {
+        // keyCode 229: Safari's Return that commits an IME candidate, sent with isComposing false.
+        if (menuOpen && !e.nativeEvent.isComposing && e.nativeEvent.keyCode !== 229) {
           if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             e.preventDefault();
             const n = matches.length;
             setActive((i) => (i + (e.key === 'ArrowDown' ? 1 : n - 1)) % n);
             return;
           }
-          if ((e.key === 'Enter' && !e.metaKey) || e.key === 'Tab') {
+          // Plain Enter or Tab picks; Shift+Enter still adds a line and Shift+Tab moves focus back.
+          if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && !e.metaKey && !e.altKey && !e.ctrlKey) {
             e.preventDefault();
             pick(matches[active] ?? matches[0]!);
             return;
@@ -182,7 +187,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
   );
 
   const menu = menuOpen ? (
-    <div className="cr-mention-menu" id={menuId} role="listbox" aria-label="Agents">
+    <div className={cx('cr-mention-menu', size === 'tall' && 'cr-mention-menu--below')} id={menuId} role="listbox" aria-label="Agents">
       {matches.map((o, i) => (
         <div
           key={o.value}
@@ -191,10 +196,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
           aria-selected={i === active}
           className={cx('cr-mention-menu__item', i === active && 'cr-mention-menu__item--active')}
           // Keep the focus (and the caret) in the text while picking with the mouse.
-          onMouseDown={(e) => {
-            e.preventDefault();
-            pick(o);
-          }}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => pick(o)}
           onMouseEnter={() => setActive(i)}
         >
           {o.prefix}

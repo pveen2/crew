@@ -699,7 +699,8 @@ type SessionOption = ReturnType<typeof sessionOptions>[number];
 /**
  * Exact match of a known agent name right after "@", ending at a space or the
  * end of the text. The longest name wins ("@store manager" over "@store").
- * Several sessions of one role: the one you are talking to, otherwise ask.
+ * Several sessions of one role: the one whose label it is ("@developer-2"),
+ * else the one you are talking to, otherwise ask.
  */
 export function resolveMention(
   body: string,
@@ -723,23 +724,27 @@ export function resolveMention(
   }
   const rest = body.slice(1 + best.key.length).trim();
   if (!rest) return { error: 'Write a message after the @ name.' };
-  const pick = best.matches.length === 1 ? best.matches[0] : best.matches.find((m) => m.value === currentSessionId);
+  const byLabel = best.matches.filter((m) => [m.label.toLowerCase(), m.label.toLowerCase().replace(/\s+/g, '-')].includes(best!.key));
+  const pick =
+    best.matches.length === 1 ? best.matches[0] : byLabel.length === 1 ? byLabel[0] : best.matches.find((m) => m.value === currentSessionId);
   if (!pick) return { error: `There are several ${best.matches[0]!.label} sessions here. Pick one with the Talk to menu.` };
   return { sessionId: pick.value, rest };
 }
 
 /**
  * "@developer …" in a thread the lead owns: which agent it names. The message
- * itself stays with the lead, who calls that specialist (the longest name wins).
+ * itself stays with the lead, who calls that specialist. The longest name wins;
+ * at equal length an agent's name beats another agent's label (what the menu writes).
  */
 export function mentionedRole(body: string, roles: Array<{ name: string; label: string }>): { role: string; rest: string } | { error: string } {
   const lower = body.toLowerCase();
-  let best: { key: string; role: string } | undefined;
+  let best: { key: string; role: string; byName: boolean } | undefined;
   for (const r of roles) {
     for (const key of new Set([r.name.toLowerCase(), r.label.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')])) {
       const end = 1 + key.length;
       if (!lower.startsWith('@' + key) || (lower.length > end && !/\s/.test(lower[end]!))) continue;
-      if (!best || key.length > best.key.length) best = { key, role: r.name };
+      const byName = key === r.name.toLowerCase();
+      if (!best || key.length > best.key.length || (key.length === best.key.length && byName && !best.byName)) best = { key, role: r.name, byName };
     }
   }
   if (!best) {
@@ -749,6 +754,12 @@ export function mentionedRole(body: string, roles: Array<{ name: string; label: 
   const rest = body.slice(1 + best.key.length).trim();
   if (!rest) return { error: 'Write a message after the @ name.' };
   return { role: best.role, rest };
+}
+
+/** An "@specialist" anywhere in the text (after a space), by name or dashed label. */
+function mentionsSpecialist(body: string, roles: Array<{ name: string; label: string; isLead: boolean }>): boolean {
+  const keys = new Set(roles.filter((r) => !r.isLead).flatMap((r) => [r.name.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')]));
+  return [...body.toLowerCase().matchAll(/(?:^|\s)@([\w-]+)/g)].some((m) => keys.has(m[1]!));
 }
 
 function ThreadComposer({ threadId, session, data, rootId }: { threadId: string; session: Session; data: ThreadData; rootId: string }) {
@@ -772,6 +783,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
     () => (leadOwns ? roles.filter((r) => r.isLead || !benched?.includes(r.name)).sort((a, b) => Number(b.isLead) - Number(a.isLead)) : []),
     [leadOwns, roles, benched],
   );
+  // Typed by hand, a switched-off specialist still goes to the lead, who says it is off.
+  const allNames = useMemo(() => (leadOwns ? roles : []), [leadOwns, roles]);
   const mentions = useMemo<MentionOption[]>(
     () =>
       leadOwns
@@ -793,13 +806,16 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
     let target = session;
     if (body.startsWith('@') && leadOwns) {
       // "@developer …" goes to the lead in the main thread, word for word; the lead calls the developer.
-      const named = mentionedRole(body, team);
+      const named = mentionedRole(body, allNames);
       if ('error' in named) {
         setError(named.error);
         return;
       }
       target = root;
-      if (team.find((r) => r.name === named.role)?.isLead) body = named.rest;
+      if (roles.find((r) => r.name === named.role)?.isLead) body = named.rest;
+    } else if (leadOwns && session.id !== rootId && mentionsSpecialist(body, roles)) {
+      // "Please ask @developer …" from a stepped-in session also goes to the lead.
+      target = root;
     } else if (body.startsWith('@')) {
       // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
       const resolved = resolveMention(body, options, session.id);

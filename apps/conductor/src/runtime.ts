@@ -603,8 +603,9 @@ export class Runtime {
       question = item;
     } else {
       // A plain reply while exactly one question is open answers that question.
+      // Not "@developer …": that hands new work to a specialist, it is not an answer.
       const open = this.store.openInboxOfThread(threadId, ['needs_you']).filter((i) => i.sessionId === session.id);
-      if (open.length === 1) question = open[0];
+      if (open.length === 1 && !text.trim().startsWith('@')) question = open[0];
     }
     if (question) this.resolveInbox(question.id);
     const answers = question?.id;

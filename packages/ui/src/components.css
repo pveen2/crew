@@ -903,6 +903,11 @@
   background: var(--cr-color-bg-surface);
   box-shadow: var(--cr-shadow-card-elevated);
 }
+/* The tall composer sits at the top of New thread: open downwards, not off the page. */
+.cr-mention-menu--below {
+  top: calc(100% + var(--cr-space-100));
+  bottom: auto;
+}
 .cr-mention-menu__item {
   display: flex;
   align-items: center;
