@@ -8,19 +8,69 @@
 // - DataForSEO Labs (a domain's rankings, competitors): a few languages per
 //   country only, e.g. Netherlands = Dutch, United Kingdom = English.
 //
-// Every call costs money. CREW_DATAFORSEO_MAX_COST (USD) caps what one session
-// spends; calls are refused once it is reached.
+// Every call costs money. CREW_DATAFORSEO_MAX_COST (USD) caps what one agent
+// session spends. The conductor starts this server again for every turn, so the
+// running total lives in a file per session (CREW_SESSION_ID) in the temp
+// folder. Calls run one at a time, and a call is refused when its expected
+// cost would go over the cap.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { z } from 'zod';
-import { callDataForSeo, dataForSeoFromEnv } from './client.ts';
+import { callDataForSeo, dataForSeoFromEnv, DataForSeoError, type TaskResult } from './client.ts';
 
 const LOCATION = process.env.CREW_DATAFORSEO_LOCATION?.trim() || 'Netherlands';
 const LANGUAGE = process.env.CREW_DATAFORSEO_LANGUAGE?.trim() || 'en';
 const MAX_COST = Number(process.env.CREW_DATAFORSEO_MAX_COST) > 0 ? Number(process.env.CREW_DATAFORSEO_MAX_COST) : 2;
 
-let spent = 0;
+const SPEND_DIR = join(tmpdir(), 'crew-dataforseo');
+const SPEND_FILE = join(SPEND_DIR, `${(process.env.CREW_SESSION_ID?.trim() || `pid-${process.pid}`).replace(/[^\w.-]/g, '_')}.json`);
+
+function readSpent(): number {
+  try {
+    return Number(JSON.parse(readFileSync(SPEND_FILE, 'utf8')).spent) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+function book(cost: number): number {
+  const spent = readSpent() + cost;
+  mkdirSync(SPEND_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(SPEND_FILE, JSON.stringify({ spent }), { mode: 0o600 });
+  return spent;
+}
+
+// One call at a time, so parallel calls can't all pass the budget check.
+let queue: Promise<unknown> = Promise.resolve();
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn);
+  queue = next.catch(() => {});
+  return next;
+}
+
+/** A paid call within the session budget. `estimate` is the expected cost in USD. */
+function paid(path: string, task: Item, estimate: number): Promise<TaskResult<Item> & { spent: number }> {
+  return serial(async () => {
+    const before = readSpent();
+    if (before + estimate > MAX_COST) {
+      throw new Error(
+        `Refused: this session has spent $${before.toFixed(2)} on DataForSEO and this call costs about $${estimate.toFixed(3)}; the limit is $${MAX_COST}. ` +
+          'Report what you have, or ask the owner to continue in a new thread.',
+      );
+    }
+    try {
+      const r = await callDataForSeo<Item>(dataForSeoFromEnv(), path, task);
+      return { ...r, spent: book(r.cost) };
+    } catch (err) {
+      if (err instanceof DataForSeoError && err.cost) book(err.cost);
+      throw err;
+    }
+  });
+}
 
 type Item = Record<string, any>;
 
@@ -40,10 +90,7 @@ const monthly = (m: unknown) =>
   Array.isArray(m) ? m.slice(0, 12).map((x: Item) => `${x.year}-${String(x.month).padStart(2, '0')}: ${x.search_volume ?? '?'}`) : null;
 
 /** One live call within the session budget, with location and language filled in. */
-async function run(path: string, task: Item, place: { location?: string; language?: string }) {
-  if (spent >= MAX_COST) {
-    throw new Error(`Refused: this session has spent $${spent.toFixed(2)} on DataForSEO, the limit is $${MAX_COST}. Report what you have, or ask the owner to continue in a new thread.`);
-  }
+async function run(path: string, task: Item, place: { location?: string; language?: string }, estimate: number) {
   const location = place.location?.trim() || LOCATION;
   const full = {
     ...task,
@@ -51,9 +98,11 @@ async function run(path: string, task: Item, place: { location?: string; languag
     language_code: place.language?.trim() || LANGUAGE,
   };
   try {
-    const { result, cost } = await callDataForSeo<Item>(dataForSeoFromEnv(), path, full);
-    spent += cost;
-    return { result, meta: { location, language: full.language_code, cost_usd: round(cost, 4), session_spent_usd: round(spent, 4), session_limit_usd: MAX_COST } };
+    const { result, cost, warning, spent } = await paid(path, full, estimate);
+    return {
+      result,
+      meta: { location, language: full.language_code, ...(warning ? { warning } : {}), cost_usd: round(cost, 4), session_spent_usd: round(spent, 4), session_limit_usd: MAX_COST },
+    };
   } catch (err) {
     const msg = String((err as Error)?.message ?? err);
     if (path.startsWith('dataforseo_labs/') && /language_code|location/.test(msg)) {
@@ -62,6 +111,9 @@ async function run(path: string, task: Item, place: { location?: string; languag
     throw err;
   }
 }
+
+/** The result's link, unless it is one of Google's redirect links. */
+const realUrl = (url: unknown) => (typeof url === 'string' && !/^https?:\/\/(www\.)?google\.[a-z.]+\/(goto|url)\b/.test(url) ? url : null);
 
 const place = {
   location: z.string().optional().describe(`Country or location name ("Netherlands", "Belgium", "United Kingdom") or numeric location code. Default: ${LOCATION}.`),
@@ -76,7 +128,7 @@ server.registerTool(
   {
     description:
       'Live Google results for one search: who ranks (organic, in order), plus the AI overview, People also ask and other features on the page. ' +
-      'Organic results show the site and page path (Google hides the real link). About $0.002 per call.',
+      'Organic results show the site, and the page URL where DataForSEO resolved it (otherwise Google\'s breadcrumb path). About $0.004-0.02 per call, depending on depth.',
     inputSchema: {
       keyword: z.string().min(1).describe('The search, exactly as people type it'),
       ...place,
@@ -87,12 +139,17 @@ server.registerTool(
   },
   async ({ keyword, location, language, depth, device }) => {
     try {
-      const { result, meta } = await run('serp/google/organic/live/advanced', { keyword, depth: depth ?? 20, device: device ?? 'desktop' }, { location, language });
+      const { result, meta } = await run(
+        'serp/google/organic/live/advanced',
+        { keyword, depth: depth ?? 20, device: device ?? 'desktop', load_async_ai_overview: true },
+        { location, language },
+        0.002 * Math.ceil((depth ?? 20) / 10) + 0.002,
+      );
       const r = result[0] ?? {};
       const items = (r.items ?? []).map((i: Item) => {
         const base = { rank: i.rank_absolute, type: i.type };
         if (i.type === 'organic') {
-          return { ...base, organic_rank: i.rank_group, site: i.website_name ?? null, page: i.breadcrumb ?? i.url, title: i.title, description: clip(i.description, 240) };
+          return { ...base, organic_rank: i.rank_group, site: i.website_name ?? i.domain ?? null, page: realUrl(i.url) ?? i.breadcrumb ?? null, title: i.title, description: clip(i.description, 240) };
         }
         if (i.type === 'ai_overview') {
           const text = typeof i.markdown === 'string' ? i.markdown.replace(/!\[[^\]]*\]\([^)]*\)\n?/g, '').replace(/\(https:\/\/google\.com\/goto[^)]*\)/g, '') : null;
@@ -123,7 +180,7 @@ server.registerTool(
   },
   async ({ keywords, location, language }) => {
     try {
-      const { result, meta } = await run('keywords_data/google_ads/search_volume/live', { keywords }, { location, language });
+      const { result, meta } = await run('keywords_data/google_ads/search_volume/live', { keywords }, { location, language }, 0.09);
       const rows = result.map((k) => ({
         keyword: k.keyword,
         search_volume: k.search_volume ?? null,
@@ -131,7 +188,7 @@ server.registerTool(
         cpc_usd: round(k.cpc),
         monthly: monthly(k.monthly_searches),
       }));
-      return asText({ ...meta, keywords: rows });
+      return asText({ ...meta, search_volume_is: 'average monthly searches over the last 12 months (Google Ads)', keywords: rows });
     } catch (err) {
       return asError(err);
     }
@@ -153,13 +210,13 @@ server.registerTool(
   },
   async ({ keywords, location, language, limit }) => {
     try {
-      const { result, meta } = await run('keywords_data/google_ads/keywords_for_keywords/live', { keywords, sort_by: 'search_volume' }, { location, language });
+      const { result, meta } = await run('keywords_data/google_ads/keywords_for_keywords/live', { keywords, sort_by: 'search_volume' }, { location, language }, 0.09);
       const rows = result
         .filter((k) => k.keyword)
         .sort((a, b) => (b.search_volume ?? 0) - (a.search_volume ?? 0))
         .slice(0, limit ?? 50)
         .map((k) => ({ keyword: k.keyword, search_volume: k.search_volume ?? null, competition: k.competition ?? null, cpc_usd: round(k.cpc) }));
-      return asText({ ...meta, ideas_found: result.length, ideas: rows });
+      return asText({ ...meta, search_volume_is: 'average monthly searches over the last 12 months (Google Ads)', ideas_found: result.length, ideas: rows });
     } catch (err) {
       return asError(err);
     }
@@ -185,6 +242,7 @@ server.registerTool(
         'dataforseo_labs/google/ranked_keywords/live',
         { target, limit: limit ?? 50, order_by: ['keyword_data.keyword_info.search_volume,desc'] },
         { location, language },
+        0.012 + 0.0001 * (limit ?? 50),
       );
       const r = result[0] ?? {};
       const rows = (r.items ?? []).map((i: Item) => {
@@ -197,6 +255,8 @@ server.registerTool(
           type: s.type ?? null,
           url: s.url ?? null,
           est_traffic: round(s.etv, 1),
+          // Labs checks each ranking every few weeks or months: this is when.
+          ranking_checked: String(i.ranked_serp_element?.last_updated_time ?? '').slice(0, 10) || null,
         };
       });
       return asText({ target, ...meta, total_keywords: r.total_count ?? 0, keywords: rows });
@@ -221,7 +281,7 @@ server.registerTool(
   },
   async ({ target, location, language, limit }) => {
     try {
-      const { result, meta } = await run('dataforseo_labs/google/competitors_domain/live', { target, limit: (limit ?? 20) + 1 }, { location, language });
+      const { result, meta } = await run('dataforseo_labs/google/competitors_domain/live', { target, limit: (limit ?? 20) + 1 }, { location, language }, 0.012 + 0.0001 * ((limit ?? 20) + 1));
       const r = result[0] ?? {};
       const bare = target.replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '');
       const rows = (r.items ?? [])
@@ -251,17 +311,18 @@ server.registerTool(
   },
   async ({ url }) => {
     try {
-      if (spent >= MAX_COST) throw new Error(`Refused: this session has spent $${spent.toFixed(2)} on DataForSEO, the limit is $${MAX_COST}.`);
-      const { result, cost } = await callDataForSeo<Item>(dataForSeoFromEnv(), 'on_page/instant_pages', { url });
-      spent += cost;
+      const { result, cost, spent } = await paid('on_page/instant_pages', { url }, 0.0005);
       const p = result[0]?.items?.[0];
       if (!p) return asError(`DataForSEO could not load ${url}.`);
       const m = p.meta ?? {};
-      // Checks that are good news when true; every other true check is a problem.
-      const good = new Set(['is_https', 'is_www', 'canonical', 'has_html_doctype', 'has_meta_title', 'has_micromarkup', 'from_sitemap', 'is_redirect', 'no_image_title']);
-      const problems = Object.entries(p.checks ?? {})
-        .filter(([k, v]) => v === true && !good.has(k) && !k.startsWith('seo_friendly_url'))
-        .map(([k]) => k);
+      // Checks that are good news when true: false is the problem ("not_is_https").
+      const good = new Set(['is_https', 'canonical', 'has_html_doctype', 'seo_friendly_url']);
+      // Neutral facts, or not an SEO problem (an image title attribute; alt text is no_image_alt).
+      const neutral = new Set(['is_www', 'has_meta_title', 'has_micromarkup', 'from_sitemap', 'is_redirect', 'no_image_title']);
+      const problems = Object.entries(p.checks ?? {}).flatMap(([k, v]) => {
+        if (good.has(k) || k.startsWith('seo_friendly_url_')) return v === false ? [`not_${k}`] : [];
+        return v === true && !neutral.has(k) ? [k] : [];
+      });
       return asText({
         url: p.url,
         status: p.status_code,

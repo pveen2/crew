@@ -333,8 +333,8 @@ Close thread also drop queued turns, and say so in the thread.
   tools over DataForSEO's live API (Google results, keyword volumes and ideas,
   a domain's rankings and competitors, on-page checks), signed in with
   `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`. Every call costs cents, so one
-  agent session may spend at most `maxCostPerSession` (USD, default 2); after
-  that the tools refuse.
+  agent session may spend at most `maxCostPerSession` (USD, default 2, kept
+  across the session's turns); a call that would go over it is refused.
 - Meta ads (`@crew/kit/meta`): the connection is a local MCP server that
   forwards to Meta's hosted Ads MCP server (`https://mcp.facebook.com/ads`)
   with `META_ACCESS_TOKEN`, and offers only the reading tools in

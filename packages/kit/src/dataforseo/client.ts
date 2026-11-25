@@ -25,6 +25,8 @@ export function dataForSeoFromEnv(): DataForSeoAuth {
 export interface TaskResult<T = Record<string, unknown>> {
   result: T[];
   cost: number;
+  /** Set when DataForSEO returned results with a task error. */
+  warning?: string;
 }
 
 /** POST one task to a live endpoint, e.g. `serp/google/organic/live/advanced`. */
@@ -52,6 +54,20 @@ export async function callDataForSeo<T = Record<string, unknown>>(
   if (body.status_code !== 20000) throw new Error(`DataForSEO: ${body.status_message ?? body.status_code}`);
   const t = body.tasks?.[0];
   if (!t) throw new Error('DataForSEO: no task in the response');
-  if (t.status_code !== 20000) throw new Error(`DataForSEO: ${t.status_message ?? t.status_code}`);
-  return { result: t.result ?? [], cost: t.cost ?? 0 };
+  const cost = t.cost ?? 0;
+  if (t.status_code !== 20000) {
+    // Some task errors still carry billed, usable results (e.g. a partial SERP): keep both.
+    if (t.result?.length) return { result: t.result, cost, warning: `${t.status_message ?? t.status_code} (results may be incomplete)` };
+    throw new DataForSeoError(`DataForSEO: ${t.status_message ?? t.status_code}`, cost);
+  }
+  return { result: t.result ?? [], cost };
+}
+
+/** A failed task, with what DataForSEO charged for it (often 0). */
+export class DataForSeoError extends Error {
+  readonly cost: number;
+  constructor(message: string, cost: number) {
+    super(message);
+    this.cost = cost;
+  }
 }
