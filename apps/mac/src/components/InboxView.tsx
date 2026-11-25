@@ -1,7 +1,7 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { InboxItem } from '@crew/protocol';
 import { BlockStack, Button, Card, Disclosure, Icon, InlineStack, Panel, PanelHeader, Text, cx, type IconName } from '@crew/ui';
-import { decideApproval, ensureThreads, markRead, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
+import { decideApproval, ensureThreads, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
 import { Markdown, RoleFace, age, useNow, useRoleLabel } from './common';
 import { QuestionAnswer } from './QuestionAnswer';
 
@@ -152,14 +152,7 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
                 </Button>
               </>
             ) : item.kind === 'pull_request' ? (
-              <>
-                <Button onClick={() => void resolveInbox(item.id)}>Done</Button>
-                {item.url ? (
-                  <Button variant="primary" icon="arrowUpRight" onClick={() => openExternal(item.url!)}>
-                    Review on GitHub
-                  </Button>
-                ) : null}
-              </>
+              <PullRequestActions item={item} />
             ) : item.kind === 'interrupted' ? (
               <>
                 <Button onClick={() => void resolveInbox(item.id)}>Dismiss</Button>
@@ -174,5 +167,50 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
         )}
       </BlockStack>
     </Card>
+  );
+}
+
+/** Done, Review on GitHub, and Merge: a second click confirms, since a merge lands on the base branch. */
+function PullRequestActions({ item }: { item: InboxItem }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!confirming) return;
+    const t = window.setTimeout(() => setConfirming(false), 5000);
+    return () => window.clearTimeout(t);
+  }, [confirming]);
+  const merge = async () => {
+    if (!confirming) return setConfirming(true);
+    setBusy(true);
+    setError('');
+    try {
+      await mergePullRequest(item.id);
+    } catch (err) {
+      setError((err as Error).message || 'Could not merge.');
+      setConfirming(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Button onClick={() => void resolveInbox(item.id)}>Done</Button>
+      {item.url ? (
+        <>
+          <Button icon="arrowUpRight" onClick={() => openExternal(item.url!)}>
+            Review on GitHub
+          </Button>
+          <Button variant="primary" icon="check" disabled={busy} onClick={() => void merge()}>
+            {busy ? 'Merging…' : confirming ? 'Confirm merge' : 'Merge'}
+          </Button>
+        </>
+      ) : null}
+      {error ? (
+        <Text variant="bodySm" tone="critical" role="alert" className="inbox-card-error">
+          {error}
+        </Text>
+      ) : null}
+    </>
   );
 }

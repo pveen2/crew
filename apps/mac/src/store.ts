@@ -955,6 +955,11 @@ export async function resolveInbox(id: string): Promise<void> {
   await api('POST', `/api/inbox/${id}/resolve`);
 }
 
+/** Merge a Developer's pull request on GitHub; the item leaves the Inbox. */
+export async function mergePullRequest(id: string): Promise<void> {
+  await api('POST', `/api/inbox/${id}/merge`);
+}
+
 /** `always`: also allow this agent's tool ('tool') or every tool ('all') for the rest of the thread. */
 export async function decideApproval(id: string, approved: boolean, always?: 'tool' | 'all'): Promise<void> {
   const action = !approved ? 'deny' : always === 'tool' ? 'allow' : always === 'all' ? 'allow-all' : 'approve';

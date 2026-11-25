@@ -13,7 +13,8 @@
 // CREW_GITHUB_APP_PRIVATE_KEY_FILE), installed on the repo with Contents and Pull
 // requests read/write. Its tokens last an hour and cover only the installation's
 // repos. Without an App (a developer's own Mac) Crew falls back to `gh auth token`.
-// The agent can never merge: protect the base branch on GitHub.
+// The agent can never merge: only the owner can, with the Merge button in the Inbox
+// (mergePullRequest). Protect the base branch on GitHub to require reviews or checks.
 
 import { execFile } from 'node:child_process';
 import { createSign } from 'node:crypto';
@@ -468,3 +469,27 @@ ${stat}
 ${diff}
 \`\`\`
 `;
+
+// ---------------------------------------------------------------------------
+// Merge, by the owner from the Inbox (never by an agent)
+
+/** Merges an open pull request on the code repo, with a method the repo allows. GitHub's own rules (required reviews, checks) still apply. */
+export async function mergePullRequest(s: CodeSettings, url: string): Promise<{ sha: string; method: string }> {
+  const m = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
+  if (!m || `${m[1]}/${m[2]}`.toLowerCase() !== s.repo.toLowerCase()) throw new Error(`${url} is not a pull request on ${s.repo}.`);
+  const auth = `Bearer ${await githubToken(s)}`;
+  const base = `/repos/${s.owner}/${s.name}`;
+  const pr = await api<{ state: string; merged: boolean; mergeable: boolean | null; head: { sha: string }; title: string }>('GET', `${base}/pulls/${m[3]}`, auth);
+  if (pr.merged) throw new Error(`Pull request #${m[3]} is already merged.`);
+  if (pr.state !== 'open') throw new Error(`Pull request #${m[3]} is closed.`);
+  if (pr.mergeable === false) throw new Error(`Pull request #${m[3]} has conflicts with ${s.base}: ask the developer to update the branch.`);
+  const repo = await api<{ allow_merge_commit?: boolean; allow_squash_merge?: boolean; allow_rebase_merge?: boolean }>('GET', base, auth);
+  const method = repo.allow_squash_merge !== false ? 'squash' : repo.allow_merge_commit !== false ? 'merge' : repo.allow_rebase_merge !== false ? 'rebase' : 'merge';
+  // sha: refuse if the branch moved after the owner looked at it.
+  const res = await api<{ sha: string }>('PUT', `${base}/pulls/${m[3]}/merge`, auth, {
+    merge_method: method,
+    sha: pr.head.sha,
+    ...(method === 'squash' ? { commit_title: `${pr.title} (#${m[3]})` } : {}),
+  });
+  return { sha: res.sha, method };
+}
