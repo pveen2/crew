@@ -2096,3 +2096,24 @@ body,
   padding: 1px 6px;
   white-space: nowrap;
 }
+
+/* Presence: a green dot on someone who has the thread open; "… is typing". */
+.live-face {
+  position: relative;
+  display: inline-flex;
+}
+.live-face--on::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+  border: 1.5px solid var(--cr-color-bg-surface);
+}
+.typing-line {
+  margin: 0;
+  padding: 0 var(--cr-space-200);
+}

@@ -20,6 +20,7 @@ import {
   Shimmer,
   Text,
   TextField,
+  cx,
   type BadgeTone,
   type IconName,
 } from '@crew/ui';
@@ -34,6 +35,7 @@ import {
   openAsPreview,
   personName,
   releaseThread,
+  sendTyping,
   removeQueuedMessage,
   resolveInbox,
   resumeSession,
@@ -868,6 +870,7 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
 
   return (
     <BlockStack gap="200" {...images.dropProps}>
+      <TypingLine threadId={threadId} />
       <WaitingMessages data={data} session={session} />
       <SessionStatus session={session} />
       {session.depth === 0 && !dmQuiet ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
@@ -882,7 +885,10 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         enterSends={!isPhoneTouch()}
         label={`Message ${label}`}
         value={text}
-        onChange={setText}
+        onChange={(t) => {
+          setText(t);
+          if (me && t.trim()) sendTyping();
+        }}
         onSubmit={() => void submit()}
         onPaste={images.onPaste}
         leading={images.button}
@@ -997,6 +1003,33 @@ function useMentionPicker(
     </div>
   ) : null;
   return { list, onKeyDown };
+}
+
+/** A colleague's face, with a green dot while they have this thread open. */
+function LiveFace({ threadId, email, size }: { threadId: string; email: string; size: number }) {
+  const me = useApp((s) => s.me);
+  const live = useApp((s) => email !== me && Boolean(s.presence[threadId]?.viewing.includes(email)));
+  const name = usePersonName(email);
+  return (
+    <span className={cx('live-face', live && 'live-face--on')}>
+      <PersonFace email={email} size={size} title={live ? `${name} · looking at this now` : name} />
+    </span>
+  );
+}
+
+/** "Juliette is typing…" above the composer. */
+function TypingLine({ threadId }: { threadId: string }) {
+  const me = useApp((s) => s.me);
+  const typing = useApp((s) => s.presence[threadId]?.typing);
+  const people = useApp((s) => s.people);
+  const others = (typing ?? []).filter((e) => e !== me);
+  if (!others.length) return null;
+  const names = others.map((e) => personName(e, people));
+  return (
+    <Text as="p" variant="caption" tone="secondary" className="typing-line" aria-live="polite">
+      {names.length === 1 ? `${names[0]} is typing…` : `${names.join(' and ')} are typing…`}
+    </Text>
+  );
 }
 
 /** The agent holds off because people tagged each other: who it waits for, and Go ahead. */
@@ -1159,7 +1192,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 .filter((p) => p !== me)
                 .slice(0, 3)
                 .map((p) => (
-                  <PersonFace key={p} email={p} size={24} />
+                  <LiveFace key={p} threadId={threadId} email={p} size={24} />
                 ))}
               <BlockStack className="thread-title__text">
                 <Text variant="headingMd" as="h1" leading="tight" truncate>
@@ -1194,7 +1227,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
             {me && !thread.dm && (thread.people?.length ?? 0) > 1 ? (
               <span className="list-trailing" aria-label="People in this thread">
                 {thread.people!.map((p) => (
-                  <PersonFace key={p} email={p} size={20} />
+                  <LiveFace key={p} threadId={threadId} email={p} size={20} />
                 ))}
               </span>
             ) : null}

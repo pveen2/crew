@@ -5,7 +5,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
+import type { ClientMessage, CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
 import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 import { accessEmail, accessEnabled } from './access.ts';
@@ -55,6 +55,8 @@ function threadOf(msg: ServerMessage): string | null {
       return msg.item.threadId;
     case 'doc':
       return msg.doc.threadId;
+    case 'presence':
+      return msg.threadId;
     default:
       return null;
   }
@@ -392,13 +394,63 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       clients.set(ws, who);
+      ws.on('message', (data) => {
+        if (!who) return;
+        let msg: ClientMessage;
+        try {
+          msg = JSON.parse(String(data)) as ClientMessage;
+        } catch {
+          return;
+        }
+        if (msg?.kind !== 'presence') return;
+        const threadId = typeof msg.threadId === 'string' && runtime.canSee(msg.threadId, who) ? msg.threadId : null;
+        const before = presence.get(ws)?.threadId ?? null;
+        presence.set(ws, { threadId, typingUntil: threadId && msg.typing ? Date.now() + TYPING_MS : 0 });
+        if (before && before !== threadId) sendPresence(before);
+        if (threadId) sendPresence(threadId);
+      });
       ws.send(JSON.stringify({ kind: 'hello', version: 1 } satisfies ServerMessage));
-      ws.on('close', () => clients.delete(ws));
-      ws.on('error', () => clients.delete(ws));
+      const gone = () => {
+        clients.delete(ws);
+        const was = presence.get(ws)?.threadId;
+        presence.delete(ws);
+        if (was) sendPresence(was);
+      };
+      ws.on('close', gone);
+      ws.on('error', gone);
     });
   });
 
-  runtime.subscribe((msg) => {
+  // Presence (team server): which thread each connection has open, and whether its person is typing.
+  const TYPING_MS = 5000;
+  const presence = new Map<WebSocket, { threadId: string | null; typingUntil: number }>();
+  const sendPresence = (threadId: string) => {
+    const now = Date.now();
+    const viewing = new Set<string>();
+    const typing = new Set<string>();
+    for (const [ws, p] of presence) {
+      const who = clients.get(ws);
+      if (!who || p.threadId !== threadId) continue;
+      viewing.add(who);
+      if (p.typingUntil > now) typing.add(who);
+    }
+    broadcast({ kind: 'presence', threadId, viewing: [...viewing], typing: [...typing] });
+  };
+  // Typing stops on its own when the app stops saying so.
+  const typingTimer = setInterval(() => {
+    const now = Date.now();
+    const ended = new Set<string>();
+    for (const p of presence.values()) {
+      if (p.typingUntil && p.typingUntil <= now) {
+        p.typingUntil = 0;
+        if (p.threadId) ended.add(p.threadId);
+      }
+    }
+    for (const t of ended) sendPresence(t);
+  }, 1000);
+  typingTimer.unref();
+
+  const broadcast = (msg: ServerMessage) => {
     const data = JSON.stringify(msg);
     const threadId = threadOf(msg);
     for (const [ws, who] of clients) {
@@ -407,7 +459,9 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       if (threadId && who && !runtime.canSee(threadId, who)) continue;
       ws.send(data);
     }
-  });
+  };
+
+  runtime.subscribe(broadcast);
 
   return new Promise<typeof server>((resolve, reject) => {
     server.once('error', reject);

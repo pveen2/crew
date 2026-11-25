@@ -393,7 +393,14 @@ export type ServerMessage =
   | { kind: 'session'; session: Session }
   | { kind: 'turn'; turn: Turn }
   | { kind: 'inbox'; item: InboxItem }
-  | { kind: 'doc'; doc: DocSummary };
+  | { kind: 'doc'; doc: DocSummary }
+  /** Team server: who has a thread open right now, and who is typing in it (emails). */
+  | { kind: 'presence'; threadId: string; viewing: string[]; typing: string[] };
+
+/** From the app to the conductor over the socket (team server). */
+export type ClientMessage =
+  /** The thread I have open (null: none, or the app is in the background); typing: I am typing in it. */
+  { kind: 'presence'; threadId: string | null; typing?: boolean };
 
 // ---------------------------------------------------------------------------
 // Where the conductor advertises itself on this machine.

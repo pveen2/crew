@@ -21,6 +21,7 @@ import type {
   Thread,
   ThreadDetailResponse,
   ThreadShare,
+  ClientMessage,
   Person,
   Turn,
   ServerLogin,
@@ -154,6 +155,8 @@ export interface AppState {
   scope: Scope;
   /** DMs: when each was last looked at on this device. */
   dmSeen: Record<string, number>;
+  /** Team server: who has each thread open right now, and who is typing in it. */
+  presence: Record<string, { viewing: string[]; typing: string[] }>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -406,6 +409,7 @@ let state: AppState = {
   people: [],
   scope: loadScope(),
   dmSeen: loadDmSeen(),
+  presence: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -540,6 +544,9 @@ function onMessage(msg: ServerMessage): void {
       scheduleStateRefresh();
       break;
     case 'turn':
+      break;
+    case 'presence':
+      set((s) => ({ presence: { ...s.presence, [msg.threadId]: { viewing: msg.viewing, typing: msg.typing } } }));
       break;
     case 'doc':
       // While a Docs snapshot is loading, keep updates to replay on top of it.
@@ -713,6 +720,7 @@ window.addEventListener('hashchange', () => {
 
 export function navigate(view: View): void {
   set({ view, navOpen: false });
+  sendPresence();
   if (location.hash !== hashOf(view)) history.replaceState(null, '', hashOf(view));
   if (view.name === 'thread') {
     if (!state.details[view.threadId]) void loadThread(view.threadId);
@@ -1014,6 +1022,22 @@ export function markDmSeen(threadId: string): void {
   } catch {
     /* storage unavailable: unread lasts for this session */
   }
+}
+
+/** Tells the conductor which thread I have open (none while the app is in the background). Team server only. */
+function sendPresence(typing = false): void {
+  if (!state.me || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const threadId = state.view.name === 'thread' && document.visibilityState === 'visible' ? state.view.threadId : null;
+  ws.send(JSON.stringify({ kind: 'presence', threadId, ...(typing ? { typing: true } : {}) } satisfies ClientMessage));
+}
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => sendPresence());
+
+let lastTyping = 0;
+/** I am typing in the open thread: said at most every 2 seconds; it stops on its own. */
+export function sendTyping(): void {
+  if (Date.now() - lastTyping < 2000) return;
+  lastTyping = Date.now();
+  sendPresence(true);
 }
 
 /** Go ahead: the agent stops waiting for the people it held off for. */
