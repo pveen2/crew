@@ -17,7 +17,7 @@ apps/conductor   local server: sessions, subagent calls, approvals, events, SQLi
 apps/mac         Electron + React app (display only, no agent logic)
 crew/            an example team, eve-style: crew.config.ts, agent/ (lead), agent/subagents/, lib/, evals/
 packages/sdk     @crew/sdk: defineAgent, defineTool, defineCrew, evals and the team loader
-packages/kit     @crew/kit: ready-made Shopify, headless browser and X search connections
+packages/kit     @crew/kit: ready-made Shopify, headless browser, X search, Studio and Meta ads connections
 packages/protocol shared types for events and the API
 packages/ui      the Crew design system (tokens + React components)
 scripts/crew.ts  the `pnpm crew` command
@@ -168,7 +168,7 @@ evals/**/<name>.eval.ts        defineEval, plus evals.config.ts
 - `model` is `<engine>/<model>[@reasoning]`: the one difference from eve,
   because Crew runs on the official CLIs with the owner's subscriptions.
 - **Subagents inherit nothing** from the lead. Shared pieces are factories
-  (`@crew/kit`: Shopify, the headless browser, X search) used from a one-line
+  (`@crew/kit`: Shopify, the headless browser, X search, Studio, Meta ads) used from a one-line
   file, so a connection's allow-list cannot drift.
   `lib/rules.md` (Crew's own rules) and `lib/brand/` go to every agent.
 - **One level of delegation.** The lead gets one tool per subagent
@@ -324,6 +324,19 @@ Close thread also drop queued turns, and say so in the thread.
   more; `writeScopes` in `packages/kit/src/shopify/cli.ts`), so the Inbox approval is
   the only gate on changes. External connection
   tools on Codex run only when marked read-only.
+- Meta ads (`@crew/kit/meta`): the connection is a local MCP server that
+  forwards to Meta's hosted Ads MCP server (`https://mcp.facebook.com/ads`)
+  with `META_ACCESS_TOKEN`, and offers only the reading tools in
+  `META_READ_TOOLS` (`packages/kit/src/meta/tools.ts`). Every change goes
+  through `meta_ads_change`, which waits in the Inbox, and only for the tools in
+  `META_WRITE_TOOLS`; new campaigns, ad sets and ads start paused. Uploading
+  customer lists to custom audiences is not offered at all. A tool Meta adds
+  later is in neither list. Each agent names its ad accounts
+  (`adAccounts`); `guard.ts` refuses any call for another account, or that
+  names another account or business the token can see, and lists only the
+  agent's own accounts. Ids of objects inside an account are not checked. Meta takes a user token or an Employee-role system
+  user token (not Admin-role) with `ads_mcp_management` and `ads_read`, plus
+  `ads_management` for changes.
 - The local API binds to 127.0.0.1 and needs the token from `conductor.json`
   as a header (the WebSocket takes it as `?token=`). The Electron window only
   ever loads the app itself, and only that page can ask for the token.
