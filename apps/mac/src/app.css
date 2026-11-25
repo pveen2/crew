@@ -331,6 +331,7 @@ body,
 .pane-scroll {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 .pane-center {
@@ -537,7 +538,8 @@ body,
 .doc-scroll {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--cr-space-450);
 }
 
@@ -997,7 +999,13 @@ body,
   padding: var(--cr-space-250) var(--cr-space-300);
   border-radius: var(--cr-radius-300);
   background: var(--cr-color-bg-surface-secondary);
-  overflow: auto;
+  /* Wraps instead of scrolling sideways: nothing in a reply scrolls horizontally. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.md img {
+  max-width: 100%;
+  height: auto;
 }
 .md pre code {
   padding: 0;
@@ -1010,6 +1018,9 @@ body,
 }
 .md th,
 .md td {
+  /* Long words may break inside a cell, so a wide table shrinks to fit the
+     pane instead of pushing it into a sideways scroll. */
+  overflow-wrap: anywhere;
   padding: var(--cr-space-150) var(--cr-space-200);
   border-bottom: 1px solid var(--cr-color-border-subtle);
   text-align: left;
@@ -1045,9 +1056,6 @@ body,
 }
 .md--question p {
   margin-bottom: var(--cr-space-150);
-}
-.md table {
-  overflow-wrap: normal;
 }
 .no-shrink {
   flex: 0 0 auto;
