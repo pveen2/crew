@@ -1,8 +1,13 @@
 // A thin stdio filter in front of `agent-browser mcp`. It passes every
 // JSON-RPC message through unchanged, except:
 //
+// - Tools: only the ones named in CREW_BROWSER_TOOLS (the connection's
+//   allow-list) are listed, and a call to any other is refused here. Claude
+//   Code otherwise shows the agent every tool and only denies the call, so an
+//   agent kept reaching for agent_browser_eval.
 // - Screenshots: the `path` and `screenshotDir` arguments are removed (from the
-//   tool's schema and from every call). agent-browser runs with the owner's
+//   tool's schema and from every call), and a `selector` that looks like a file
+//   path is refused: agent-browser saves the image there instead. agent-browser runs with the owner's
 //   real HOME, so a chosen path could overwrite any of the owner's files.
 //   The image still comes back inline, which is what the agent needs.
 //   agent-browser also keeps its own copy under ~/.agent-browser/tmp/screenshots
@@ -42,14 +47,26 @@ const KEEP_SCHEMA = {
   description:
     'Keep this image for the owner: it is saved with the thread and you get back a path like attachments/shot-1a2b3c.png. ' +
     'Put that path in an HTML document (<img src="attachments/shot-1a2b3c.png">) to show the image in the preview; ' +
-    'colleagues can open it from their attachments/ folder. Pass selector (an @ref or CSS selector) to keep just one element, ' +
-    'such as an ad creative or a product photo, instead of the whole screen.',
+    'colleagues can open it from their attachments/ folder. To keep an image from a page (an ad creative, a product photo), ' +
+    'keep one screenshot per image with selector set to that image, not the whole screen with several items on it.',
+};
+/** agent-browser's own description says CSS; what works (tested on v0.43.0) is narrower. */
+const SELECTOR_SCHEMA = {
+  type: 'string',
+  description:
+    'Capture just this element: an @ref from a snapshot, or a CSS selector that matches it first on the page, ' +
+    'e.g. img[alt*="Gymshark"] or a card\'s own class. No "/" (so no XPath): Crew refuses it. ' +
+    '">> nth=" and ":nth-match()" are not supported and silently return the whole page. Check the image you get back.',
 };
 /** The thread's image folder. Unset outside Crew: then nothing can be kept. */
 const IMAGES_DIR = process.env.CREW_IMAGES_DIR?.trim() || '';
 const MAX_KEEP_BYTES = 10 * 1024 * 1024;
 /** Where agent-browser saves a screenshot when it is given no path. */
 const SHOT_DIR = join(homedir(), '.agent-browser', 'tmp', 'screenshots');
+
+/** The tools the agent may see and call. Unset: all of them (outside Crew). */
+const ALLOWED = new Set((process.env.CREW_BROWSER_TOOLS ?? '').split(',').map((t) => t.trim()).filter(Boolean));
+const allowed = (name: unknown) => !ALLOWED.size || (typeof name === 'string' && ALLOWED.has(name));
 
 type Msg = { id?: unknown; method?: string; params?: any; result?: any };
 type Kind = 'list' | 'call' | 'shot' | 'keep';
@@ -93,6 +110,41 @@ function cutDeep(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(cutDeep);
   if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, cutDeep(x)]));
   return v;
+}
+
+/**
+ * Keep structuredContent under MAX_CHARS as JSON. Claude Code shows the agent this JSON instead of
+ * the text content, and escaped newlines and quotes made a 30,000-character snapshot 55,830 long:
+ * over its limit, so the agent got nothing. Shortens the longest string until it fits.
+ */
+function capStructured(v: unknown): unknown {
+  let out = cutDeep(v);
+  for (let i = 0; i < 20; i++) {
+    const size = JSON.stringify(out).length;
+    if (size <= MAX_CHARS) break;
+    let longest = '';
+    const find = (x: unknown) => {
+      if (typeof x === 'string') {
+        if (x.length > longest.length) longest = x;
+      } else if (x && typeof x === 'object') Object.values(x).forEach(find);
+    };
+    find(out);
+    if (longest.length < 200) break;
+    // Escaping can double a string's size, so take off twice the excess (and room for the note).
+    const keep = Math.max(0, longest.length - 2 * (size - MAX_CHARS) - 400);
+    const shorter =
+      longest.slice(0, keep) +
+      `\n\n[Cut by Crew: ${longest.length.toLocaleString('en')} characters, first ${keep.toLocaleString('en')} shown. ` +
+      'Use filter, outline, or a screenshot to get at the rest.]';
+    const swap = (x: unknown): unknown => {
+      if (x === longest) return shorter;
+      if (Array.isArray(x)) return x.map(swap);
+      if (x && typeof x === 'object') return Object.fromEntries(Object.entries(x).map(([k, y]) => [k, swap(y)]));
+      return x;
+    };
+    out = swap(out);
+  }
+  return out;
 }
 
 /** Delete agent-browser's temp copy of a screenshot and leave its path out of the result. Returns the copies, read before deleting. */
@@ -139,6 +191,39 @@ function keepShot(msg: Msg, files: string[]): string {
   return `Kept as attachments/${name}. Show it in an HTML document with <img src="attachments/${name}" alt="…">.`;
 }
 
+/**
+ * agent-browser's MCP takes a screenshot selector that looks like a file ("a/b", "x.png") as the
+ * output path and writes the image there, with the owner's rights (tested on v0.43.0).
+ */
+const PATH_LIKE = /[\\/~]|\.(?:png|jpe?g|webp)\s*$/i;
+
+/** Why this call must not reach agent-browser, or '' when it may. */
+function refusal(msg: Msg): string {
+  if (msg.method !== 'tools/call') return '';
+  const name = msg.params?.name;
+  if (!allowed(name)) {
+    return (
+      `${String(name)} is not available in Crew. ` +
+      "To show the owner a page's images, use agent_browser_screenshot with keep: true and a selector for each image."
+    );
+  }
+  const selector = msg.params?.arguments?.selector;
+  if (name === SCREENSHOT && typeof selector === 'string' && PATH_LIKE.test(selector)) {
+    return 'Refused by Crew: a selector with "/", "\\", "~" or an image file ending is taken as a file path. Use an @ref or a CSS selector.';
+  }
+  return '';
+}
+
+/** A call Crew does not allow: answer it here, never reach agent-browser. */
+function refuse(msg: Msg): boolean {
+  const text = refusal(msg);
+  if (!text) return false;
+  if (msg.id !== undefined) {
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { isError: true, content: [{ type: 'text', text }] } }) + '\n');
+  }
+  return true;
+}
+
 function fromClient(msg: Msg): Msg {
   const isShot = msg.method === 'tools/call' && msg.params?.name === SCREENSHOT;
   const keep = isShot && msg.params.arguments?.[KEEP] === true;
@@ -163,10 +248,14 @@ function fromServer(msg: Msg): Msg {
   pending.delete(key(msg.id));
   if (!msg.result) return msg;
   if (kind === 'list') {
+    if (Array.isArray(msg.result.tools)) msg.result.tools = msg.result.tools.filter((t: any) => allowed(t?.name));
     for (const tool of msg.result.tools ?? []) {
       if (tool.name !== SCREENSHOT) continue;
       for (const a of PATH_ARGS) delete tool.inputSchema?.properties?.[a];
-      if (tool.inputSchema?.properties) tool.inputSchema.properties[KEEP] = KEEP_SCHEMA;
+      if (tool.inputSchema?.properties) {
+        tool.inputSchema.properties[KEEP] = KEEP_SCHEMA;
+        if (tool.inputSchema.properties.selector) tool.inputSchema.properties.selector = SELECTOR_SCHEMA;
+      }
       if (Array.isArray(tool.inputSchema?.required)) {
         tool.inputSchema.required = tool.inputSchema.required.filter((r: string) => !PATH_ARGS.includes(r));
       }
@@ -184,21 +273,27 @@ function fromServer(msg: Msg): Msg {
         }
       });
       (msg.result.content ??= []).push({ type: 'text', text: note });
+      // Claude Code shows the agent structuredContent instead of the text, so the note goes there too, first.
+      if (msg.result.structuredContent && typeof msg.result.structuredContent === 'object') {
+        msg.result.structuredContent = { crew: note, ...msg.result.structuredContent };
+      }
     }
     for (const c of msg.result.content ?? []) {
       if (c?.type === 'text' && typeof c.text === 'string') c.text = cut(c.text);
     }
-    if (msg.result.structuredContent) msg.result.structuredContent = cutDeep(msg.result.structuredContent);
+    if (msg.result.structuredContent) msg.result.structuredContent = capStructured(msg.result.structuredContent);
   }
   return msg;
 }
 
-function pipe(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, fn: (m: Msg) => Msg) {
+function pipe(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, fn: (m: Msg) => Msg | null) {
   createInterface({ input, crlfDelay: Infinity }).on('line', (line) => {
     if (!line.trim()) return;
     let out = line;
     try {
-      out = JSON.stringify(fn(JSON.parse(line)));
+      const msg = fn(JSON.parse(line));
+      if (!msg) return;
+      out = JSON.stringify(msg);
     } catch {
       // Not JSON: pass it through as is.
     }
@@ -206,6 +301,6 @@ function pipe(input: NodeJS.ReadableStream, output: NodeJS.WritableStream, fn: (
   });
 }
 
-pipe(process.stdin, child.stdin!, fromClient);
+pipe(process.stdin, child.stdin!, (m) => (refuse(m) ? null : fromClient(m)));
 pipe(child.stdout!, process.stdout, fromServer);
 process.stdin.on('end', () => child.stdin!.end());

@@ -14,7 +14,10 @@ import { defineConnection } from '@crew/sdk/define';
 //   the owner in a document.
 // - config.json: page text comes back wrapped in boundary markers and capped
 //   in size, so a page is harder to mistake for instructions.
-// - guard.ts: cuts any result over 30,000 characters (raw reads ignore the
+// - guard.ts: lists only the allowed tools and refuses any other call (Claude
+//   Code shows every tool a server lists and only denies the call, so an
+//   agent saw agent_browser_eval, tried it to collect image URLs and gave up),
+//   cuts any result over 30,000 characters (raw reads ignore the
 //   config cap), strips the screenshot path arguments so nothing is written
 //   where the agent chooses, deletes agent-browser's own temp copy, and
 //   saves kept screenshots in the thread's image folder (CREW_IMAGES_DIR).
@@ -64,8 +67,9 @@ export interface BrowserOptions {
   interact?: boolean;
 }
 
-export const browserConnection = (opts: BrowserOptions) =>
-  defineConnection({
+export const browserConnection = (opts: BrowserOptions) => {
+  const allow = [...READ, ...(opts.interact === false ? [] : INTERACT)];
+  return defineConnection({
     description:
       'Headless browser for pages that web fetch cannot read (forms, calculators, JavaScript-only pages)' +
       (opts.allowedDomains?.length ? `, limited to ${opts.allowedDomains.join(', ')}` : ''),
@@ -81,6 +85,8 @@ export const browserConnection = (opts: BrowserOptions) =>
       // In the installed Mac app process.execPath is the Crew binary (Electron).
       ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
       AGENT_BROWSER_SESSION: `crew-${opts.session}`,
+      // guard.ts hides every other tool from the agent and refuses calls to them.
+      CREW_BROWSER_TOOLS: allow.join(','),
       // A server (Linux ARM has no Chrome for Testing) points at its own Chromium.
       ...(process.env.AGENT_BROWSER_EXECUTABLE_PATH ? { AGENT_BROWSER_EXECUTABLE_PATH: process.env.AGENT_BROWSER_EXECUTABLE_PATH } : {}),
       ...(opts.allowedDomains?.length
@@ -88,5 +94,6 @@ export const browserConnection = (opts: BrowserOptions) =>
         : {}),
     },
     toolTimeoutSec: 120,
-    tools: { allow: [...READ, ...(opts.interact === false ? [] : INTERACT)] },
+    tools: { allow },
   });
+};
