@@ -58,11 +58,13 @@ import {
   useRoleLabels,
 } from './common';
 import { PreviewPanel, usePreviewDocs } from './PreviewPanel';
+import { QuestionAnswer } from './QuestionAnswer';
 
 type Ev<T extends CrewEvent['type']> = Extract<CrewEvent, { type: T }>;
 
 type Item =
-  | { kind: 'event'; event: CrewEvent }
+  /** answer: for a needs_you card, the owner's reply to it (shown in the card, not as a bubble). */
+  | { kind: 'event'; event: CrewEvent; answer?: string }
   | { kind: 'work'; id: string; events: Array<Ev<'tool_call'> | Ev<'thinking'>> }
   | { kind: 'subagents'; id: string; starts: Ev<'subagent_started'>[] };
 
@@ -77,7 +79,31 @@ function isSubagentTool(name: string, agents: Record<string, string>): boolean {
 
 function buildItems(events: CrewEvent[], session: Session, agents: Record<string, string>): Item[] {
   const items: Item[] = [];
-  for (const e of chatEvents(events, session)) {
+  const chat = chatEvents(events, session);
+  // A reply to a question card shows inside that card. Not when it carries
+  // images or was never delivered: then it stays a bubble of its own.
+  const asked = new Set(chat.flatMap((e) => (e.type === 'needs_you' ? [e.inboxId] : [])));
+  const answers = new Map<string, string>();
+  for (const e of chat) {
+    if (e.type !== 'message' || !e.replyTo || !asked.has(e.replyTo) || answers.has(e.replyTo) || e.attachments?.length) continue;
+    if (deliveryOf(e, events, session).state === 'dropped') continue;
+    answers.set(e.replyTo, e.text);
+  }
+  // The turn that just asked a question, until the owner replies or the agent uses a tool.
+  let askedIn: string | null = null;
+  for (const e of chat) {
+    // The agent was told to stop after asking: its text straight after the
+    // card, in the same turn, only restates the question. Once the owner
+    // replies or the agent uses a tool, its text is real work again.
+    const restates = e.type === 'message' && e.role === 'assistant' && askedIn !== null && e.turnId === askedIn;
+    if (e.type === 'needs_you') askedIn = e.turnId ?? null;
+    else if (e.type === 'tool_call' || (e.type === 'message' && e.role === 'user')) askedIn = null;
+    if (restates) continue;
+    if (e.type === 'message' && e.replyTo && answers.get(e.replyTo) === e.text) continue; // shown in its card
+    if (e.type === 'needs_you') {
+      items.push({ kind: 'event', event: e, answer: answers.get(e.inboxId) });
+      continue;
+    }
     if (e.type === 'tool_result' || e.type === 'subagent_done') continue; // shown inside their call / card
     if (e.type === 'message_delivery') continue; // shown as the owner message's label
     if (e.type === 'tool_call' && (HIDDEN_TOOLS.test(e.name) || isSubagentTool(e.name, agents))) continue;
@@ -338,54 +364,36 @@ function SubagentGroup({ threadId, starts, data }: { threadId: string; starts: E
 // ---------------------------------------------------------------------------
 // "Needs you": the approval card, used for ask_owner questions.
 
-function NeedsYouCard({ threadId, event, role }: { threadId: string; event: Ev<'needs_you'>; role: string }) {
+function NeedsYouCard({ threadId, event, role, answer }: { threadId: string; event: Ev<'needs_you'>; role: string; answer?: string }) {
   const open = useApp((s) => Boolean(s.inbox[event.inboxId]));
-  const online = useApp((s) => s.connection === 'online');
   const label = useRoleLabel(role);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const send = async () => {
-    if (!text.trim() || busy) return;
-    setBusy(true);
-    try {
-      await sendMessage(threadId, text.trim(), event.sessionId, event.inboxId);
-      setText('');
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <Card variant={open ? 'elevated' : 'subtle'} padded={!open}>
       <BlockStack gap="250">
-        <Text variant="label" tone={open ? 'base' : 'secondary'}>
-          {open ? 'Needs your answer' : 'Answered'}
+        <Text variant="label" tone="secondary">
+          {open ? `${label} asks` : answer ? `${label} asked` : `${label} asked · dismissed`}
         </Text>
-        <InlineStack gap="200" blockAlign="start">
-          <div className="grow">
-            <Markdown text={event.question} className="md--question" />
+        <Markdown text={event.question} className="md--question" />
+        {!open && answer ? (
+          <div className="answer-given">
+            <Icon name="check" size={13} />
+            <Markdown text={answer} />
           </div>
-          <Text variant="caption" tone="secondary">
-            {label}
-          </Text>
-        </InlineStack>
+        ) : null}
         {open ? (
-          <form
-            className="answer-stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void send();
-            }}
-          >
-            <TextField label="Your answer" placeholder="Your answer…" value={text} onChange={setText} disabled={!online} />
-            <CardFooter>
+          <QuestionAnswer
+            threadId={threadId}
+            sessionId={event.sessionId}
+            inboxId={event.inboxId}
+            options={event.options}
+            recommended={event.recommended}
+            multiSelect={event.multiSelect}
+            actions={
               <Button variant="tertiary" onClick={() => void resolveInbox(event.inboxId)}>
                 Dismiss
               </Button>
-              <Button variant="primary" type="submit" disabled={!text.trim() || busy || !online}>
-                Send answer
-              </Button>
-            </CardFooter>
-          </form>
+            }
+          />
         ) : null}
       </BlockStack>
     </Card>
@@ -597,7 +605,7 @@ function WaitingChip({ event, info, label }: { event: Ev<'message'>; info: Deliv
   );
 }
 
-function EventRow({ threadId, event, session }: { threadId: string; event: CrewEvent; session: Session }) {
+function EventRow({ threadId, event, session, answer }: { threadId: string; event: CrewEvent; session: Session; answer?: string }) {
   const callerLabel = useRoleLabel(event.type === 'turn_started' ? (event.callerRole ?? '') : '');
   const selectedPreview = useApp((s) => s.preview[threadId]);
   switch (event.type) {
@@ -605,7 +613,7 @@ function EventRow({ threadId, event, session }: { threadId: string; event: CrewE
       if (event.role === 'user') return <OwnerMessage threadId={threadId} event={event} session={session} />;
       return <Markdown text={event.text} />;
     case 'needs_you':
-      return <NeedsYouCard threadId={threadId} event={event} role={session.role} />;
+      return <NeedsYouCard threadId={threadId} event={event} role={session.role} answer={answer} />;
     case 'preview':
       return (
         <Card>
@@ -950,7 +958,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 ) : item.kind === 'subagents' ? (
                   <SubagentGroup key={item.id} threadId={threadId} starts={item.starts} data={data} />
                 ) : (
-                  <EventRow key={item.event.id} threadId={threadId} event={item.event} session={session} />
+                  <EventRow key={item.event.id} threadId={threadId} event={item.event} session={session} answer={item.answer} />
                 ),
               )
             )}

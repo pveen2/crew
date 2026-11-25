@@ -80,6 +80,8 @@ function printEvent(e: CrewEvent, roleOf: (sessionId: string) => string): void {
       break;
     case 'needs_you':
       console.log(`${who} ${red('needs you:')} ${e.question}`);
+      if (e.multiSelect) console.log(dim('    (pick one or more)'));
+      e.options?.forEach((o, i) => console.log(`    ${i + 1}. ${o.label}${i === e.recommended ? dim(' (suggested)') : ''}${o.detail ? dim(` · ${o.detail}`) : ''}`));
       break;
     case 'approval':
       console.log(`${who} ${red(`waits for approval: ${e.toolName}`)} ${dim(oneLine(JSON.stringify(e.input ?? {}), 120))}`);
