@@ -262,7 +262,30 @@ Resume uses the CLI's own session resume. Owner messages that were still
 queued when Crew stopped are kept and handed to the agent on Resume. Stop and
 Close thread also drop queued turns, and say so in the thread.
 
-**Safety**: read and draft only.
+**Safety**: read and draft, plus code for agents that need it.
+- **Code agents** (`permissions: 'code'`, Claude Code only) work in
+  their own clone of the team's code repo (`code.repo` in `crew.config.ts`) in
+  `repo/` of their session folder, on a `crew/<thread>` branch made from the base
+  branch at the start of the thread. Their shell runs only in the CLI's own OS
+  sandbox (Seatbelt on macOS, bubblewrap on Linux, set to refuse to start
+  without it and never retry outside it): it writes only in the session folder
+  (not its `AGENTS.md`, `.claude/`, `.agents/`, `context/` or `attachments/`),
+  reads none of the deny paths, has no network and gets no credentials (MCP
+  secrets go in its MCP config in `~/.crew/run`, not its environment). Codex is
+  not allowed: its sandbox does not block reads. Anything that needs a
+  credential runs in the conductor as a Crew tool, on the conductor's own git
+  directory per session (in `~/.crew/run`, with its own branch, no hooks, no
+  global config), reading `repo/` only as a work tree; previews and reviews use a
+  snapshot without symlinks or tool config (`shopify.theme.toml`, `.claude/`):
+  `theme_preview` (Shopify CLI
+  `theme push --development`, never the live or a shared theme; Theme Access
+  password in `SHOPIFY_CLI_THEME_TOKEN`), `open_pull_request` (commits, pushes
+  the branch and opens or updates its pull request, which goes into the Inbox)
+  and `code_review` (the `code.reviewer` model reads the diff, read-only).
+  GitHub access is a GitHub App installed on the repo (Contents and Pull
+  requests read/write), with one-hour tokens passed to git in the environment,
+  never in a URL or on disk; without one Crew uses `gh auth token`. Agents
+  never merge: protect the base branch on GitHub.
 - Claude Code and Grok run with `dontAsk`, no shell, and only the tools an agent
   needs; draft roles may write only in `drafts/`. Codex runs in its read-only
   or workspace-write sandbox. Antigravity runs with per-run settings (`--settings`, never

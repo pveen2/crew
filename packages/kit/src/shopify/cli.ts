@@ -67,6 +67,27 @@ export const isReadOnlyQuery = (query: string) => onlyOperations(query, Operatio
 export const isMutation = (query: string) => onlyOperations(query, OperationTypeNode.MUTATION);
 
 /**
+ * The root fields a document selects across its operations (for example
+ * ['metafieldsSet']), so a tool can allow only some mutations. Fragment spreads
+ * and inline fragments at the root show as '<FragmentSpread>' / '<InlineFragment>'
+ * and match no allow-list. Empty when the document does not parse.
+ */
+export function rootFields(query: string): string[] {
+  let doc;
+  try {
+    doc = parse(query);
+  } catch {
+    return [];
+  }
+  const fields: string[] = [];
+  for (const def of doc.definitions) {
+    if (def.kind !== Kind.OPERATION_DEFINITION) continue;
+    for (const sel of def.selectionSet.selections) fields.push(sel.kind === Kind.FIELD ? sel.name.value : `<${sel.kind}>`);
+  }
+  return fields;
+}
+
+/**
  * Runs one Admin GraphQL operation against `store` (its myshopify.com domain)
  * through the Shopify CLI's stored authentication.
  */

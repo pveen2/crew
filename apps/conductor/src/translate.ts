@@ -10,7 +10,7 @@
 // Plus context/brand/ (read-only copy) and, for draft permissions, drafts/. The
 // conductor adds attachments/ (the thread's images, read-only) before each turn.
 
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { Engine } from '@crew/protocol';
 import { subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
@@ -64,6 +64,11 @@ export function crewTools(crew: LoadedCrew, agent: LoadedAgent, canDelegate: boo
   if (!agent.isLead) tools.push({ name: 'save_artifact', description: 'Save long work and get an id to hand back.' });
   tools.push({ name: 'read_artifact', description: 'Read an artifact by id.' });
   tools.push({ name: 'list_docs', description: "List this thread's docs shown to the owner, with ids and which are approved." });
+  if (agent.permissions === 'code') {
+    if (crew.config.code?.theme) tools.push({ name: 'theme_preview', description: "Push your checkout's theme to the store's development theme and get the preview and editor links." });
+    tools.push({ name: 'code_review', description: 'Have a reviewer from another vendor check your changes before you open a pull request.' });
+    tools.push({ name: 'open_pull_request', description: 'Commit your changes, push your branch and open (or update) its pull request. The owner reviews and merges it.' });
+  }
   for (const m of agent.memories) {
     tools.push({ name: `${m.name}__save_memory`, description: `Add an entry to your ${m.name} memory.` });
     tools.push({ name: `${m.name}__remove_memory`, description: `Remove an entry from your ${m.name} memory by id.` });
@@ -100,8 +105,25 @@ export function instructionsMarkdown(opts: TranslateOptions): string {
   parts.push('## Your setup', '');
   parts.push(
     `- Permissions: **${agent.permissions}**.` +
-      (agent.permissions === 'draft' ? ' You may create and edit files in `drafts/` only. Nothing else.' : ' You may read, but not create or change, files.'),
+      (agent.permissions === 'draft'
+        ? ' You may create and edit files in `drafts/` only. Nothing else.'
+        : agent.permissions === 'code'
+          ? ' You work in `repo/`, your own clone of the team\'s code repo, on your own branch.'
+          : ' You may read, but not create or change, files.'),
   );
+  if (agent.permissions === 'code') {
+    const code = crew.config.code;
+    parts.push(
+      `- \`repo/\` is ${code?.repo ?? 'the code repo'}, branched from \`${code?.base ?? 'main'}\` at the start of this thread; it stays yours for the whole thread. ` +
+        'Edit and create files only inside it. Read its AGENTS.md / README files before you change anything, and follow them.',
+      '- Your shell runs in a sandbox: it can change files only in `repo/`, has no network and no credentials. Run checks, tests and scripts there. ' +
+        'Do not install packages or call the internet; ask the owner when something needs that.',
+      '- You do not commit, push or merge yourself. `open_pull_request` commits your work, pushes the branch and opens or updates the pull request; ' +
+        'the owner reviews and merges it. Never try to change the live theme or the base branch another way.',
+      '- Before `open_pull_request`: run the repo\'s checks, look at your change with `theme_preview` when it shows on the store, and run `code_review`; fix what it finds or say why not. ' +
+        'Put the preview link, what you checked and what the owner should test in the pull request body.',
+    );
+  }
   if (comparison) {
     parts.push('- This is a model comparison run. You have no colleagues and no Crew tools.');
     parts.push('  Answer the request directly and completely in your reply.');
@@ -146,6 +168,15 @@ export function translateAgent(opts: TranslateOptions): string[] {
   const { crew, agent, workdir } = opts;
   const written: string[] = [];
   mkdirSync(workdir, { recursive: true });
+  // An agent that can write its own folder (a code agent's shell) could swap these for symlinks
+  // to send the writes and deletes below somewhere else. Remove such links first.
+  for (const p of ['AGENTS.md', '.agents', SKILLS_DIR, 'context', 'context/brand', 'drafts', 'attachments']) {
+    try {
+      if (lstatSync(join(workdir, p)).isSymbolicLink()) rmSync(join(workdir, p), { force: true });
+    } catch {
+      // Not there.
+    }
+  }
 
   // Sessions started before the eve layout may still hold engine-specific files; a
   // resumed CLI must not read stale instructions or skills from them.

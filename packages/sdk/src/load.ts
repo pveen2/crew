@@ -162,7 +162,7 @@ async function loadSkills(root: string, dir: string): Promise<SkillDir[]> {
 }
 
 /** Crew's own tools (MCP server `crew`). A team tool or subagent with one of these names would clash with it. */
-export const CREW_TOOL_NAMES = ['rename_thread', 'ask_owner', 'show_preview', 'save_artifact', 'read_artifact', 'list_docs', 'approve'];
+export const CREW_TOOL_NAMES = ['rename_thread', 'ask_owner', 'show_preview', 'save_artifact', 'read_artifact', 'list_docs', 'approve', 'theme_preview', 'open_pull_request', 'code_review'];
 
 async function loadTools(dir: string): Promise<LoadedTool[]> {
   const tools: LoadedTool[] = [];
@@ -215,10 +215,16 @@ async function loadAgent(root: string, dir: string, name: string, isLead: boolea
   if (!isLead && !def.description) throw new Error(`${where}: a subagent needs a description (the lead reads it to decide whom to call)`);
   if (!isLead && def.limits) throw new Error(`${where}: limits belong on the lead (agent/agent.ts)`);
   const permissions = def.permissions ?? 'read-only';
-  if (permissions !== 'read-only' && permissions !== 'draft') {
-    throw new Error(`${where}: the trial allows only 'read-only' or 'draft' permissions`);
+  if (permissions !== 'read-only' && permissions !== 'draft' && permissions !== 'code') {
+    throw new Error(`${where}: permissions must be 'read-only', 'draft' or 'code'`);
   }
   const { engine, model, reasoning } = parseModel(def.model);
+  if (permissions === 'code') {
+    if (isLead) throw new Error(`${where}: the lead delegates; give 'code' to a specialist`);
+    // The shell runs in Claude Code's OS sandbox, which Crew can keep away from secrets on disk.
+    // Codex's sandbox does not restrict reads, so a Codex shell could read .env.local.
+    if (engine !== 'claude-code') throw new Error(`${where}: 'code' runs on claude-code only`);
+  }
 
   const instructions = readText(join(dir, 'instructions.md'));
   if (!instructions) throw new Error(`${relative(root, dir) || 'agent'}/instructions.md is required`);
@@ -264,6 +270,13 @@ export async function loadCrew(root: string = TEAM_ROOT): Promise<LoadedCrew> {
   const raw = existsSync(configFile) ? ((await importDefault(configFile)) as CrewConfig) : {};
   const store = process.env.SHOPIFY_STORE?.trim() || raw.shopify?.store;
   const config = { ...raw, name: raw.name?.trim() || 'Crew', shopify: store ? { store } : undefined };
+  const coders = Object.values(agents).filter((a) => a.permissions === 'code');
+  if (coders.length) {
+    if (!raw.code?.repo || !/^[\w.-]+\/[\w.-]+$/.test(raw.code.repo)) {
+      throw new Error(`${coders[0]!.name} has permissions 'code': set code.repo ('owner/name') in crew.config.ts`);
+    }
+    if (raw.code.reviewer) parseModel(raw.code.reviewer);
+  }
 
   return {
     root,

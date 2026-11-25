@@ -11,7 +11,6 @@ import { randomUUID } from 'node:crypto';
 import { paths, sharedEngineHome } from '../config.ts';
 import { agentBaseEnv, runJsonl, truncate, type StdinHandle } from './process.ts';
 import type { EngineAdapter, EngineEvent, EngineResult, EngineRunOptions } from './types.ts';
-import type { Usage } from '@crew/protocol';
 
 /** A TOML value. JSON strings and arrays of strings are valid TOML. */
 function toml(value: unknown): string {
@@ -140,7 +139,6 @@ export const codex: EngineAdapter = {
 
         const turn = await request('turn/start', { threadId, input: inputOf(opts.prompt, opts.images) });
         const turnId = String((turn.turn as { id: string }).id);
-        ourTurnId = turnId;
         if (completed || failure) return;
         activeTurnId = turnId;
         opts.onSteer?.((text, images) => {
@@ -161,9 +159,6 @@ export const codex: EngineAdapter = {
         finish();
       }
     };
-
-    const usageUpdates: TokenUsageUpdate[] = [];
-    let ourTurnId: string | null = null;
 
     const run = await runJsonl({
       command: 'codex',
@@ -195,12 +190,7 @@ export const codex: EngineAdapter = {
         }
         const method = msg.method as string;
         const p = (msg.params ?? {}) as Record<string, unknown>;
-        if (method === 'thread/tokenUsage/updated') {
-          // Kept until the run ends: a resume replays earlier turns' usage, and this turn's id
-          // is known only once turn/start answers.
-          const t = p.tokenUsage as TokenUsageUpdate['tokenUsage'] | undefined;
-          if (t?.total && t.last) usageUpdates.push({ turnId: String(p.turnId ?? ''), tokenUsage: t });
-        } else if (method === 'turn/completed') {
+        if (method === 'turn/completed') {
           closeSteer();
           const turn = p.turn as { status?: string; error?: { message?: string } | null };
           if (turn.status === 'completed') completed = true;
@@ -272,36 +262,14 @@ export const codex: EngineAdapter = {
     calls.clear();
 
     const durationMs = Date.now() - started;
-    const usage = turnUsage(usageUpdates, ourTurnId);
-    if (run.aborted) return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs, usage };
+    if (run.aborted) return { ok: false, engineSessionId, finalText: lastText, error: 'Stopped', durationMs };
     if (!completed || failure) {
       const error = failure ?? lastError ?? (run.stderrTail || `codex exited with code ${run.exitCode}`);
-      return { ok: false, engineSessionId, finalText: lastText, error: notSignedInHint(error), resumeFailed, durationMs, usage };
+      return { ok: false, engineSessionId, finalText: lastText, error: notSignedInHint(error), resumeFailed, durationMs };
     }
-    return { ok: true, engineSessionId, finalText: lastText, durationMs, usage };
+    return { ok: true, engineSessionId, finalText: lastText, durationMs };
   },
 };
-
-interface TokenUsageUpdate {
-  turnId: string;
-  tokenUsage: { total: { inputTokens: number; outputTokens: number }; last: { inputTokens: number; outputTokens: number } };
-}
-
-/**
- * What this turn used. total covers the whole Codex thread, so take the growth of
- * total across this turn's updates, counting the first update's own call too.
- */
-function turnUsage(updates: TokenUsageUpdate[], turnId: string | null): Usage | undefined {
-  const ours = turnId ? updates.filter((u) => u.turnId === turnId) : [];
-  if (!ours.length) return undefined;
-  const first = ours[0]!.tokenUsage;
-  const last = ours.at(-1)!.tokenUsage;
-  return {
-    costUsd: null,
-    inputTokens: Math.max(0, last.total.inputTokens - first.total.inputTokens + first.last.inputTokens),
-    outputTokens: Math.max(0, last.total.outputTokens - first.total.outputTokens + first.last.outputTokens),
-  };
-}
 
 function notSignedInHint(error: string): string {
   if (/not logged in|login|401|unauthorized|auth/i.test(error)) {

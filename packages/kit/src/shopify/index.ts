@@ -2,4 +2,4 @@
 // helper an approval-gated tool (like the store manager's shopify_mutate) uses.
 
 export { shopifyConnection } from './connection.ts';
-export { graphql, isMutation, isReadOnlyQuery, authScopes, readScopes, writeScopes } from './cli.ts';
+export { graphql, isMutation, isReadOnlyQuery, rootFields, authScopes, readScopes, writeScopes } from './cli.ts';

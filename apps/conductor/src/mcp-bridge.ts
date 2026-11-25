@@ -8,6 +8,9 @@
 //   show_preview(title, artifactId | content)   show a document to the owner
 //   save_artifact(title, content)   specialists: store long work, get an id back
 //   read_artifact(id)               read an artifact from this thread
+//   theme_preview()                 permissions 'code': push repo/ to the store's development theme
+//   code_review(focus?)             permissions 'code': a reviewer from another vendor checks the branch
+//   open_pull_request(title, body)  permissions 'code': commit, push the branch, open or update its PR
 //   <memory>__save_memory(text)     agents with agent/memory/<memory>.ts
 //   <memory>__remove_memory(id)
 //
@@ -36,6 +39,9 @@ const AGENT = env('CREW_AGENT');
 const BRIDGE_TOKEN = env('CREW_BRIDGE_TOKEN');
 const CAN_SAVE_ARTIFACTS = process.env.CREW_CAN_SAVE_ARTIFACTS === '1';
 const CAN_RENAME_THREAD = process.env.CREW_CAN_RENAME_THREAD === '1';
+/** permissions 'code': the agent has a checkout in repo/ and the tools below. */
+const CAN_CODE = process.env.CREW_CAN_CODE === '1';
+const HAS_THEME = process.env.CREW_HAS_THEME === '1';
 // Team tools may import Crew's packages without their repo installing them.
 resolveTeamImportsFrom(import.meta.url);
 
@@ -253,6 +259,49 @@ server.registerTool(
   },
   forward('read_artifact'),
 );
+
+if (CAN_CODE) {
+  if (HAS_THEME) {
+    server.registerTool(
+      'theme_preview',
+      {
+        description:
+          "Push the theme in your checkout (repo/, including changes you have not committed) to the store's development theme, and get its preview link and theme editor link. " +
+          'It is never the live theme. There is one development theme, so the link shows whichever branch was pushed last: push again right before you share a link. ' +
+          'Takes a minute or two. Look at the result in the preview yourself before you report it.',
+        inputSchema: {},
+      },
+      forward('theme_preview'),
+    );
+  }
+  server.registerTool(
+    'code_review',
+    {
+      description:
+        'A reviewer model from another vendor reads your changes against the base branch (uncommitted ones included) and the repo, and reports real problems with file:line. ' +
+        'Run it before open_pull_request, fix what it finds, and run it again after large fixes. Takes a few minutes.',
+      inputSchema: { focus: z.string().max(1000).optional().describe('Anything the reviewer should look at closely: a risky part, an edge case.') },
+    },
+    forward('code_review'),
+  );
+  server.registerTool(
+    'open_pull_request',
+    {
+      description:
+        'Commit all your changes in repo/, push your branch and open a pull request into the base branch, or update the one already open for this branch. ' +
+        "A new pull request also goes into the owner's Inbox. The owner reviews and merges; you cannot merge. Returns the link.",
+      inputSchema: {
+        title: z.string().min(5).max(120).describe('What the change does, in plain words. Example: "Show free-shipping threshold per market".'),
+        body: z
+          .string()
+          .min(20)
+          .describe('Markdown: why, what changed, the preview link, what you checked (checks, review) and what the owner should test.'),
+        commitMessage: z.string().max(500).optional().describe('Defaults to the title.'),
+      },
+    },
+    forward('open_pull_request'),
+  );
+}
 
 for (const m of MEMORIES) {
   server.registerTool(

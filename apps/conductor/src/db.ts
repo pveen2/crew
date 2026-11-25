@@ -214,6 +214,7 @@ function toInbox(r: Row): InboxItem {
     kind: r.kind as InboxKind,
     role: (r.role as string | null) ?? '',
     previewId: (r.preview_id as string | null) ?? undefined,
+    url: (r.url as string | null) ?? undefined,
     ...(r.choices ? (JSON.parse(r.choices as string) as Pick<InboxItem, 'options' | 'recommended' | 'multiSelect'>) : {}),
     title: r.title as string,
     body: r.body as string,
@@ -259,6 +260,7 @@ export class Store {
       "ALTER TABLE inbox ADD COLUMN role TEXT NOT NULL DEFAULT ''",
       'ALTER TABLE inbox ADD COLUMN preview_id TEXT',
       'ALTER TABLE inbox ADD COLUMN choices TEXT',
+      'ALTER TABLE inbox ADD COLUMN url TEXT',
       "ALTER TABLE threads ADD COLUMN benched TEXT NOT NULL DEFAULT '[]'",
       "ALTER TABLE threads ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '[]'",
     'ALTER TABLE turns ADD COLUMN cost_usd REAL',
@@ -528,8 +530,8 @@ export class Store {
 
   insertInbox(i: InboxItem): void {
     this.run(
-      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, choices, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null,
+      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, url, choices, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null, i.url ?? null,
       i.options?.length ? JSON.stringify({ options: i.options, recommended: i.recommended, multiSelect: i.multiSelect }) : null,
       i.title, i.body, i.status, i.createdAt,
     );
