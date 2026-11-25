@@ -33,11 +33,13 @@ export function DocsView({ docId }: { docId?: string }) {
 
   const all = useMemo(() => Object.values(docs ?? {}).sort((a, b) => b.shownAt - a.shownAt), [docs]);
   const selected = (docId && docs?.[docId]) || undefined;
-  const reviewCount = useMemo(() => groupByThread(all.filter((d) => inFilter(d, 'review'))).length, [all]);
   // The doc that is open keeps its row after it is archived (or approved, or restored), until another is picked.
   const groups = useMemo(() => {
     const list = groupByThread(all.filter((d) => inFilter(d, filter)));
-    if (selected && !list.some((g) => g[0]!.threadId === selected.threadId)) {
+    // The open version stands for its thread's row, so the row and the header agree.
+    const own = selected ? list.findIndex((g) => g[0]!.threadId === selected.threadId) : -1;
+    if (selected && own >= 0) list[own] = [selected, ...list[own]!.filter((d) => d.id !== selected.id)];
+    else if (selected) {
       const at = list.findIndex((g) => g[0]!.shownAt < selected.shownAt);
       list.splice(at < 0 ? list.length : at, 0, [selected]);
     }
@@ -66,7 +68,7 @@ export function DocsView({ docId }: { docId?: string }) {
             value={filter}
             onValueChange={setDocsFilter}
             items={[
-              { value: 'review', label: reviewCount ? `To review · ${reviewCount}` : 'To review' },
+              { value: 'review', label: 'To review' },
               { value: 'approved', label: 'Approved' },
               { value: 'archived', label: 'Archived' },
             ]}
@@ -254,16 +256,22 @@ function VersionPicker({ summary }: { summary: DocSummary }) {
 /** Archive clears the whole thread's docs from the list (every version); Restore brings back the one open. */
 function ArchiveButton({ summary }: { summary: DocSummary }) {
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   const versions = useThreadDocs(summary.threadId);
   const archived = Boolean(summary.archivedAt);
-  const toggle = () => {
+  const toggle = async () => {
     setBusy(true);
-    const ids = archived ? [summary.id] : versions.filter((d) => !d.archivedAt).map((d) => d.id);
-    void Promise.allSettled(ids.map((id) => setDocArchived(id, !archived))).finally(() => setBusy(false));
+    setFailed(false);
+    // The open version last: if another version fails, this one still offers Archive to try again.
+    const ids = archived ? [summary.id] : [...versions.filter((d) => !d.archivedAt && d.id !== summary.id).map((d) => d.id), summary.id];
+    const results = await Promise.allSettled(ids.slice(0, -1).map((id) => setDocArchived(id, !archived)));
+    if (results.some((r) => r.status === 'rejected')) setFailed(true);
+    else await setDocArchived(summary.id, !archived).catch(() => setFailed(true));
+    setBusy(false);
   };
   return (
-    <Button disabled={busy} onClick={toggle} title={archived ? 'Put it back in the Docs list' : 'Clear this doc and its versions from the list. They stay under Archived.'}>
-      {archived ? 'Restore' : 'Archive'}
+    <Button disabled={busy} onClick={() => void toggle()} title={archived ? 'Put it back in the Docs list' : 'Clear this doc and its versions from the list. They stay under Archived.'}>
+      {failed ? (archived ? 'Restore failed · Retry' : 'Archive failed · Retry') : archived ? 'Restore' : 'Archive'}
     </Button>
   );
 }

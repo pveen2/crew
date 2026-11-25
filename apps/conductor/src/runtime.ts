@@ -1496,7 +1496,9 @@ export class Runtime {
   setDocStatus(id: string, status: DocStatus): DocSummary {
     const before = this.store.artifact(id);
     if (!before?.shownAt) throw new Error('No such doc');
-    const a = this.store.setDocStatus(id, status, Date.now())!;
+    let a = this.store.setDocStatus(id, status, Date.now())!;
+    // An approved version is the one that counts: approving one from the archive brings it back.
+    if (status === 'approved' && a.archivedAt) a = this.store.setDocArchived(id, null)!;
     const thread = this.store.thread(a.threadId);
     const root = thread && this.store.session(thread.rootSessionId);
     if (root && before.status !== status) {
