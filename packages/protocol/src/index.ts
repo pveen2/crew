@@ -251,6 +251,39 @@ export interface StateResponse {
   activity: AgentActivity[];
 }
 
+/** One day of work, in the owner's time zone. Cost is at API prices (see Usage). */
+export interface SpendDay {
+  /** YYYY-MM-DD. */
+  date: string;
+  costUsd: number;
+  tokens: number;
+  /** Tokens from turns that reported no cost (Codex). */
+  unpricedTokens: number;
+  /** Agent turns that started this day, specialists included. */
+  turns: number;
+  /** Threads with at least one turn this day. */
+  threads: number;
+  /** Time the team worked on the owner's messages (specialist time runs inside it). */
+  workMs: number;
+}
+
+export interface SpendByAgent {
+  role: string;
+  costUsd: number;
+  tokens: number;
+  unpricedTokens: number;
+  turns: number;
+}
+
+/** GET /api/spend?days=30&tz=<Date#getTimezoneOffset()> */
+export interface SpendResponse {
+  /** Oldest first, one entry per day, empty days included. */
+  days: SpendDay[];
+  /** Most expensive first. */
+  agents: SpendByAgent[];
+  totals: Omit<SpendDay, 'date'> & { inputTokens: number; outputTokens: number };
+}
+
 export interface ThreadDetailResponse {
   thread: Thread;
   sessions: Session[];

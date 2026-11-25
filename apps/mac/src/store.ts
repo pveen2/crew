@@ -15,6 +15,7 @@ import type {
   InboxItem,
   RoleSummary,
   ServerMessage,
+  SpendResponse,
   Session,
   StateResponse,
   Thread,
@@ -727,6 +728,11 @@ export async function loadDocs(): Promise<void> {
   } finally {
     if (--docLoads === 0) docUpdatesDuringLoad = null;
   }
+}
+
+/** Spend and work per day for the last `days` days, in this Mac's time zone. */
+export function loadSpend(days = 30): Promise<SpendResponse> {
+  return api<SpendResponse>('GET', `/api/spend?days=${days}&tz=${new Date().getTimezoneOffset()}`);
 }
 
 /** One doc's summary by id, for a doc that is not in the list yet. */
