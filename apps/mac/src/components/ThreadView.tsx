@@ -873,7 +873,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
   if (!thread || !data || !session) {
     const missing = loadError || (data && !session);
     return (
-      <Panel as="main" className="pane-main">
+      <Panel as="main" className="pane-main pane-main--chat">
         <PanelHeader size="lg" />
         <div className="pane-center">
           {missing ? (
@@ -900,7 +900,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
 
   return (
     <>
-      <Panel as="main" className="pane-main">
+      <Panel as="main" className="pane-main pane-main--chat">
         <PanelHeader size="lg">
           {session.depth > 0 ? (
             <InlineStack gap="200" className="thread-title">
