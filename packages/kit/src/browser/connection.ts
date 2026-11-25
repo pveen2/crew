@@ -21,6 +21,7 @@ import { defineConnection } from '@crew/sdk/define';
 //   config cap), strips the screenshot path arguments so nothing is written
 //   where the agent chooses, deletes agent-browser's own temp copy, and
 //   saves kept screenshots in the thread's image folder (CREW_IMAGES_DIR).
+//   Its own agent_browser_keep_media saves an image or video file by URL there.
 // - Who gets it: never an agent that also holds store or customer data. A page
 //   could talk such an agent into sending that data out.
 //
@@ -34,6 +35,8 @@ const READ = [
   'agent_browser_get_text',
   'agent_browser_get_url',
   'agent_browser_get_title',
+  // An element's attribute, e.g. an <img> src or <video> poster, for agent_browser_keep_media.
+  'agent_browser_get_attr',
   'agent_browser_scroll',
   'agent_browser_wait_ms',
   'agent_browser_wait_for_selector',
@@ -45,6 +48,8 @@ const READ = [
   'agent_browser_close',
   // Inline image; guard.ts keeps it off disk unless the agent asks to keep it for the thread.
   'agent_browser_screenshot',
+  // guard.ts's own tool: downloads an image or video file into the thread's image folder.
+  'agent_browser_keep_media',
 ];
 
 /** Clicking and filling in forms: needed for calculators, filters and cookie banners. */
@@ -78,6 +83,10 @@ export const browserConnection = (opts: BrowserOptions) => {
     args: [
       fileURLToPath(new URL('./guard.ts', import.meta.url)),
       'mcp',
+      // Every tool, so agent_browser_get_attr is there (the default "core" set lacks it).
+      // What the agent can use is still only the allow-list below: guard.ts hides and refuses the rest.
+      '--tools',
+      'all',
       '--config',
       fileURLToPath(new URL('./config.json', import.meta.url)),
     ],

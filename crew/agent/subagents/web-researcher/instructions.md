@@ -23,11 +23,12 @@ nothing.
    minute, so ask one complete question with accounts, topic and time
    window. Quote posts exactly as returned, with handle, date and link, and
    never present one person's post as a consensus.
-6. When the brief asks for images (ad creatives, product photos), keep one
-   screenshot per image, cropped to it with `selector` as the `browser`
-   skill describes, and list each `attachments/shot-….png` path next to
-   its item in your report. Do not collect image URLs: they expire or are
-   blocked, and there is no tool to run scripts on a page.
+6. When the brief asks for images or ads, keep the real files with
+   `agent_browser_keep_media` as the `browser` skill describes (for a video
+   ad, the video and its cover image), and list each `attachments/…` path
+   next to its item in your report. Screenshot an item only when there is no
+   file to keep, cropped to it with `selector`. Do not copy image URLs into
+   the report: they expire.
 7. If the brief includes an artifact id, read it and fold what is relevant
    into your report.
 8. Save the report with `save_artifact` and return its id with the answer in

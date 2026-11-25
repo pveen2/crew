@@ -94,8 +94,14 @@ const HTML_GUIDE =
   'crew-tag--strong, crew-tag--success, crew-tag--caution, crew-tag--critical; crew-button--primary. ' +
   'Example: <div class="crew-card-media crew-card-media--contain">. Also <p class="crew-lede"> under the title, ' +
   '<div class="crew-note"> for a caveat, and <div class="crew-stats"> of <div class="crew-stat"><b>83</b><span>days live</span></div>. ' +
-  'Images: use https URLs, or thread images by path: <img src="attachments/<file>">, which covers images the owner attached ' +
-  'and screenshots kept with the browser (agent_browser_screenshot with keep: true). No scripts: they do not run.';
+  'Images: use https URLs, or thread images by path: <img src="attachments/<file>">, which covers images the owner attached, ' +
+  'screenshots kept with the browser (agent_browser_screenshot with keep: true) and files kept with agent_browser_keep_media. ' +
+  'A kept video: <video src="attachments/media-….mp4" poster="attachments/media-….jpg" controls muted playsinline> inside crew-card-media. ' +
+  'When the owner asks to see things (ads, products, pages), the pictures are the page: put the grid first, right under the title and ' +
+  'at most one short lede, and give each card little text: a title of a few words, at most two tags and one sentence. ' +
+  'Pick the media shape that matches the image (crew-card-media--story for a 9:16 ad) so it fills the card; use --contain only for ' +
+  'a screenshot with text. Copy, IDs, links and caveats go below the grid (a table, or <details><summary>Details</summary>…</details>), ' +
+  'never between the pictures. No scripts: they do not run.';
 
 const CONCEPTS_GUIDE =
   'concepts: for a round of static ad concepts, pass content as JSON and the app draws each concept as the ad itself ' +

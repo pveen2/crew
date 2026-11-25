@@ -168,8 +168,8 @@ const ATTACHMENT_SRC = /^(?:\.\/)?attachments\/([\w][\w.-]*)$/;
  * Get an agent's HTML document ready for the sandboxed frame:
  * - Crew's tokens and document styles go first in <head>, so it looks like the app unless the
  *   agent styled it itself (the defaults have no specificity; see @crew/ui document.css).
- * - Thread images (`attachments/<file>`: the owner's uploads and screenshots agents kept) become
- *   data: URLs. The frame has no origin and cannot fetch from the conductor itself.
+ * - Thread images and videos (`attachments/<file>`: the owner's uploads, and screenshots and media
+ *   files agents kept) become data: URLs. The frame has no origin and cannot fetch from the conductor itself.
  * - Web links open as new tabs (the browser tab in the panel), never inside the frame: most sites
  *   refuse to be framed and the preview would go blank. Links within the report (#section) stay.
  */
@@ -183,17 +183,29 @@ async function prepareHtml(html: string, threadId: string | undefined): Promise<
   style.textContent = DOCUMENT_CSS;
   parsed.head.prepend(style);
 
-  const images = [...parsed.querySelectorAll('img[src], source[srcset], video[poster]')];
+  // Every place a thread image or video can go: <img src>, <video src/poster>, <source src/srcset>.
+  const slots = (
+    [
+      ['img[src]', 'src'],
+      ['video[src]', 'src'],
+      ['video[poster]', 'poster'],
+      ['source[src]', 'src'],
+      ['source[srcset]', 'srcset'],
+    ] as const
+  ).flatMap(([sel, attr]) => [...parsed.querySelectorAll(sel)].map((el) => [el, attr] as const));
   await Promise.all(
-    images.map(async (el) => {
-      const attr = el.tagName === 'SOURCE' ? 'srcset' : el.tagName === 'VIDEO' ? 'poster' : 'src';
+    slots.map(async ([el, attr]) => {
       const file = ATTACHMENT_SRC.exec((el.getAttribute(attr) ?? '').trim())?.[1];
       if (!file) return;
-      if (!threadId) return el.setAttribute('alt', `${el.getAttribute('alt') ?? ''} (image not available here)`.trim());
+      const missing = (why: string) => {
+        if (el.tagName === 'IMG') el.setAttribute('alt', `${el.getAttribute('alt') ?? ''} (${why})`.trim());
+        else el.setAttribute('title', why);
+      };
+      if (!threadId) return missing('image not available here');
       try {
         el.setAttribute(attr, await attachmentDataUrl(threadId, file));
       } catch {
-        el.setAttribute('alt', `${el.getAttribute('alt') ?? ''} (image ${file} not found)`.trim());
+        missing(`image ${file} not found`);
       }
     }),
   );
