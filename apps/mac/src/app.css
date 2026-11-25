@@ -279,12 +279,35 @@ body,
   min-height: 0;
   display: flex;
   gap: var(--cr-gap-window);
+  position: relative;
+  container: panes / inline-size;
 }
 .pane-main {
   flex: 999 1 var(--cr-width-pane-main);
 }
+/* The chat keeps a readable width; the preview gives way instead. */
+.pane-main--chat {
+  min-width: min(var(--cr-width-pane-main-min), 100%);
+}
+.pane-main--chat .pane-scroll {
+  overflow-x: hidden;
+}
 .pane-preview {
   flex: 1 1 var(--cr-width-pane-preview);
+  min-width: var(--cr-width-pane-preview-min);
+}
+/* Too narrow for the chat and the preview side by side: the preview covers the
+   chat, as on a phone, and its close button goes back to the chat. */
+@container panes (max-width: 707px) {
+  .pane-preview {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    min-width: 0;
+  }
+  .pane-resizer {
+    display: none;
+  }
 }
 /* Drag handle between two panes, as in T3 Code: col-resize cursor, a 1px line
    that shows on hover and takes the accent colour while dragging. It sits in
@@ -1007,6 +1030,9 @@ body,
   background: transparent;
 }
 .md table {
+  /* A table wider than the column scrolls on its own, not the whole pane. */
+  display: block;
+  overflow-x: auto;
   width: 100%;
   border-collapse: collapse;
   font-size: var(--cr-font-size-313);
@@ -1474,6 +1500,9 @@ body,
   }
   .pane-list {
     flex: 1 1 auto !important;
+    min-width: 0;
+  }
+  .pane-main--chat {
     min-width: 0;
   }
   /* The preview covers the thread; its close button goes back to the chat. */

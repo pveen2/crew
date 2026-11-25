@@ -226,7 +226,9 @@
   --cr-width-inbox-list: 380px;
   --cr-width-inbox-list-min: 300px;
   --cr-width-pane-main: 460px;
+  --cr-width-pane-main-min: 380px;
   --cr-width-pane-preview: 520px;
+  --cr-width-pane-preview-min: 320px;
   --cr-width-card-min: 260px;
   --cr-width-search: 240px;
   --cr-width-time: 36px;

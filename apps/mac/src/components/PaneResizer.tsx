@@ -33,7 +33,9 @@ export function PaneResizer({
     handle.setPointerCapture(e.pointerId);
     const startX = e.clientX;
     const startWidth = pane.getBoundingClientRect().width;
-    const max = Math.max(min, panes.getBoundingClientRect().width - minOther);
+    // The gap between the panes is not the other pane's, so it comes off too.
+    const gap = parseFloat(getComputedStyle(panes).columnGap) || 0;
+    const max = Math.max(min, panes.getBoundingClientRect().width - minOther - gap);
     const sign = target === 'after' ? -1 : 1;
     document.body.classList.add('is-resizing');
     handle.classList.add('is-active');
