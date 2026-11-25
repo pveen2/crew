@@ -131,7 +131,7 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
             }
           />
         ) : (
-          <InlineStack gap="200" className="inbox-card-actions">
+          <InlineStack gap="200" wrap className="inbox-card-actions">
             <Button variant="tertiary" onClick={openThread}>
               Open thread
             </Button>
