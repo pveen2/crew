@@ -156,7 +156,7 @@ export type CrewEventBody =
   /** A tool call waits for the owner (approve or deny in the Inbox). */
   | { type: 'approval'; inboxId: string; toolName: string; input: unknown }
   | { type: 'approval_done'; inboxId: string; toolName: string; approved: boolean }
-  | { type: 'preview'; previewId: string; title: string; format: DocFormat; content: string }
+  | { type: 'preview'; previewId: string; title: string; format: DocFormat; content: string; /** The doc behind it (Docs tab). Missing on previews from older builds. */ artifactId?: string }
   | {
       type: 'turn_started';
       prompt: string;
@@ -277,7 +277,8 @@ export type ServerMessage =
   | { kind: 'thread'; thread: Thread }
   | { kind: 'session'; session: Session }
   | { kind: 'turn'; turn: Turn }
-  | { kind: 'inbox'; item: InboxItem };
+  | { kind: 'inbox'; item: InboxItem }
+  | { kind: 'doc'; doc: DocSummary };
 
 // ---------------------------------------------------------------------------
 // Where the conductor advertises itself on this machine.
@@ -334,6 +335,29 @@ export interface ConnectionStatus {
 
 // ---------------------------------------------------------------------------
 // Documents
+
+/** Where a doc stands. Agents make drafts; the owner approves the version that counts. */
+export type DocStatus = 'draft' | 'approved';
+
+/** A doc the owner has been shown (the Docs tab): an artifact plus where it stands. */
+export interface DocSummary {
+  id: string;
+  threadId: string;
+  threadTitle: string;
+  /** The agent that made it. */
+  agent: string;
+  title: string;
+  format: DocFormat;
+  status: DocStatus;
+  createdAt: number;
+  /** When it was last put in the preview. */
+  shownAt: number;
+  approvedAt: number | null;
+}
+
+export interface DocResponse extends DocSummary {
+  content: string;
+}
 
 /**
  * How an artifact or preview is written. `concepts` is a ConceptBoard as JSON:
@@ -429,7 +453,8 @@ export function parseConceptBoard(json: string): ConceptBoard {
     if (pos !== 'top' && pos !== 'center' && pos !== 'bottom') fail(`${at}.image.textPosition must be top, center or bottom`);
     if (!Array.isArray(c.headlines) || c.headlines.length === 0) fail(`${at}.headlines must list at least one headline`);
     return {
-      name: str(c.name, `${at}.name`, true)!,
+      // The board numbers concepts itself: "3. Between…" would read "3. 3. Between…".
+      name: str(c.name, `${at}.name`, true)!.replace(/^\s*\d+\s*[.):-]\s*/, ''),
       angle: str(c.angle, `${at}.angle`, true)!,
       tells: str(c.tells, `${at}.tells`),
       stop: str(c.stop, `${at}.stop`),

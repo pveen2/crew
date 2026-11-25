@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
+import { isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
 import { RoleFaces, age, usageLabel, usageTitle, useNow } from './common';
 
 export function Sidebar() {
@@ -12,6 +12,7 @@ export function Sidebar() {
   const doneCount = useApp((s) => Object.keys(s.done).length);
   const inbox = useApp((s) => s.inbox);
   const inboxRead = useApp((s) => s.inboxRead);
+  const newDocs = useApp((s) => (s.docs ? Object.values(s.docs).filter((d) => isNewDoc(d, s.docsSeen)).length : 0));
   const activity = useApp((s) => s.activity);
   const connection = useApp((s) => s.connection);
   const starting = useApp((s) => s.conductorStarting);
@@ -44,6 +45,7 @@ export function Sidebar() {
           <IconButton tone="dark" size="md" icon="inbox" label="Inbox" pressed={view.name === 'inbox'} onClick={() => navigate({ name: 'inbox' })} />
           {inboxItems.length > 0 && <span className="cr-dot cr-dot--notification" aria-hidden />}
         </span>
+        <IconButton tone="dark" size="md" icon="document" label="Docs" pressed={view.name === 'docs'} onClick={() => navigate({ name: 'docs' })} />
         <IconButton tone="dark" size="md" icon="agents" label="Agents" pressed={view.name === 'agents'} onClick={() => navigate({ name: 'agents' })} />
         <span className="cr-spacer" />
         <IconButton tone="dark" size="md" icon="checkCircle" label="Done" pressed={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
@@ -82,6 +84,7 @@ export function Sidebar() {
         selected={view.name === 'inbox'}
         onClick={() => navigate({ name: 'inbox' })}
       />
+      <NavItem icon="document" label="Docs" count={newDocs || undefined} selected={view.name === 'docs'} onClick={() => navigate({ name: 'docs' })} />
       <NavItem
         icon="agents"
         label="Agents"

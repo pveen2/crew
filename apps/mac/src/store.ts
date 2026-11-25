@@ -6,6 +6,9 @@ import type {
   AgentActivity,
   AttachmentUpload,
   BrandFont,
+  DocResponse,
+  DocStatus,
+  DocSummary,
   ConnectionStatus,
   CrewEvent,
   InboxItem,
@@ -92,6 +95,7 @@ export type View =
   | { name: 'threads' }
   | { name: 'done' }
   | { name: 'inbox'; itemId?: string }
+  | { name: 'docs'; docId?: string }
   | { name: 'agents' }
   | { name: 'team' }
   | { name: 'settings' }
@@ -103,6 +107,8 @@ export interface PreviewDoc {
   /** 'web' is a browser tab: `content` is its current URL. */
   format: 'markdown' | 'html' | 'concepts' | 'web';
   content: string;
+  /** The doc behind it (Docs tab), when there is one. */
+  artifactId?: string;
   from: string;
   ts: number;
 }
@@ -150,6 +156,11 @@ export interface AppState {
   /** Width of the Inbox list in px, set by dragging; null = default. Kept on this Mac. */
   inboxListWidth: number | null;
   inboxFilter: 'all' | 'unread';
+  /** Docs the owner was shown (Docs tab), by id. Null until loaded. */
+  docs: Record<string, DocSummary> | null;
+  docsFilter: 'all' | DocStatus;
+  /** Docs the owner has opened, and when this Mac started counting (older docs count as seen). */
+  docsSeen: { since: number; ids: Record<string, true> };
   /** Inbox items the owner has looked at. Kept on this Mac only; the conductor has no read state. */
   inboxRead: Record<string, true>;
   /** Threads that could not be loaded (missing or failed), with the reason. */
@@ -176,6 +187,7 @@ function viewFromHash(): View {
   const [name, a, b] = location.hash.replace(/^#\/?/, '').split('/').map((x) => (x ? decode(x) : x));
   if (name === 'thread' && a) return { name: 'thread', threadId: a, sessionId: b || undefined };
   if (name === 'inbox') return { name, itemId: a || undefined };
+  if (name === 'docs') return { name, docId: a || undefined };
   if (name === 'threads' || name === 'agents' || name === 'done' || name === 'team' || name === 'settings') return { name };
   return { name: 'new', role: (name === 'new' && a) || undefined };
 }
@@ -186,11 +198,48 @@ function hashOf(view: View): string {
       return `#thread/${view.threadId}${view.sessionId ? `/${view.sessionId}` : ''}`;
     case 'inbox':
       return view.itemId ? `#inbox/${encodeURIComponent(view.itemId)}` : '#inbox';
+    case 'docs':
+      return view.docId ? `#docs/${encodeURIComponent(view.docId)}` : '#docs';
     case 'new':
       return view.role ? `#new/${encodeURIComponent(view.role)}` : '#new';
     default:
       return `#${view.name}`;
   }
+}
+
+const DOCS_SEEN_KEY = 'crew.docs.seen';
+function loadDocsSeen(): AppState['docsSeen'] {
+  try {
+    const v = JSON.parse(localStorage.getItem(DOCS_SEEN_KEY) ?? 'null') as AppState['docsSeen'] | null;
+    if (v && typeof v.since === 'number' && v.ids) return v;
+  } catch {
+    /* fall through: start counting now */
+  }
+  const fresh = { since: Date.now(), ids: {} };
+  try {
+    localStorage.setItem(DOCS_SEEN_KEY, JSON.stringify(fresh));
+  } catch {
+    /* storage unavailable */
+  }
+  return fresh;
+}
+
+/** A draft the owner has not opened yet: counts on Docs in the sidebar. */
+export function isNewDoc(d: DocSummary, seen: AppState['docsSeen']): boolean {
+  return d.status === 'draft' && d.shownAt > seen.since && !seen.ids[d.id];
+}
+
+export function markDocSeen(id: string): void {
+  if (state.docsSeen.ids[id]) return;
+  set((s) => {
+    const docsSeen = { since: s.docsSeen.since, ids: { ...s.docsSeen.ids, [id]: true as const } };
+    try {
+      localStorage.setItem(DOCS_SEEN_KEY, JSON.stringify(docsSeen));
+    } catch {
+      /* storage full or unavailable: stays in memory */
+    }
+    return { docsSeen };
+  });
 }
 
 const READ_KEY = 'crew.inbox.read';
@@ -267,6 +316,9 @@ let state: AppState = {
   previewWidth: loadWidth(PREVIEW_WIDTH_KEY),
   inboxListWidth: loadWidth(INBOX_LIST_WIDTH_KEY),
   inboxFilter: 'all',
+  docs: null,
+  docsFilter: 'all',
+  docsSeen: loadDocsSeen(),
   inboxRead: loadRead(),
   loadErrors: {},
   newDraft: null,
@@ -380,6 +432,9 @@ function onMessage(msg: ServerMessage): void {
       break;
     case 'turn':
       break;
+    case 'doc':
+      set((s) => (s.docs ? { docs: { ...s.docs, [msg.doc.id]: msg.doc } } : {}));
+      break;
     case 'event': {
       const e = msg.event;
       set((s) => {
@@ -482,6 +537,8 @@ export async function connect(): Promise<void> {
     const current = state.view.name === 'thread' ? state.view.threadId : undefined;
     set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {} }));
     await refreshState();
+    // Docs: the sidebar counts new drafts.
+    void loadDocs().catch(() => undefined);
     if (current) await loadThread(current);
   } catch {
     pending = null;
@@ -550,6 +607,7 @@ export function navigate(view: View): void {
     // Looking at a thread counts as reading its Inbox items.
     markRead(Object.values(state.inbox).filter((i) => i.threadId === view.threadId).map((i) => i.id));
   }
+  if (view.name === 'docs' && view.docId) markDocSeen(view.docId);
   if (view.name === 'inbox' && view.itemId) {
     markRead([view.itemId]);
     const item = state.inbox[view.itemId];
@@ -593,6 +651,32 @@ export function setShowSpend(showSpend: boolean): void {
   } catch {
     /* storage unavailable: the choice lasts for this session */
   }
+}
+
+export async function loadDocs(): Promise<void> {
+  const docs = await api<DocSummary[]>('GET', '/api/docs');
+  set({ docs: Object.fromEntries(docs.map((d) => [d.id, d])) });
+}
+
+const docContents = new Map<string, Promise<DocResponse>>();
+/** A doc with its content (cached: a doc's content never changes, only its status). */
+export function loadDoc(id: string): Promise<DocResponse> {
+  let p = docContents.get(id);
+  if (!p) {
+    p = api<DocResponse>('GET', `/api/docs/${encodeURIComponent(id)}`);
+    p.catch(() => docContents.delete(id));
+    docContents.set(id, p);
+  }
+  return p;
+}
+
+export async function setDocStatus(id: string, status: DocStatus): Promise<void> {
+  const doc = await api<DocSummary>('POST', `/api/docs/${encodeURIComponent(id)}/status`, { status });
+  set((s) => ({ docs: { ...(s.docs ?? {}), [doc.id]: doc } }));
+}
+
+export function setDocsFilter(docsFilter: 'all' | DocStatus): void {
+  set({ docsFilter });
 }
 
 export function setInboxFilter(inboxFilter: 'all' | 'unread'): void {

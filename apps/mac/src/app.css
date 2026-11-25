@@ -600,6 +600,9 @@ body,
   .concept {
     grid-template-columns: 1fr;
   }
+  .concept > .ad {
+    width: min(100%, 300px);
+  }
 }
 .doc-scroll:has(.concepts) {
   container-type: inline-size;
@@ -799,6 +802,30 @@ body,
   font-style: italic;
   font-size: 1.12em;
   letter-spacing: 0;
+}
+
+/* ------------------------------------------------------------------ inbox cards */
+
+.inbox-cards {
+  max-width: var(--cr-width-reading);
+  margin: 0 auto;
+  padding: var(--cr-space-500) var(--cr-space-400);
+}
+.inbox-card {
+  scroll-margin: var(--cr-space-400);
+}
+.inbox-card--focused {
+  box-shadow: 0 0 0 2px var(--cr-color-border-focus);
+}
+.inbox-card-meta {
+  min-width: 0;
+  color: var(--cr-color-text-secondary);
+}
+.inbox-card-actions {
+  padding-top: var(--cr-space-100);
+}
+.inbox-empty {
+  min-height: 60vh;
 }
 
 /* ------------------------------------------------------------------ inbox */

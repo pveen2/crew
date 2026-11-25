@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { IconButton, InlineStack, Panel, PanelHeader, SegmentedControl, Tabs, Text } from '@crew/ui';
+import type { DocStatus } from '@crew/protocol';
+import { Button, IconButton, InlineStack, Panel, PanelHeader, SegmentedControl, Tabs, Text } from '@crew/ui';
 import tokensCss from '@crew/ui/tokens.css?raw';
 import documentCss from '@crew/ui/document.css?raw';
-import { attachmentDataUrl, closePreview, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
+import { attachmentDataUrl, closePreview, loadDocs, markDocSeen, setDocStatus, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
 import { Markdown, RoleFace, ago, useRoleLabel } from './common';
 import { ConceptBoard, conceptBoardText } from './ConceptBoard';
 
@@ -18,26 +19,60 @@ export function usePreviewDocs(threadId: string, openOnly = false): PreviewDoc[]
   return useMemo(() => {
     const fromEvents: PreviewDoc[] = (data?.events ?? []).flatMap((e) =>
       e.type === 'preview'
-        ? [{ id: e.previewId, title: e.title, format: e.format, content: e.content, from: data?.sessions[e.sessionId]?.role ?? '', ts: e.ts }]
+        ? [{ id: e.previewId, title: e.title, format: e.format, content: e.content, artifactId: e.artifactId, from: data?.sessions[e.sessionId]?.role ?? '', ts: e.ts }]
         : [],
     );
     return [...fromEvents, ...(extra ?? [])].filter((d) => !closed?.[d.id]).sort((a, b) => a.ts - b.ts);
   }, [data, extra, closed]);
 }
 
-/** "GM · Draft, not published · 46m ago" above a document. Shared by the preview and the Inbox. */
+/** "GM · Draft · 46m ago" above a document, with Approve. Shared by the preview, the Inbox and Docs. */
 export function DocSourceBar({ doc, children }: { doc: PreviewDoc; children?: ReactNode }) {
   const fromLabel = useRoleLabel(doc.from ?? '');
+  const status = useDocStatus(doc.artifactId);
   return (
     <InlineStack gap="250" paddingBlock="300" paddingInline="400" className="preview-bar">
       <InlineStack gap="150" grow className="preview-source">
         {doc.from ? <RoleFace role={doc.from} size="xs" /> : null}
         <Text as="span" variant="bodyLg" tone="secondary" truncate>
-          {fromLabel ? `${fromLabel} · ` : ''}Draft, not published · {ago(doc.ts)}
+          {fromLabel ? `${fromLabel} · ` : ''}
+          {status === 'approved' ? 'Approved' : 'Draft'} · {ago(doc.ts)}
         </Text>
       </InlineStack>
       {children}
+      {doc.artifactId && status ? <ApproveButton id={doc.artifactId} status={status} /> : null}
     </InlineStack>
+  );
+}
+
+/** A doc's status, loading the Docs list the first time it is needed. */
+export function useDocStatus(artifactId: string | undefined): DocStatus | undefined {
+  const loaded = useApp((s) => s.docs !== null);
+  const status = useApp((s) => (artifactId ? s.docs?.[artifactId]?.status : undefined));
+  useEffect(() => {
+    if (artifactId && !loaded) void loadDocs();
+  }, [artifactId, loaded]);
+  // Seeing a doc anywhere (thread preview, Docs) counts as opening it.
+  useEffect(() => {
+    if (artifactId) markDocSeen(artifactId);
+  }, [artifactId]);
+  return status;
+}
+
+export function ApproveButton({ id, status }: { id: string; status: DocStatus }) {
+  const [busy, setBusy] = useState(false);
+  const change = (next: DocStatus) => {
+    setBusy(true);
+    void setDocStatus(id, next).finally(() => setBusy(false));
+  };
+  return status === 'approved' ? (
+    <Button size="slim" variant="tertiary" icon="check" disabled={busy} onClick={() => change('draft')} title="Approved. Click to move it back to draft.">
+      Approved
+    </Button>
+  ) : (
+    <Button size="slim" variant="primary" disabled={busy} onClick={() => change('approved')} title="Mark this as the version that counts">
+      Approve
+    </Button>
   );
 }
 
