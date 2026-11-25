@@ -17,7 +17,7 @@ apps/conductor   local server: sessions, subagent calls, approvals, events, SQLi
 apps/mac         Electron + React app (display only, no agent logic)
 crew/            an example team, eve-style: crew.config.ts, agent/ (lead), agent/subagents/, lib/, evals/
 packages/sdk     @crew/sdk: defineAgent, defineTool, defineCrew, evals and the team loader
-packages/kit     @crew/kit: ready-made Shopify, headless browser, X search, Studio and Meta ads connections
+packages/kit     @crew/kit: ready-made Shopify, headless browser, X search, Studio, Meta ads and DataForSEO connections
 packages/protocol shared types for events and the API
 packages/ui      the Crew design system (tokens + React components)
 scripts/crew.ts  the `pnpm crew` command
@@ -168,7 +168,7 @@ evals/**/<name>.eval.ts        defineEval, plus evals.config.ts
 - `model` is `<engine>/<model>[@reasoning]`: the one difference from eve,
   because Crew runs on the official CLIs with the owner's subscriptions.
 - **Subagents inherit nothing** from the lead. Shared pieces are factories
-  (`@crew/kit`: Shopify, the headless browser, X search, Studio, Meta ads) used from a one-line
+  (`@crew/kit`: Shopify, the headless browser, X search, Studio, Meta ads, DataForSEO) used from a one-line
   file, so a connection's allow-list cannot drift.
   `lib/rules.md` (Crew's own rules) and `lib/brand/` go to every agent.
 - **One level of delegation.** The lead gets one tool per subagent
@@ -329,6 +329,12 @@ Close thread also drop queued turns, and say so in the thread.
   more; `writeScopes` in `packages/kit/src/shopify/cli.ts`), so the Inbox approval is
   the only gate on changes. External connection
   tools on Codex run only when marked read-only.
+- DataForSEO (`@crew/kit/dataforseo`): a local MCP server with six reading
+  tools over DataForSEO's live API (Google results, keyword volumes and ideas,
+  a domain's rankings and competitors, on-page checks), signed in with
+  `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`. Every call costs cents, so one
+  agent session may spend at most `maxCostPerSession` (USD, default 2); after
+  that the tools refuse.
 - Meta ads (`@crew/kit/meta`): the connection is a local MCP server that
   forwards to Meta's hosted Ads MCP server (`https://mcp.facebook.com/ads`)
   with `META_ACCESS_TOKEN`, and offers only the reading tools in
