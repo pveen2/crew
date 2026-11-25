@@ -102,6 +102,8 @@ export type View =
   | { name: 'settings' }
   | { name: 'thread'; threadId: string; sessionId?: string };
 
+export type DocsFilter = 'all' | DocStatus | 'archived';
+
 export interface PreviewDoc {
   id: string;
   title: string;
@@ -163,7 +165,8 @@ export interface AppState {
   inboxFilter: 'all' | 'unread';
   /** Docs the owner was shown (Docs tab), by id. Null until loaded. */
   docs: Record<string, DocSummary> | null;
-  docsFilter: 'all' | DocStatus;
+  /** All: what is not archived. Archived: only the archive. */
+  docsFilter: DocsFilter;
   /** Docs the owner has opened, and when this Mac started counting (older docs count as seen). */
   docsSeen: { since: number; ids: Record<string, true> };
   /** Inbox items the owner has looked at. Kept on this Mac only; the conductor has no read state. */
@@ -229,9 +232,9 @@ function loadDocsSeen(): AppState['docsSeen'] {
   return fresh;
 }
 
-/** A draft the owner has not opened yet: counts on Docs in the sidebar. */
+/** A draft the owner has not opened (or archived) yet: counts on Docs in the sidebar. */
 export function isNewDoc(d: DocSummary, seen: AppState['docsSeen']): boolean {
-  return d.status === 'draft' && d.shownAt > seen.since && !seen.ids[d.id];
+  return d.status === 'draft' && !d.archivedAt && d.shownAt > seen.since && !seen.ids[d.id];
 }
 
 export function markDocSeen(id: string): void {
@@ -750,7 +753,12 @@ export async function setDocStatus(id: string, status: DocStatus): Promise<void>
   set((s) => (s.docs ? { docs: { ...s.docs, [doc.id]: doc } } : {}));
 }
 
-export function setDocsFilter(docsFilter: 'all' | DocStatus): void {
+export async function setDocArchived(id: string, archived: boolean): Promise<void> {
+  const doc = await api<DocSummary>('POST', `/api/docs/${encodeURIComponent(id)}/archive`, { archived });
+  set((s) => (s.docs ? { docs: { ...s.docs, [doc.id]: doc } } : {}));
+}
+
+export function setDocsFilter(docsFilter: DocsFilter): void {
   set({ docsFilter });
 }
 

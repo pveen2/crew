@@ -1347,7 +1347,7 @@ export class Runtime {
   private listDocs(session: SessionRow): string {
     const docs = this.store.docs(session.threadId);
     if (!docs.length) return 'No docs have been shown to the owner in this thread yet.';
-    return docs.map((d) => `- ${d.id}: "${d.title}" by ${d.agent || 'unknown'}, ${d.status === 'approved' ? 'APPROVED' : 'draft'}`).join('\n');
+    return docs.map((d) => `- ${d.id}: "${d.title}" by ${d.agent || 'unknown'}, ${d.status === 'approved' ? 'APPROVED' : 'draft'}${d.archivedAt ? ', archived' : ''}`).join('\n');
   }
 
   // -------------------------------------------------------------------------
@@ -1365,6 +1365,7 @@ export class Runtime {
       createdAt: a.createdAt,
       shownAt: a.shownAt ?? a.createdAt,
       approvedAt: a.approvedAt ?? null,
+      archivedAt: a.archivedAt ?? null,
     };
   }
 
@@ -1399,6 +1400,16 @@ export class Runtime {
     const doc = this.docSummary(a);
     this.broadcast({ kind: 'doc', doc });
     this.refreshThread(a.threadId);
+    return doc;
+  }
+
+  /** The owner archives a doc (or brings it back). Only the Docs list changes; agents can still read it. */
+  setDocArchived(id: string, archived: boolean): DocSummary {
+    const before = this.store.artifact(id);
+    if (!before?.shownAt) throw new Error('No such doc');
+    const a = this.store.setDocArchived(id, archived ? (before.archivedAt ?? Date.now()) : null)!;
+    const doc = this.docSummary(a);
+    this.broadcast({ kind: 'doc', doc });
     return doc;
   }
 

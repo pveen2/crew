@@ -235,6 +235,7 @@ export interface ArtifactRow {
   /** Set once the owner has seen it in the preview: it is then a doc in the Docs tab. */
   shownAt?: number | null;
   approvedAt?: number | null;
+  archivedAt?: number | null;
 }
 
 export interface MemoryRow {
@@ -265,6 +266,7 @@ export class Store {
     'ALTER TABLE turns ADD COLUMN output_tokens INTEGER',
     "ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
     'ALTER TABLE artifacts ADD COLUMN approved_at INTEGER',
+    'ALTER TABLE artifacts ADD COLUMN archived_at INTEGER',
     ]) {
       try {
         this.db.exec(sql);
@@ -566,7 +568,7 @@ export class Store {
   }
   /** Docs: artifacts the owner has been shown, newest first. Without content. */
   docs(threadId?: string): Array<Omit<ArtifactRow, 'content'>> {
-    const cols = "id, thread_id, session_id, agent, title, format, '' AS content, created_at, status, shown_at, approved_at";
+    const cols = "id, thread_id, session_id, agent, title, format, '' AS content, created_at, status, shown_at, approved_at, archived_at";
     return (
       threadId
         ? this.all(`SELECT ${cols} FROM artifacts WHERE shown_at IS NOT NULL AND thread_id = ? ORDER BY shown_at DESC`, threadId)
@@ -591,6 +593,10 @@ export class Store {
   }
   setDocStatus(id: string, status: DocStatus, at: number): ArtifactRow | undefined {
     this.run('UPDATE artifacts SET status = ?, approved_at = ? WHERE id = ?', status, status === 'approved' ? at : null, id);
+    return this.artifact(id);
+  }
+  setDocArchived(id: string, archivedAt: number | null): ArtifactRow | undefined {
+    this.run('UPDATE artifacts SET archived_at = ? WHERE id = ?', archivedAt, id);
     return this.artifact(id);
   }
 
@@ -631,5 +637,6 @@ function toArtifact(r: Row): ArtifactRow {
     status: (r.status as DocStatus | undefined) ?? 'draft',
     shownAt: r.shown_at == null ? null : Number(r.shown_at),
     approvedAt: r.approved_at == null ? null : Number(r.approved_at),
+    archivedAt: r.archived_at == null ? null : Number(r.archived_at),
   };
 }
