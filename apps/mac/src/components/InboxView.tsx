@@ -139,6 +139,8 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
             {item.kind === 'approval' ? (
               <>
                 <Button onClick={() => void decideApproval(item.id, false)}>Deny</Button>
+                <Button onClick={() => void decideApproval(item.id, true, 'tool')}>Always allow this tool</Button>
+                <Button onClick={() => void decideApproval(item.id, true, 'all')}>Approve all in this thread</Button>
                 <Button variant="primary" onClick={() => void decideApproval(item.id, true)}>
                   Approve
                 </Button>

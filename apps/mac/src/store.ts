@@ -872,8 +872,10 @@ export async function resolveInbox(id: string): Promise<void> {
   await api('POST', `/api/inbox/${id}/resolve`);
 }
 
-export async function decideApproval(id: string, approved: boolean): Promise<void> {
-  await api('POST', `/api/inbox/${id}/${approved ? 'approve' : 'deny'}`);
+/** `always`: also allow this agent's tool ('tool') or every tool ('all') for the rest of the thread. */
+export async function decideApproval(id: string, approved: boolean, always?: 'tool' | 'all'): Promise<void> {
+  const action = !approved ? 'deny' : always === 'tool' ? 'allow' : always === 'all' ? 'allow-all' : 'approve';
+  await api('POST', `/api/inbox/${id}/${action}`);
 }
 
 export function selectPreview(threadId: string, previewId: string): void {

@@ -226,6 +226,8 @@ export class Runtime {
   private readonly bridgeSecret = randomBytes(32);
   /** Tool calls waiting for the owner's approve or deny, by Inbox item id. */
   private readonly approvals = new Map<string, (approved: boolean) => void>();
+  /** Open approval items → the thread and `agent:tool` they ask for, so "Always allow" can clear the rest. */
+  private readonly approvalKeys = new Map<string, { threadId: string; key: string }>();
   private listeners = new Set<(msg: ServerMessage) => void>();
   private shuttingDown = false;
 
@@ -1125,6 +1127,10 @@ export class Runtime {
     const decision = agent.def.approval?.({ toolName, input, agent: agent.name }) ?? toolDefault;
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
+    // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.
+    const key = `${agent.name}:${toolName}`;
+    const allowed = this.store.allowedTools(session.threadId);
+    if (allowed.includes(key) || allowed.includes('*')) return;
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
@@ -1140,10 +1146,12 @@ export class Runtime {
 
     const approved = await new Promise<boolean>((resolve) => {
       this.approvals.set(item.id, resolve);
+      this.approvalKeys.set(item.id, { threadId: session.threadId, key });
       if (signal.aborted) resolve(false);
       else signal.addEventListener('abort', () => resolve(false), { once: true });
     });
     if (this.approvals.get(item.id)) this.approvals.delete(item.id);
+    this.approvalKeys.delete(item.id);
     if (this.store.inboxItem(item.id)?.status === 'open') this.resolveInbox(item.id);
     this.emit(session, turnId, { type: 'approval_done', inboxId: item.id, toolName, approved });
     this.refreshThread(session.threadId);
@@ -1152,8 +1160,12 @@ export class Runtime {
     }
   }
 
-  /** The owner's decision on an approval item. */
-  decideApproval(inboxId: string, approved: boolean): InboxItem {
+  /**
+   * The owner's decision on an approval item. `always`: 'tool' also allows this
+   * agent's tool for the rest of the thread, 'all' allows every tool in it; both
+   * approve the matching calls already waiting.
+   */
+  decideApproval(inboxId: string, approved: boolean, always?: 'tool' | 'all'): InboxItem {
     const item = this.store.inboxItem(inboxId);
     if (!item || item.kind !== 'approval') throw new Error('No such approval');
     const waiter = this.approvals.get(inboxId);
@@ -1161,9 +1173,18 @@ export class Runtime {
       if (item.status === 'open') this.resolveInbox(inboxId);
       throw new Error('This approval is no longer waiting: the turn that asked for it has ended.');
     }
+    const asked = this.approvalKeys.get(inboxId);
     this.approvals.delete(inboxId);
     waiter(approved);
-    return this.resolveInbox(inboxId) ?? item;
+    const resolved = this.resolveInbox(inboxId) ?? item;
+    if (approved && always && asked) {
+      this.store.allowTool(asked.threadId, always === 'all' ? '*' : asked.key);
+      for (const [id, other] of [...this.approvalKeys]) {
+        if (id === inboxId || other.threadId !== asked.threadId) continue;
+        if (always === 'all' || other.key === asked.key) this.decideApproval(id, true);
+      }
+    }
+    return resolved;
   }
 
   private async callSubagent(crew: LoadedCrew, caller: SessionRow, sub: LoadedAgent, brief: string, signal: AbortSignal): Promise<string> {

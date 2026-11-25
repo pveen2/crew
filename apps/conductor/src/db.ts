@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS threads (
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   archived INTEGER NOT NULL DEFAULT 0,
-  benched TEXT NOT NULL DEFAULT '[]'
+  benched TEXT NOT NULL DEFAULT '[]',
+  allowed_tools TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -258,6 +259,7 @@ export class Store {
       'ALTER TABLE inbox ADD COLUMN preview_id TEXT',
       'ALTER TABLE inbox ADD COLUMN choices TEXT',
       "ALTER TABLE threads ADD COLUMN benched TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE threads ADD COLUMN allowed_tools TEXT NOT NULL DEFAULT '[]'",
     'ALTER TABLE turns ADD COLUMN cost_usd REAL',
     'ALTER TABLE turns ADD COLUMN input_tokens INTEGER',
     'ALTER TABLE turns ADD COLUMN output_tokens INTEGER',
@@ -356,6 +358,16 @@ export class Store {
       next.title, next.status, next.archived ? 1 : 0, next.updatedAt, id,
     );
     return next;
+  }
+
+  /** Tools the owner allowed for the rest of this thread, as `agent:tool`; `*` is every tool. */
+  allowedTools(threadId: string): string[] {
+    return parseList(this.get('SELECT allowed_tools FROM threads WHERE id = ?', threadId)?.allowed_tools);
+  }
+  allowTool(threadId: string, key: string): void {
+    const list = this.allowedTools(threadId);
+    if (list.includes(key)) return;
+    this.run('UPDATE threads SET allowed_tools = ? WHERE id = ?', JSON.stringify([...list, key]), threadId);
   }
 
   // Sessions -----------------------------------------------------------------
