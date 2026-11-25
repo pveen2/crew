@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DocResponse, DocSummary } from '@crew/protocol';
 import { BlockStack, Badge, Button, ChipSelect, Icon, IconButton, InlineStack, ListItem, Panel, PanelHeader, SegmentedControl, Spinner, Text, cx } from '@crew/ui';
 import { ensureDoc, isNewDoc, isPhone, loadDoc, loadDocs, navigate, setDocArchived, setDocsFilter, setInboxListWidth, useApp, type DocsFilter, type PreviewDoc } from '../store';
@@ -16,6 +16,7 @@ import { ApproveButton, DocView } from './PreviewPanel';
 export function DocsView({ docId }: { docId?: string }) {
   const docs = useApp((s) => s.docs);
   const filter = useApp((s) => s.docsFilter);
+  const docsSeen = useApp((s) => s.docsSeen);
   const listWidth = useApp((s) => s.inboxListWidth);
   const now = useNow(30_000);
 
@@ -52,6 +53,24 @@ export function DocsView({ docId }: { docId?: string }) {
   useEffect(() => {
     if (!selected && groups[0] && !isPhone()) navigate({ name: 'docs', docId: groups[0][0]!.id });
   }, [selected, groups]);
+
+  // Archiving the open doc moves on to the next row (else the one above) instead of leaving the
+  // archived doc open, as long as it is still the one open when the archive lands.
+  const openId = useRef(docId);
+  openId.current = docId;
+  const latest = useRef({ groups, docsSeen });
+  latest.current = { groups, docsSeen };
+  const onArchived = useCallback(
+    (doc: DocSummary) => {
+      if (filter === 'archived' || openId.current !== doc.id) return;
+      const { groups, docsSeen } = latest.current;
+      const at = groups.findIndex((g) => g[0]!.threadId === doc.threadId);
+      const next = at < 0 ? groups[0] : (groups[at + 1] ?? groups[at - 1]);
+      const target = next && next[0]!.threadId !== doc.threadId ? (next.find((d) => isNewDoc(d, docsSeen)) ?? next[0]!) : undefined;
+      navigate(target && !isPhone() ? { name: 'docs', docId: target.id } : { name: 'docs' });
+    },
+    [filter],
+  );
 
   return (
     <>
@@ -116,7 +135,7 @@ export function DocsView({ docId }: { docId?: string }) {
       <PaneResizer target="before" label="Resize Docs list" min={260} minOther={420} onResize={setInboxListWidth} onReset={() => setInboxListWidth(null)} />
       <Panel as="main" className={cx('pane-main', !selected && 'phone-hide')}>
         {selected ? (
-          <DocDetail key={selected.threadId} summary={selected} />
+          <DocDetail key={selected.threadId} summary={selected} onArchived={onArchived} />
         ) : (
           <>
             <PanelHeader />
@@ -198,7 +217,7 @@ function DocRow({ group, versions, showStatus, open, now }: { group: DocSummary[
   );
 }
 
-function DocDetail({ summary }: { summary: DocSummary }) {
+function DocDetail({ summary, onArchived }: { summary: DocSummary; onArchived: (doc: DocSummary) => void }) {
   const [doc, setDoc] = useState<DocResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Kept across versions of one thread (so the version picker keeps focus); each version loads anew.
@@ -233,7 +252,7 @@ function DocDetail({ summary }: { summary: DocSummary }) {
         </InlineStack>
         <span className="cr-spacer" />
         <span className="inbox-detail-actions">
-          <ArchiveButton key={summary.id} summary={summary} />
+          <ArchiveButton key={summary.id} summary={summary} onArchived={onArchived} />
           <Button onClick={openThread}>Open thread</Button>
           {/* Only what the owner can see can be approved. */}
           {preview ? <ApproveButton id={summary.id} status={summary.status} size="medium" /> : null}
@@ -278,7 +297,7 @@ function VersionPicker({ summary }: { summary: DocSummary }) {
 }
 
 /** Archive clears the whole thread's docs from the list (every version); Restore brings back the one open. */
-function ArchiveButton({ summary }: { summary: DocSummary }) {
+function ArchiveButton({ summary, onArchived }: { summary: DocSummary; onArchived: (doc: DocSummary) => void }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
   const archived = Boolean(summary.archivedAt);
@@ -286,6 +305,9 @@ function ArchiveButton({ summary }: { summary: DocSummary }) {
     setBusy(true);
     setFailed(false);
     void setDocArchived(summary.id, !archived, !archived)
+      .then(() => {
+        if (!archived) onArchived(summary);
+      })
       .catch(() => setFailed(true))
       .finally(() => setBusy(false));
   };
