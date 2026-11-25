@@ -65,12 +65,28 @@ function threadOf(msg: ServerMessage): string | null {
 /** A share token: 32 random bytes, base64url. */
 const SHARE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
-/** The public link for a share token, on the host the person reached the server on. */
+/**
+ * CREW_PUBLIC_URL: the server's public address (https://crew.example.com), for share
+ * links. Only https; a path or anything after the host is dropped.
+ */
+const PUBLIC_ORIGIN = (() => {
+  const raw = process.env.CREW_PUBLIC_URL?.trim();
+  if (!raw) return null;
+  const url = new URL(raw);
+  if (url.protocol !== 'https:') throw new Error('CREW_PUBLIC_URL must start with https://');
+  return url.origin;
+})();
+
+/**
+ * The public link for a share token: on CREW_PUBLIC_URL, otherwise on the Host the
+ * request came in on (behind the Cloudflare tunnel, the app's hostname). Always
+ * https, and never from X-Forwarded-Host, which the caller controls.
+ */
 function shareUrl(req: IncomingMessage, token: string): string {
-  const first = (v: string | string[] | undefined) => String(Array.isArray(v) ? v[0] : (v ?? '')).split(',')[0]!.trim();
-  const host = first(req.headers['x-forwarded-host']) || first(req.headers.host);
-  const proto = first(req.headers['x-forwarded-proto']) || 'https';
-  return `${proto}://${host}/s/${token}`;
+  if (PUBLIC_ORIGIN) return `${PUBLIC_ORIGIN}/s/${token}`;
+  const host = String(req.headers.host ?? '').trim().toLowerCase();
+  if (!/^[a-z0-9.-]+(:\d{1,5})?$/.test(host)) throw new Error('Set CREW_PUBLIC_URL to make share links.');
+  return `https://${host}/s/${token}`;
 }
 
 function corsHeaders(res: ServerResponse): void {
