@@ -83,25 +83,29 @@ function buildItems(events: CrewEvent[], session: Session, agents: Record<string
   // A reply to a question card shows inside that card. Not when it carries
   // images or was never delivered: then it stays a bubble of its own.
   const asked = new Set(chat.flatMap((e) => (e.type === 'needs_you' ? [e.inboxId] : [])));
-  const answers = new Map<string, string>();
+  const answers = new Map<string, { eventId: number; text: string }>();
   for (const e of chat) {
     if (e.type !== 'message' || !e.replyTo || !asked.has(e.replyTo) || answers.has(e.replyTo) || e.attachments?.length) continue;
     if (deliveryOf(e, events, session).state === 'dropped') continue;
-    answers.set(e.replyTo, e.text);
+    answers.set(e.replyTo, { eventId: e.id, text: e.text });
   }
-  // The turn that just asked a question, until the owner replies or the agent uses a tool.
+  const inCard = new Set([...answers.values()].map((a) => a.eventId));
+  // Turns the owner wrote into (a steered message), whatever order the chat shows them in.
+  const steered = new Set(events.flatMap((e) => (e.type === 'message' && e.role === 'user' && e.delivery === 'steer' && e.turnId ? [e.turnId] : [])));
+  // The turn that just asked a question, until the agent uses a tool.
   let askedIn: string | null = null;
   for (const e of chat) {
     // The agent was told to stop after asking: its text straight after the
-    // card, in the same turn, only restates the question. Once the owner
-    // replies or the agent uses a tool, its text is real work again.
-    const restates = e.type === 'message' && e.role === 'assistant' && askedIn !== null && e.turnId === askedIn;
+    // card, in the same turn, only restates the question. Not in a turn the
+    // owner wrote into (the text may answer them) and not after a tool call.
+    const restates =
+      e.type === 'message' && e.role === 'assistant' && askedIn !== null && e.turnId === askedIn && !steered.has(askedIn);
     if (e.type === 'needs_you') askedIn = e.turnId ?? null;
     else if (e.type === 'tool_call' || (e.type === 'message' && e.role === 'user')) askedIn = null;
     if (restates) continue;
-    if (e.type === 'message' && e.replyTo && answers.get(e.replyTo) === e.text) continue; // shown in its card
+    if (e.type === 'message' && inCard.has(e.id)) continue; // shown in its card
     if (e.type === 'needs_you') {
-      items.push({ kind: 'event', event: e, answer: answers.get(e.inboxId) });
+      items.push({ kind: 'event', event: e, answer: answers.get(e.inboxId)?.text });
       continue;
     }
     if (e.type === 'tool_result' || e.type === 'subagent_done') continue; // shown inside their call / card
@@ -371,7 +375,7 @@ function NeedsYouCard({ threadId, event, role, answer }: { threadId: string; eve
     <Card variant={open ? 'elevated' : 'subtle'} padded={!open}>
       <BlockStack gap="250">
         <Text variant="label" tone="secondary">
-          {open ? `${label} asks` : answer ? `${label} asked` : `${label} asked · dismissed`}
+          {open ? `${label} asks` : `${label} asked`}
         </Text>
         <Markdown text={event.question} className="md--question" />
         {!open && answer ? (

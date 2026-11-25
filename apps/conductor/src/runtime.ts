@@ -73,6 +73,8 @@ interface QueuedMessage {
   prompt: (text: string) => string;
   text: string;
   removed: boolean;
+  /** The question this message answers: reopened when the message is taken back. */
+  replyTo?: string;
 }
 
 const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' };
@@ -182,17 +184,22 @@ const TITLE_PROMPT = (text: string) =>
 export function questionOptions(args: Record<string, unknown>): { options?: QuestionOption[]; recommended?: number; multiSelect?: boolean } {
   if (!Array.isArray(args.options)) return {};
   const options: QuestionOption[] = [];
-  for (const o of args.options) {
+  let recommended: number | undefined;
+  const seen = new Set<string>();
+  args.options.forEach((o: unknown, index: number) => {
     const raw = typeof o === 'string' ? { label: o } : (o as Record<string, unknown> | null);
     const label = typeof raw?.label === 'string' ? raw.label.replace(/\s+/g, ' ').trim() : '';
-    if (!label || /^(something else|other|anders|iets anders)\.?$/i.test(label)) continue; // the text box covers it
+    if (!label || /^(something else|other|anders|iets anders)\.?$/i.test(label)) return; // the text box covers it
+    // The label is what gets sent back, so two equal labels would be the same answer.
+    if (seen.has(label.toLowerCase()) || options.length === 4) return;
+    seen.add(label.toLowerCase());
+    // recommended points into the list the agent wrote: follow its option, not its position.
+    if (index === args.recommended) recommended = options.length;
     const detail = typeof raw?.detail === 'string' ? raw.detail.replace(/\s+/g, ' ').trim() : '';
     options.push(detail ? { label, detail } : { label });
-  }
+  });
   if (options.length < 2) return {};
-  const r = args.recommended;
-  const recommended = typeof r === 'number' && Number.isInteger(r) && r >= 0 && r < Math.min(options.length, 4) ? r : undefined;
-  return { options: options.slice(0, 4), recommended, ...(args.multiSelect === true ? { multiSelect: true } : {}) };
+  return { options, recommended, ...(args.multiSelect === true ? { multiSelect: true } : {}) };
 }
 
 function snippet(text: string, max = 120): string {
@@ -537,29 +544,35 @@ export class Runtime {
     const session = this.store.session(sessionId ?? thread.rootSessionId);
     if (!session || session.threadId !== threadId) throw new Error('That session is not part of this thread');
 
-    let answers: string | undefined;
+    let question: InboxItem | undefined;
     if (replyTo) {
-      // An answer to one question resolves that question only.
+      // An answer to one question resolves that question only. A second answer
+      // (a stale card, another device, a retry) would start another turn.
       const item = this.store.inboxItem(replyTo);
       if (!item || item.sessionId !== session.id || item.kind !== 'needs_you') {
         throw new Error('That question does not belong to this agent.');
       }
-      if (item.status === 'open') this.resolveInbox(item.id);
-      answers = item.id;
+      if (item.status !== 'open') throw new Error('This question was already answered or dismissed.');
+      question = item;
     } else {
       // A plain reply while exactly one question is open answers that question.
       const open = this.store.openInboxOfThread(threadId, ['needs_you']).filter((i) => i.sessionId === session.id);
-      if (open.length === 1) {
-        this.resolveInbox(open[0]!.id);
-        answers = open[0]!.id;
-      }
+      if (open.length === 1) question = open[0];
     }
-    const answered = Boolean(answers);
+    if (question) this.resolveInbox(question.id);
+    const answers = question?.id;
+    const answered = Boolean(question);
     if (session.depth === 0) this.resolveInboxOf(threadId, ['error']);
 
     const attachments = saveAttachments(threadId, uploads);
     text = text.trim() || (attachments.length ? 'See the attached image.' : text);
-    const promptOf = (t: string) => (session.depth === 0 ? t : `Message from the owner, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
+    // An answer names its question: with several open, a bare "Yes" is ambiguous.
+    const promptOf = (t: string) =>
+      (question
+        ? `The owner answered your question "${snippet(question.body, 300)}":\n\n${t}`
+        : session.depth === 0
+          ? t
+          : `Message from the owner, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
     const prompt = promptOf(text);
     const images = attachments.map((a) => a.file);
     const message = {
@@ -604,7 +617,7 @@ export class Runtime {
     const turnId = newId('u');
     const event = this.emit(session, busy ? turnId : null, busy ? { ...message, delivery: 'queue' } : message);
     const queuedMessage: QueuedMessage | undefined = busy
-      ? { eventId: event.id, sessionId: session.id, prompt: promptOf, text, removed: false }
+      ? { eventId: event.id, sessionId: session.id, prompt: promptOf, text, removed: false, replyTo: answers }
       : undefined;
     if (queuedMessage) this.queuedMessages.set(event.id, queuedMessage);
     void this.enqueueTurn(session.id, prompt, { turnId, notifyParent: answered && session.depth > 0, images, queuedMessage });
@@ -625,7 +638,16 @@ export class Runtime {
     const q = this.takeQueued(eventId);
     q.removed = true;
     this.queuedMessages.delete(eventId);
-    this.emit(this.store.session(q.sessionId)!, null, { type: 'message_delivery', messageId: eventId, state: 'removed' });
+    const session = this.store.session(q.sessionId)!;
+    this.emit(session, null, { type: 'message_delivery', messageId: eventId, state: 'removed' });
+    // The answer was taken back: the question is open again.
+    if (q.replyTo) {
+      const item = this.store.reopenInbox(q.replyTo);
+      if (item) {
+        this.broadcast({ kind: 'inbox', item });
+        this.refreshThread(item.threadId);
+      }
+    }
   }
 
   private takeQueued(eventId: number): QueuedMessage {

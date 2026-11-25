@@ -437,6 +437,10 @@ export class Store {
     const rows = this.all("SELECT * FROM inbox WHERE status = 'open' AND thread_id = ? ORDER BY created_at", threadId).map(toInbox);
     return kinds ? rows.filter((r) => kinds.includes(r.kind)) : rows;
   }
+  reopenInbox(id: string): InboxItem | undefined {
+    this.run("UPDATE inbox SET status = 'open' WHERE id = ?", id);
+    return this.inboxItem(id);
+  }
   resolveInbox(id: string): InboxItem | undefined {
     this.run("UPDATE inbox SET status = 'resolved' WHERE id = ?", id);
     return this.inboxItem(id);

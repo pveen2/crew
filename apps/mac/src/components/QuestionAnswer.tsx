@@ -44,13 +44,17 @@ export function QuestionAnswer({
   const [text, setText] = useState('');
   const [picked, setPicked] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const send = async (answer: string) => {
     if (!answer.trim() || busy) return;
     setBusy(true);
+    setError('');
     try {
       await sendMessage(threadId, answer.trim(), sessionId, inboxId);
       setText('');
       setPicked([]);
+    } catch (err) {
+      setError((err as Error).message || 'Could not send the answer.');
     } finally {
       setBusy(false);
     }
@@ -115,13 +119,18 @@ export function QuestionAnswer({
           value={text}
           onChange={setText}
           autoFocus={autoFocus && !hasOptions}
-          disabled={!online}
+          disabled={!online || busy}
         />
         {actions}
         <Button variant={hasOptions && !multi ? 'secondary' : 'primary'} type="submit" disabled={!answer || busy || !online}>
           Send
         </Button>
       </form>
+      {error ? (
+        <Text variant="bodySm" tone="critical" role="alert">
+          {error}
+        </Text>
+      ) : null}
     </div>
   );
 }
