@@ -3,7 +3,7 @@ import type { DocStatus } from '@crew/protocol';
 import { Button, IconButton, InlineStack, Panel, PanelHeader, SegmentedControl, Tabs, Text } from '@crew/ui';
 import tokensCss from '@crew/ui/tokens.css?raw';
 import documentCss from '@crew/ui/document.css?raw';
-import { attachmentDataUrl, closePreview, loadDocs, markDocSeen, setDocStatus, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
+import { attachmentDataUrl, closePreview, ensureDoc, loadDocs, markDocSeen, setDocStatus, selectPreview, setPreviewDevice, togglePreview, updateWebPreview, useApp, type PreviewDoc } from '../store';
 import { Markdown, RoleFace, ago, useRoleLabel } from './common';
 import { ConceptBoard, conceptBoardText } from './ConceptBoard';
 
@@ -52,6 +52,10 @@ export function useDocStatus(artifactId: string | undefined): DocStatus | undefi
   useEffect(() => {
     if (artifactId && !loaded) void loadDocs();
   }, [artifactId, loaded]);
+  // Not in the list (it changed since it loaded): fetch this one doc.
+  useEffect(() => {
+    if (artifactId && loaded && !status) void ensureDoc(artifactId).catch(() => undefined);
+  }, [artifactId, loaded, status]);
   // Seeing a doc anywhere (thread preview, Docs) counts as opening it.
   useEffect(() => {
     if (artifactId) markDocSeen(artifactId);

@@ -227,6 +227,18 @@ if (CAN_SAVE_ARTIFACTS) {
 }
 
 server.registerTool(
+  'list_docs',
+  {
+    description:
+      'List the docs the owner was shown in this thread (newest first) with their artifact id and whether the owner APPROVED them. ' +
+      'Use it before building on earlier work: start from the approved version and read it with read_artifact.',
+    inputSchema: {},
+    annotations: local,
+  },
+  forward('list_docs'),
+);
+
+server.registerTool(
   'read_artifact',
   {
     description: 'Read an artifact from this thread by id (for example one a colleague saved).',

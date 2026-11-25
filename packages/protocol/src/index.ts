@@ -453,8 +453,9 @@ export function parseConceptBoard(json: string): ConceptBoard {
     if (pos !== 'top' && pos !== 'center' && pos !== 'bottom') fail(`${at}.image.textPosition must be top, center or bottom`);
     if (!Array.isArray(c.headlines) || c.headlines.length === 0) fail(`${at}.headlines must list at least one headline`);
     return {
-      // The board numbers concepts itself: "3. Between…" would read "3. 3. Between…".
-      name: str(c.name, `${at}.name`, true)!.replace(/^\s*\d+\s*[.):-]\s*/, ''),
+      // The board numbers concepts itself: "3. Between…" would read "3. 3. Between…". Only a
+      // clear list prefix goes ("3. ", "3) "), never part of the name ("2.5% lift").
+      name: str(c.name, `${at}.name`, true)!.replace(/^\s*\d{1,3}[.)]\s+(?=\S)/, ''),
       angle: str(c.angle, `${at}.angle`, true)!,
       tells: str(c.tells, `${at}.tells`),
       stop: str(c.stop, `${at}.stop`),

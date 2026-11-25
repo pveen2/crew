@@ -186,10 +186,11 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
           return doc ? send(res, 200, doc) : send(res, 404, { error: 'No such doc' });
         }
         if (req.method === 'POST' && id && action === 'status') {
-          const body = await readJson<{ status?: string }>(req);
-          if (body.status !== 'draft' && body.status !== 'approved') return send(res, 400, { error: 'status must be draft or approved' });
+          const body = await readJson<unknown>(req);
+          const status = body && typeof body === 'object' ? (body as { status?: unknown }).status : undefined;
+          if (status !== 'draft' && status !== 'approved') return send(res, 400, { error: 'status must be draft or approved' });
           if (!runtime.doc(id)) return send(res, 404, { error: 'No such doc' });
-          return send(res, 200, runtime.setDocStatus(id, body.status));
+          return send(res, 200, runtime.setDocStatus(id, status));
         }
       }
 
