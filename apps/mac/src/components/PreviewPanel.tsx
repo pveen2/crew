@@ -63,18 +63,18 @@ export function useDocStatus(artifactId: string | undefined): DocStatus | undefi
   return status;
 }
 
-export function ApproveButton({ id, status }: { id: string; status: DocStatus }) {
+export function ApproveButton({ id, status, size = 'slim' }: { id: string; status: DocStatus; size?: 'slim' | 'medium' }) {
   const [busy, setBusy] = useState(false);
   const change = (next: DocStatus) => {
     setBusy(true);
     void setDocStatus(id, next).finally(() => setBusy(false));
   };
   return status === 'approved' ? (
-    <Button size="slim" variant="tertiary" icon="check" disabled={busy} onClick={() => change('draft')} title="Approved. Click to move it back to draft.">
+    <Button size={size} variant="tertiary" icon="check" disabled={busy} onClick={() => change('draft')} title="Approved. Click to move it back to draft.">
       Approved
     </Button>
   ) : (
-    <Button size="slim" variant="primary" disabled={busy} onClick={() => change('approved')} title="Mark this as the version that counts">
+    <Button size={size} variant="primary" disabled={busy} onClick={() => change('approved')} title="Mark this as the version that counts">
       Approve
     </Button>
   );

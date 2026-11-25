@@ -12,7 +12,8 @@ export function Sidebar() {
   const doneCount = useApp((s) => Object.keys(s.done).length);
   const inbox = useApp((s) => s.inbox);
   const inboxRead = useApp((s) => s.inboxRead);
-  const newDocs = useApp((s) => (s.docs ? Object.values(s.docs).filter((d) => isNewDoc(d, s.docsSeen)).length : 0));
+  // Docs lists one row per thread, so count threads with a new draft.
+  const newDocs = useApp((s) => (s.docs ? new Set(Object.values(s.docs).filter((d) => isNewDoc(d, s.docsSeen)).map((d) => d.threadId)).size : 0));
   const activity = useApp((s) => s.activity);
   const connection = useApp((s) => s.connection);
   const starting = useApp((s) => s.conductorStarting);

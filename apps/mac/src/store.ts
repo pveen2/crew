@@ -102,7 +102,8 @@ export type View =
   | { name: 'settings' }
   | { name: 'thread'; threadId: string; sessionId?: string };
 
-export type DocsFilter = 'all' | DocStatus | 'archived';
+/** To review: drafts not archived. One row per thread in each. */
+export type DocsFilter = 'review' | 'approved' | 'archived';
 
 export interface PreviewDoc {
   id: string;
@@ -353,7 +354,7 @@ let state: AppState = {
   inboxListWidth: loadWidth(INBOX_LIST_WIDTH_KEY),
   inboxFilter: 'all',
   docs: null,
-  docsFilter: 'all',
+  docsFilter: 'review',
   docsSeen: loadDocsSeen(),
   inboxRead: loadRead(),
   loadErrors: {},
