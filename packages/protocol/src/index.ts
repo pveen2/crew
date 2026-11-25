@@ -159,7 +159,8 @@ export type CrewEventBody =
   | { type: 'needs_you'; question: string; inboxId: string; options?: QuestionOption[]; recommended?: number; multiSelect?: boolean }
   /** A tool call waits for the owner (approve or deny in the Inbox). */
   | { type: 'approval'; inboxId: string; toolName: string; input: unknown }
-  | { type: 'approval_done'; inboxId: string; toolName: string; approved: boolean }
+  /** stopped: nobody decided; the turn was stopped or ended while it waited. */
+  | { type: 'approval_done'; inboxId: string; toolName: string; approved: boolean; stopped?: boolean }
   | { type: 'preview'; previewId: string; title: string; format: DocFormat; content: string; /** The doc behind it (Docs tab). Missing on previews from older builds. */ artifactId?: string }
   | {
       type: 'turn_started';
