@@ -120,7 +120,8 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
               </Text>
             ) : (
               <Text variant="caption" tone="tertiary">
-                Enter sends, Shift+Enter adds a line. Paste or drop images to attach them. Read and draft only: nothing is published.
+                <span className="phone-hide">Enter sends, Shift+Enter adds a line. Paste or drop images to attach them. </span>
+                Read and draft only: nothing is published.
               </Text>
             )}
           </BlockStack>

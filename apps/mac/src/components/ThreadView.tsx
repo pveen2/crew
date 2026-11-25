@@ -25,6 +25,7 @@ import {
 import {
   archiveThread,
   editQueuedMessage,
+  isPhone,
   navigate,
   openAsPreview,
   removeQueuedMessage,
@@ -725,7 +726,10 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const ref = useRef<HTMLTextAreaElement>(null);
   const options = useMemo(() => sessionOptions(data, rootId, labels), [data, rootId, labels]);
 
-  useEffect(() => ref.current?.focus(), [session.id]);
+  // Not on a phone: the keyboard would come up over the conversation you just opened.
+  useEffect(() => {
+    if (!isPhone()) ref.current?.focus();
+  }, [session.id]);
 
   const go = (sessionId: string) => navigate({ name: 'thread', threadId, sessionId: sessionId === rootId ? undefined : sessionId });
 
@@ -926,9 +930,10 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
               Run again
             </Button>
           )}
-          <Button size="slim" icon="checkCircle" className="header-close" onClick={() => void archiveThread(threadId)}>
+          <Button size="slim" icon="checkCircle" className="header-close phone-hide" onClick={() => void archiveThread(threadId)}>
             Close thread
           </Button>
+          <IconButton icon="checkCircle" label="Close thread" className="phone-only" onClick={() => void archiveThread(threadId)} />
           {docs.length > 0 && !showPreview ? <IconButton icon="sidebar" label="Show preview" onClick={() => togglePreview(true)} /> : null}
         </PanelHeader>
 

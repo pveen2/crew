@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useNavSwipe } from './swipe';
 import { Banner, IconButton } from '@crew/ui';
 import { isPhone, navigate, openExternal, openUrl, toggleNav, toggleSidebar, useApp, webApp } from './store';
 import { Sidebar } from './components/Sidebar';
@@ -19,6 +20,7 @@ export function App() {
   const teamName = useApp((s) => s.teamName) || 'Crew';
 
   useEffect(() => window.crewHost?.onOpenUrl?.(openUrl), []);
+  useNavSwipe();
 
   // The web app: a web link would replace the app in its own window (on an iPhone
   // there is no way back); open it in a new tab instead.
@@ -73,7 +75,8 @@ export function App() {
       <ServerLoginDialog />
       <div className="app-body">
       <Sidebar />
-      {navOpen && <div className="nav-backdrop" aria-hidden onClick={() => toggleNav(false)} />}
+      {/* Always there on a phone so it can fade in, and follow a swipe (swipe.ts). */}
+      <div className={`nav-backdrop${navOpen ? ' nav-backdrop--open' : ''}`} aria-hidden onClick={() => toggleNav(false)} />
       <div className="workspace">
         {connection === 'offline' && (
           <Banner tone="caution" icon="wifiOff">
