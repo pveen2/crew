@@ -65,6 +65,7 @@ export function DocsView({ docId }: { docId?: string }) {
             label="Filter"
             value={filter}
             onValueChange={(f) => {
+              if (f === filter) return;
               // A new tab starts from its own first doc, not the one open in the last tab.
               setDocsFilter(f);
               navigate({ name: 'docs' });
@@ -163,12 +164,15 @@ function useThreadDocs(threadId: string): DocSummary[] {
 
 /**
  * One thread's docs. The row shows the version that is open (so it agrees with the header), else
- * the newest in view; clicking it always opens the newest, so a new version is one click away.
+ * the newest in view; clicking it opens the newest unread version (else the newest), so a new
+ * version is one click away.
  */
 function DocRow({ group, versions, showStatus, open, now }: { group: DocSummary[]; versions: number; showStatus: boolean; open?: DocSummary; now: number }) {
-  const newest = group[0]!;
-  const doc = open ?? newest;
-  const unread = useApp((s) => group.some((d) => isNewDoc(d, s.docsSeen)));
+  const firstUnread = useApp((s) => group.find((d) => isNewDoc(d, s.docsSeen)));
+  // Clicking opens the newest unread version, else the newest.
+  const newest = firstUnread ?? group[0]!;
+  const doc = open ?? group[0]!;
+  const unread = Boolean(firstUnread);
   return (
     <ListItem
       title={doc.title}
@@ -229,7 +233,7 @@ function DocDetail({ summary }: { summary: DocSummary }) {
         </InlineStack>
         <span className="cr-spacer" />
         <span className="inbox-detail-actions">
-          <ArchiveButton summary={summary} />
+          <ArchiveButton key={summary.id} summary={summary} />
           <Button onClick={openThread}>Open thread</Button>
           {/* Only what the owner can see can be approved. */}
           {preview ? <ApproveButton id={summary.id} status={summary.status} size="medium" /> : null}

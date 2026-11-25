@@ -88,7 +88,9 @@ export function App() {
           </Banner>
         )}
         <div className="panes">
-          <PaneErrorBoundary resetKey={JSON.stringify(view)}>
+          {/* A fresh view per route (thread scroll, Inbox focus rely on it), except within Docs: picking
+              another version keeps the pane, so the version picker keeps focus. */}
+          <PaneErrorBoundary key={view.name === 'docs' ? 'docs' : JSON.stringify(view)} resetKey={JSON.stringify(view)}>
           {view.name === 'new' && <NewThreadView key={view.role ?? ''} initialRole={view.role} />}
           {view.name === 'threads' && <ThreadsView />}
           {view.name === 'done' && <ThreadsView done key="done" />}

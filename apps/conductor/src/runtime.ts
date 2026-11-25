@@ -1507,7 +1507,8 @@ export class Runtime {
       if (status === 'approved') {
         if (a.archivedAt) a = this.store.setDocArchived(id, null)!;
         for (const old of this.store.docs(a.threadId)) {
-          if (old.id === a.id || old.archivedAt || (old.status ?? 'draft') !== 'draft' || old.createdAt >= a.createdAt) continue;
+          const older = old.createdAt < a.createdAt || (old.createdAt === a.createdAt && (old.shownAt ?? 0) < (a.shownAt ?? 0));
+          if (old.id === a.id || old.archivedAt || (old.status ?? 'draft') !== 'draft' || !older) continue;
           this.store.setDocArchived(old.id, now);
           archived.push(old.id);
         }
