@@ -234,7 +234,18 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (req.method === 'POST' && id && action === 'messages') {
           const body = await readJson<SendMessageRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments, email));
+          return send(
+            res,
+            200,
+            runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments, email, {
+              mentions: accessEnabled && Array.isArray(body.mentions) ? body.mentions.map(String) : [],
+              toAgent: body.toAgent === true,
+            }),
+          );
+        }
+        // Go ahead: the agent stops waiting for the people it held off for.
+        if (req.method === 'POST' && id && action === 'release') {
+          return send(res, 200, runtime.releaseHeld(id, email));
         }
         if (req.method === 'POST' && id && action === 'resume') {
           runtime.resumeThread(id);

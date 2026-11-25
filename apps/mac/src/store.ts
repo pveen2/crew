@@ -967,8 +967,36 @@ export async function createThread(text: string, role?: string, files?: File[], 
 }
 
 /** `replyTo`: the Inbox question this answers; only that question is resolved. */
-export async function sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, files?: File[]): Promise<void> {
-  await api('POST', `/api/threads/${threadId}/messages`, { text, sessionId, replyTo, attachments: await toUploads(files) });
+export async function sendMessage(
+  threadId: string,
+  text: string,
+  sessionId?: string,
+  replyTo?: string,
+  files?: File[],
+  people: { mentions?: string[]; toAgent?: boolean } = {},
+): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/messages`, { text, sessionId, replyTo, attachments: await toUploads(files), ...people });
+}
+
+/** Go ahead: the agent stops waiting for the people it held off for. */
+export async function releaseThread(threadId: string): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/release`);
+}
+
+/** The people (by email) a message tags: "@Juliette" for each colleague, not yourself. */
+export function mentionedPeople(text: string, people: Person[] = state.people, me: string | null = state.me): string[] {
+  const out: string[] = [];
+  for (const p of people) {
+    if (p.email === me) continue;
+    const re = new RegExp(`(^|[^\\w@])@${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'i');
+    if (re.test(text)) out.push(p.email);
+  }
+  return out;
+}
+
+/** Whether an Inbox item is for whoever is signed in: tags are only for the person tagged. */
+export function forMe(item: InboxItem, me: string | null = state.me): boolean {
+  return item.kind !== 'mention' || !me || item.for === me;
 }
 
 /** Change a queued message before the agent has it. */

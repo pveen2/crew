@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { CrewEvent, Session, TurnStatus } from '@crew/protocol';
 import {
   Badge,
@@ -27,8 +27,11 @@ import {
   archiveThread,
   editQueuedMessage,
   isPhone,
+  mentionedPeople,
   navigate,
   openAsPreview,
+  personName,
+  releaseThread,
   removeQueuedMessage,
   resolveInbox,
   resumeSession,
@@ -48,6 +51,7 @@ import {
   Elapsed,
   Markdown,
   PersonFace,
+  markMentions,
   RoleFace,
   RoleFaces,
   ago,
@@ -484,6 +488,8 @@ interface DeliveryInfo {
  */
 function deliveryOf(event: Ev<'message'>, events: CrewEvent[], session: Session | undefined): DeliveryInfo {
   const info: DeliveryInfo = { state: null, text: event.text, landedAt: null };
+  // Held (people tagged each other): part of the conversation, never a waiting chip.
+  if (event.delivery === 'held') return info;
   if (event.role !== 'user' || !event.turnId || !event.delivery) return info;
   let mode = event.delivery;
   let turnId = event.turnId;
@@ -551,6 +557,8 @@ function OwnerMessage({ threadId, event, session }: { threadId: string; event: E
   const me = useApp((s) => s.me);
   const colleague = me && event.by && event.by !== me ? event.by : null;
   const name = usePersonName(colleague);
+  const people = useApp((s) => s.people);
+  const names = useMemo(() => people.map((p) => p.name), [people]);
   return (
     <div className={colleague ? 'person-message' : 'owner-message'}>
       {colleague ? (
@@ -563,7 +571,7 @@ function OwnerMessage({ threadId, event, session }: { threadId: string; event: E
       ) : null}
       <div className="bubble">
         {event.attachments?.length ? <MessageImages threadId={threadId} attachments={event.attachments} /> : null}
-        <Markdown text={event.text} />
+        <Markdown text={markMentions(event.text, names)} />
       </div>
       {dropped ? (
         <InlineStack gap="100" className="delivery-note">
@@ -813,24 +821,37 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
 
   const go = (sessionId: string) => navigate({ name: 'thread', threadId, sessionId: sessionId === rootId ? undefined : sessionId });
 
+  const me = useApp((s) => s.me);
+  const people = useApp((s) => s.people);
+  const picker = useMentionPicker(text, setText, ref, options, me ? people.filter((p) => p.email !== me) : []);
+
   const submit = async () => {
     let body = text.trim();
     if ((!body && !images.files.length) || busy) return;
+    // People tagged (@Juliette): with nobody else called on, the agent waits for them.
+    const mentions = me ? mentionedPeople(body, people, me) : [];
     // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
     let target = session;
+    let toAgent = options.some((o) => new RegExp(`(^|[^\\w@])@${o.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'i').test(body));
     if (body.startsWith('@')) {
       const resolved = resolveMention(body, options, session.id);
       if ('error' in resolved) {
-        setError(resolved.error);
-        return;
+        // "@Juliette, …" starts with a person, not an agent: that is fine.
+        const first = (/^@([^\s,.:;!?]+)/.exec(body)?.[1] ?? '').toLowerCase();
+        if (!people.some((p) => p.email !== me && p.name.toLowerCase() === first)) {
+          setError(resolved.error);
+          return;
+        }
+      } else {
+        target = data.sessions[resolved.sessionId]!;
+        body = resolved.rest;
+        toAgent = true;
       }
-      target = data.sessions[resolved.sessionId]!;
-      body = resolved.rest;
     }
     setBusy(true);
     setError('');
     try {
-      await sendMessage(threadId, body, target.depth === 0 ? undefined : target.id, undefined, images.files);
+      await sendMessage(threadId, body, target.depth === 0 ? undefined : target.id, undefined, images.files, { mentions, toAgent });
       setText('');
       images.clear();
       if (target.id !== session.id) go(target.id);
@@ -845,10 +866,14 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
     <BlockStack gap="200" {...images.dropProps}>
       <WaitingMessages data={data} session={session} />
       <SessionStatus session={session} />
+      {session.depth === 0 ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
       {error || images.error ? <StatusLine tone="critical" icon="alert">{error || images.error}</StatusLine> : null}
       <AttachmentTray files={images.files} onRemove={images.remove} />
+      <div className="composer-anchor">
+      {picker.list}
       <Composer
         ref={ref}
+        onKeyDown={picker.onKeyDown}
         // On a phone Return adds a line and the send button sends, as in the ChatGPT and Claude apps.
         enterSends={!isPhoneTouch()}
         label={`Message ${label}`}
@@ -858,7 +883,9 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         onPaste={images.onPaste}
         leading={images.button}
         disabled={!online}
-        placeholder={session.depth > 0 ? `Message ${label} directly, or @ an agent` : 'Reply, or @ an agent'}
+        placeholder={
+          session.depth > 0 ? `Message ${label} directly, or @ an agent` : me && people.length > 1 ? 'Reply, or @ an agent or a colleague' : 'Reply, or @ an agent'
+        }
         trailing={
           <>
             <ChipSelect label="Talk to" value={session.id} options={options} onChange={go} />
@@ -870,7 +897,129 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
           </>
         }
       />
+      </div>
     </BlockStack>
+  );
+}
+
+type Suggestion = { key: string; kind: 'agent' | 'person'; label: string; detail: string; role?: string; email?: string };
+
+/**
+ * "@" in the composer: a list of the agents in this thread and the colleagues on the
+ * server. Arrows move, Enter or Tab picks, Escape closes. Picking writes "@Name ".
+ */
+function useMentionPicker(
+  text: string,
+  setText: (t: string) => void,
+  ref: { current: HTMLTextAreaElement | null },
+  options: SessionOption[],
+  people: { email: string; name: string }[],
+) {
+  const [index, setIndex] = useState(0);
+  const [closedAt, setClosedAt] = useState<string | null>(null);
+  const caret = ref.current && document.activeElement === ref.current ? ref.current.selectionStart : text.length;
+  const before = text.slice(0, caret);
+  const match = /(^|\s)@([\p{L}\p{N}._-]*)$/u.exec(before);
+  const query = match ? match[2]!.toLowerCase() : null;
+  const suggestions: Suggestion[] =
+    query === null || closedAt === before
+      ? []
+      : [
+          ...options.map((o): Suggestion => ({ key: o.value, kind: 'agent', label: o.label, detail: 'agent', role: o.role })),
+          ...people.map((p): Suggestion => ({ key: p.email, kind: 'person', label: p.name, detail: p.email, email: p.email })),
+        ]
+          .filter((s) => s.label.toLowerCase().startsWith(query) || s.email?.startsWith(query) || s.role?.startsWith(query))
+          .slice(0, 7);
+  const active = Math.min(index, Math.max(0, suggestions.length - 1));
+
+  useEffect(() => setIndex(0), [query]);
+
+  const pick = (s: Suggestion) => {
+    if (!match) return;
+    const start = match.index + match[1]!.length;
+    const next = `${text.slice(0, start)}@${s.label} ${text.slice(caret)}`;
+    setText(next);
+    const at = start + s.label.length + 2;
+    requestAnimationFrame(() => {
+      ref.current?.focus();
+      ref.current?.setSelectionRange(at, at);
+    });
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (!suggestions.length) return;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      setIndex((active + (e.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length);
+    } else if ((e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      pick(suggestions[active]!);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setClosedAt(before);
+    }
+  };
+
+  const agents = suggestions.filter((s) => s.kind === 'agent');
+  const persons = suggestions.filter((s) => s.kind === 'person');
+  const row = (s: Suggestion) => (
+    <button
+      key={s.key}
+      type="button"
+      role="option"
+      aria-selected={s === suggestions[active]}
+      className="mention-option"
+      // Keep the focus in the text box.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => pick(s)}
+    >
+      {s.kind === 'agent' ? <RoleFace role={s.role!} size="xs" decorative /> : <PersonFace email={s.email!} size={18} />}
+      <span className="mention-option__label">{s.label}</span>
+      <span className="mention-option__detail">{s.detail}</span>
+    </button>
+  );
+  const list = suggestions.length ? (
+    <div className="mention-list" role="listbox" aria-label="Tag an agent or a colleague">
+      {agents.length ? <div className="mention-list__head">Agents</div> : null}
+      {agents.map(row)}
+      {persons.length ? <div className="mention-list__head">People</div> : null}
+      {persons.map(row)}
+    </div>
+  ) : null;
+  return { list, onKeyDown };
+}
+
+/** The agent holds off because people tagged each other: who it waits for, and Go ahead. */
+function HeldLine({ threadId, data, session, label }: { threadId: string; data: ThreadData; session: Session; label: string }) {
+  const people = useApp((s) => s.people);
+  const online = useApp((s) => s.connection === 'online');
+  const [busy, setBusy] = useState(false);
+  const waiting = useMemo(() => {
+    const done = new Set<number>();
+    for (const e of data.events) if (e.type === 'message_delivery' && e.sessionId === session.id) done.add(e.messageId);
+    const held = data.events.filter((e): e is Ev<'message'> => e.type === 'message' && e.sessionId === session.id && e.delivery === 'held' && !done.has(e.id));
+    return [...new Set(held.flatMap((e) => e.mentions ?? []))];
+  }, [data.events, session.id]);
+  if (!waiting.length) return null;
+  return (
+    <InlineStack gap="150" blockAlign="center" className="session-status held-line">
+      <Icon name="clock" size={13} />
+      <Text as="span" variant="bodySm" tone="secondary" className="grow">
+        {label} is waiting for {waiting.map((e) => personName(e, people)).join(', ')}
+      </Text>
+      <Button
+        size="slim"
+        variant="secondary"
+        icon="play"
+        disabled={busy || !online}
+        onClick={() => {
+          setBusy(true);
+          void releaseThread(threadId).finally(() => setBusy(false));
+        }}
+      >
+        Go ahead
+      </Button>
+    </InlineStack>
   );
 }
 

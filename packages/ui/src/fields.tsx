@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type InputHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type InputHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react';
 import { cx } from './cx';
 import { Icon, type IconName } from './Icon';
 
@@ -45,6 +45,8 @@ export interface ComposerProps {
   enterSends?: boolean;
   /** Paste handler on the text area, e.g. to take pasted images. */
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
+  /** Runs first on every key; preventDefault() stops the composer's own handling (e.g. a suggestion list takes Enter). */
+  onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
 }
 
 function fitHeight(el: HTMLTextAreaElement, maxHeight: number) {
@@ -54,7 +56,7 @@ function fitHeight(el: HTMLTextAreaElement, maxHeight: number) {
 
 /** The message box: an auto-growing textarea with slots, as in "Reply, or @ an agent". */
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer(
-  { label, value, onChange, onSubmit, placeholder, disabled, autoFocus, leading, trailing, size = 'default', maxHeight = 220, enterSends = true, onPaste },
+  { label, value, onChange, onSubmit, placeholder, disabled, autoFocus, leading, trailing, size = 'default', maxHeight = 220, enterSends = true, onPaste, onKeyDown },
   ref,
 ) {
   const inner = useRef<HTMLTextAreaElement>(null);
@@ -91,6 +93,8 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       onPaste={onPaste}
       enterKeyHint={enterSends ? 'send' : 'enter'}
       onKeyDown={(e) => {
+        onKeyDown?.(e);
+        if (e.defaultPrevented) return;
         if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
         if ((enterSends && !e.shiftKey) || e.metaKey) {
           e.preventDefault();

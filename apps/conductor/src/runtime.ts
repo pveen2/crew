@@ -163,6 +163,9 @@ function killOrphan(pid: number | null, sessionId: string): void {
   }
 }
 
+/** What an agent answers when people are talking to each other: nothing is shown. */
+const QUIET = '[quiet]';
+
 /** "juliette@…" → "Juliette", "paul.van.veen@…" → "Paul". */
 export function personName(email: string): string {
   const first = email.split('@')[0]!.split(/[._+-]/)[0] || email;
@@ -333,7 +336,7 @@ export class Runtime {
     kind: InboxKind,
     title: string,
     body: string,
-    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url' | 'askEveryTime'> = {},
+    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url' | 'askEveryTime' | 'for' | 'by'> = {},
   ): InboxItem {
     const item: InboxItem = {
       id: newId('i'),
@@ -400,7 +403,12 @@ export class Runtime {
       else if (last?.type === 'tool_call') statusText = `Using ${last.name.replace(/^mcp__\w+?__/, '')}`;
       else statusText = 'Working';
     } else {
-      statusText = this.store.latestDocStatusOfThread(t.id) === 'draft' ? 'Draft to review' : 'Done';
+      const waiting = this.waitingFor(t.id, t.rootSessionId);
+      statusText = waiting.length
+        ? `Waiting for ${waiting.map(personName).join(', ')}`
+        : this.store.latestDocStatusOfThread(t.id) === 'draft'
+          ? 'Draft to review'
+          : 'Done';
     }
     return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id), people: this.store.peopleOfThread(t.id) };
   }
@@ -427,6 +435,42 @@ export class Runtime {
   /** Threads from before people were recorded go to the first admin. */
   claimUnownedThreads(email: string): number {
     return this.store.claimUnownedThreads(email);
+  }
+
+  /** "@Juliette": an Inbox item only she sees, until she writes in the thread or dismisses it. */
+  private notifyMentions(session: SessionRow, by: string, mentions: string[], text: string): void {
+    const thread = this.store.thread(session.threadId);
+    for (const email of mentions) {
+      if (this.store.openMentions(session.threadId, email).length) continue;
+      this.addInbox(session, 'mention', `${personName(by)} tagged you in ${thread?.title ?? 'a thread'}`, snippet(text, 600), { for: email, by });
+    }
+  }
+
+  /** The messages the agent held off on, for its next prompt. */
+  private heldSummary(held: CrewEvent[]): string {
+    const lines = held.map((e) => (e.type === 'message' ? `- ${e.by ? personName(e.by) : 'Someone'}: ${e.text}` : '')).filter(Boolean);
+    return `While you waited, people in this thread talked to each other (you held off because they tagged a person, not you):\n${lines.join('\n')}`;
+  }
+
+  /** Who the agent is waiting for in a thread, if it holds off. */
+  private waitingFor(threadId: string, rootSessionId: string): string[] {
+    const held = this.store.heldMessages(threadId, rootSessionId);
+    return [...new Set(held.flatMap((e) => (e.type === 'message' ? (e.mentions ?? []) : [])))];
+  }
+
+  /** Go ahead: the agent stops waiting and reads what it held off on. */
+  releaseHeld(threadId: string, by: string | null): { sessionId: string } {
+    const thread = this.store.thread(threadId);
+    if (!thread) throw new Error(`No thread ${threadId}`);
+    const session = this.store.session(thread.rootSessionId)!;
+    const held = this.store.heldMessages(threadId, session.id);
+    if (!held.length) return { sessionId: session.id };
+    for (const h of held) this.emit(session, null, { type: 'message_delivery', messageId: h.id, state: 'released' });
+    const who = by ? personName(by) : 'The owner';
+    const prompt = `${this.heldSummary(held)}\n\n${who} asked you to go ahead without waiting for an answer.`;
+    const images = held.flatMap((e) => (e.type === 'message' ? (e.attachments ?? []).map((a) => a.file) : []));
+    void this.enqueueTurn(session.id, prompt, { turnId: newId('u'), images });
+    return { sessionId: session.id };
   }
 
   async roles(): Promise<RoleSummary[]> {
@@ -692,12 +736,46 @@ export class Runtime {
   }
 
 
-  sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, uploads?: AttachmentUpload[], by: string | null = null): { sessionId: string } {
+  sendMessage(
+    threadId: string,
+    text: string,
+    sessionId?: string,
+    replyTo?: string,
+    uploads?: AttachmentUpload[],
+    by: string | null = null,
+    opts: { mentions?: string[]; toAgent?: boolean } = {},
+  ): { sessionId: string } {
     const thread = this.store.thread(threadId);
     if (!thread) throw new Error(`No thread ${threadId}`);
     if (thread.archived) throw new Error('This thread is closed.');
     const session = this.store.session(sessionId ?? thread.rootSessionId);
     if (!session || session.threadId !== threadId) throw new Error('That session is not part of this thread');
+
+    by = by?.toLowerCase() ?? null;
+    // People tagged in the message (team server). Tagging adds them to the thread.
+    const mentions = [...new Set((opts.mentions ?? []).map((m) => String(m).toLowerCase().trim()))].filter((m) => /^[^@\s]+@[^@\s]+$/.test(m) && m !== by);
+    if (by) {
+      const before = this.store.peopleOfThread(threadId).length;
+      this.store.addThreadPerson(threadId, by);
+      for (const m of mentions) this.store.addThreadPerson(threadId, m);
+      if (this.store.peopleOfThread(threadId).length !== before) this.broadcast({ kind: 'thread', thread: this.withMeta(this.store.thread(threadId)!) });
+      // Writing in the thread answers whoever tagged you here.
+      for (const item of this.store.openMentions(threadId, by)) this.resolveInbox(item.id);
+    }
+
+    // A message to people only (@Juliette, is this OK?): the agent holds off until
+    // someone answers, talks to it, or says Go ahead. Not for an answer to its question.
+    if (by && mentions.length && !opts.toAgent && !replyTo && session.depth === 0) {
+      const attachmentsHeld = saveAttachments(threadId, uploads);
+      const heldText = text.trim() || (attachmentsHeld.length ? 'See the attached image.' : text);
+      this.emit(session, null, {
+        type: 'message', role: 'user', text: heldText, from: 'owner', by, mentions, delivery: 'held',
+        ...(attachmentsHeld.length ? { attachments: attachmentsHeld } : {}),
+      });
+      this.notifyMentions(session, by, mentions, heldText);
+      this.refreshThread(threadId);
+      return { sessionId: session.id };
+    }
 
     let question: InboxItem | undefined;
     if (replyTo) {
@@ -722,28 +800,33 @@ export class Runtime {
     const attachments = saveAttachments(threadId, uploads);
     text = text.trim() || (attachments.length ? 'See the attached image.' : text);
     // An answer names its question: with several open, a bare "Yes" is ambiguous.
+    // With several people in the thread the agent is told who wrote, and what it held off on.
+    const multi = Boolean(by) && this.store.peopleOfThread(threadId).length > 1;
+    const sender = multi && by ? personName(by) : 'The owner';
+    const held = session.depth === 0 ? this.store.heldMessages(threadId, session.id) : [];
+    const heldNote = held.length ? `${this.heldSummary(held)}\n\nThen ${multi ? sender : 'the owner'} wrote:\n\n` : multi ? `${sender} wrote:\n\n` : '';
+    const quietNote = multi && !question ? `\n\n(Several people work in this thread. If this is people talking to each other and nothing is asked of you, answer with exactly ${QUIET} and nothing else.)` : '';
     const promptOf = (t: string) =>
       (question
-        ? `The owner answered your question "${snippet(question.body, 300)}":\n\n${t}`
+        ? `${sender} answered your question "${snippet(question.body, 300)}":\n\n${t}`
         : session.depth === 0
-          ? t
-          : `Message from the owner, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
+          ? heldNote + t + quietNote
+          : `Message from ${multi ? sender : 'the owner'}, who stepped into your work:\n\n${t}`) + attachmentNote(attachments);
+    for (const h of held) this.emit(session, null, { type: 'message_delivery', messageId: h.id, state: 'released' });
     const prompt = promptOf(text);
-    const images = attachments.map((a) => a.file);
+    // Images from the messages it held off on come along.
+    const images = [...held.flatMap((e) => (e.type === 'message' ? (e.attachments ?? []).map((a) => a.file) : [])), ...attachments.map((a) => a.file)];
     const message = {
       type: 'message',
       role: 'user',
       text,
       from: 'owner',
-      ...(by ? { by: by.toLowerCase() } : {}),
+      ...(by ? { by } : {}),
+      ...(mentions.length ? { mentions } : {}),
       ...(attachments.length ? { attachments } : {}),
       ...(answers ? { replyTo: answers } : {}),
     } as const;
-    if (by) {
-      const before = this.store.peopleOfThread(threadId).length;
-      this.store.addThreadPerson(threadId, by);
-      if (this.store.peopleOfThread(threadId).length !== before) this.broadcast({ kind: 'thread', thread: this.withMeta(this.store.thread(threadId)!) });
-    }
+    if (by && mentions.length) this.notifyMentions(session, by, mentions, text);
 
     // Steer: the agent is working and its engine can take the message into the
     // running turn, so it reads it at its next step. Not when other messages
@@ -1084,6 +1167,8 @@ export class Runtime {
             session = this.setSession(sessionId, { engineSessionId: e.engineSessionId, engineSessionStarted: true });
             break;
           case 'text':
+            // People talking to each other: the agent chose to stay quiet.
+            if (e.text.trim() === QUIET) break;
             this.emit(session, turnId, { type: 'message', role: 'assistant', text: e.text, from: session.role });
             break;
           case 'thinking':

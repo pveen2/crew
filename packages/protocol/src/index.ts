@@ -131,13 +131,15 @@ export type CrewEventBody =
       from?: string;
       /** Team server: who sent it (their sign-in email). */
       by?: string;
+      /** Team server: the people it tags (@Juliette), by email. */
+      mentions?: string[];
       attachments?: Attachment[];
       /**
        * An owner message sent while the agent was working. 'steer': written into
        * the running turn (event turnId), read at the agent's next step. 'queue':
        * waits for the turn with this event's turnId to start.
        */
-      delivery?: 'steer' | 'queue';
+      delivery?: 'steer' | 'queue' | 'held';
       /** Owner message: the Inbox question (needs_you inboxId) it answers. */
       replyTo?: string;
     }
@@ -146,7 +148,7 @@ export type CrewEventBody =
    * and read), requeued (missed the turn, waits for nextTurnId), edited (new
    * text, before the agent had it) or removed (taken back by the owner).
    */
-  | { type: 'message_delivery'; messageId: number; state: 'read' | 'requeued' | 'edited' | 'removed'; nextTurnId?: string; text?: string }
+  | { type: 'message_delivery'; messageId: number; state: 'read' | 'requeued' | 'edited' | 'removed' | 'released'; nextTurnId?: string; text?: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; callId: string; name: string; input: unknown }
   | { type: 'tool_result'; callId: string; output: string; isError: boolean }
@@ -191,7 +193,7 @@ export type CrewEventType = CrewEventBody['type'];
 // ---------------------------------------------------------------------------
 // Inbox: things that need the owner.
 
-export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft' | 'pull_request';
+export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft' | 'pull_request' | 'mention';
 
 /** A clickable answer to an ask_owner question. */
 export interface QuestionOption {
@@ -223,6 +225,10 @@ export interface InboxItem {
   askEveryTime?: boolean;
   status: 'open' | 'resolved';
   createdAt: number;
+  /** mention: the person it is for (their email). Only they see it. */
+  for?: string;
+  /** mention: who tagged them. */
+  by?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +370,10 @@ export interface SendMessageRequest {
   sessionId?: string;
   /** The Inbox question this message answers. Only that item is resolved. */
   replyTo?: string;
+  /** Team server: the people the message tags (@Juliette), by email. */
+  mentions?: string[];
+  /** The person also called on an agent (@GM): the agent answers even though people are tagged. */
+  toAgent?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ marked.setOptions({ gfm: true, breaks: false });
 const MARKDOWN_POLICY = {
   ALLOWED_TAGS: [
     'p', 'br', 'hr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'strong', 'b', 'em', 'i', 'del', 's', 'code', 'pre',
-    'blockquote', 'ul', 'ol', 'li', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub',
+    'blockquote', 'ul', 'ol', 'li', 'a', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'sup', 'sub', 'mark',
   ],
   ALLOWED_ATTR: ['href', 'title', 'start', 'align', 'colspan', 'rowspan'],
   ALLOWED_URI_REGEXP: /^(?:https?:|mailto:)/i,
@@ -210,4 +210,11 @@ export function ScopeToggle({ tone = 'light' }: { tone?: 'light' | 'dark' }) {
       {option('all', 'All')}
     </span>
   );
+}
+
+/** "@Juliette" in a message, marked, for colleagues the conductor knows. */
+export function markMentions(text: string, names: string[]): string {
+  if (!names.length || !text.includes('@')) return text;
+  const alt = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return text.replace(new RegExp(`(^|[^\\w@])@(${alt})(?![\\w])`, 'gi'), '$1<mark>@$2</mark>');
 }

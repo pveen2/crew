@@ -246,6 +246,8 @@ function toInbox(r: Row): InboxItem {
     body: r.body as string,
     status: r.status as InboxItem['status'],
     createdAt: Number(r.created_at),
+    ...(r.for_email ? { for: r.for_email as string } : {}),
+    ...(r.by_email ? { by: r.by_email as string } : {}),
   };
 }
 
@@ -296,6 +298,8 @@ export class Store {
     'ALTER TABLE artifacts ADD COLUMN approved_at INTEGER',
     'ALTER TABLE artifacts ADD COLUMN archived_at INTEGER',
     'ALTER TABLE threads ADD COLUMN created_by TEXT',
+    'ALTER TABLE inbox ADD COLUMN for_email TEXT',
+    'ALTER TABLE inbox ADD COLUMN by_email TEXT',
     ]) {
       try {
         this.db.exec(sql);
@@ -680,15 +684,31 @@ export class Store {
 
   insertInbox(i: InboxItem): void {
     this.run(
-      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, url, choices, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, url, choices, title, body, status, created_at, for_email, by_email) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null, i.url ?? null,
       i.options?.length
         ? JSON.stringify({ options: i.options, recommended: i.recommended, multiSelect: i.multiSelect })
         : i.askEveryTime
           ? JSON.stringify({ askEveryTime: true })
           : null,
-      i.title, i.body, i.status, i.createdAt,
+      i.title, i.body, i.status, i.createdAt, i.for ?? null, i.by ?? null,
     );
+  }
+  /** Open mentions of one person in one thread. */
+  openMentions(threadId: string, email: string): InboxItem[] {
+    return this.all("SELECT * FROM inbox WHERE thread_id = ? AND kind = 'mention' AND for_email = ? AND status = 'open'", threadId, email).map(toInbox);
+  }
+  /**
+   * Messages held for a session: people tagged each other, so the agent waits.
+   * Not yet released (by a reply, a message to the agent, or Go ahead) or taken back.
+   */
+  heldMessages(threadId: string, sessionId: string): CrewEvent[] {
+    return this.all(
+      `SELECT * FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message' AND json_extract(body, '$.delivery') = 'held'
+         AND id NOT IN (SELECT json_extract(body, '$.messageId') FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message_delivery')
+       ORDER BY id`,
+      threadId, sessionId, threadId, sessionId,
+    ).map(toEvent);
   }
   inboxItem(id: string): InboxItem | undefined {
     const r = this.get('SELECT * FROM inbox WHERE id = ?', id);

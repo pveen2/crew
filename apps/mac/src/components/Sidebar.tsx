@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { inScope, isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
+import { forMe, inScope, isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
 import { offerMacApp } from '../macApp';
 import { PersonFace, RoleFaces, ScopeToggle, age, usageLabel, usageTitle, useNow } from './common';
 
@@ -29,7 +29,7 @@ export function Sidebar() {
     [threads, me, scope],
   );
   // The Inbox count follows Mine / All too. An item whose thread is not loaded counts.
-  const inboxItems = Object.values(inbox).filter((i) => !threads[i.threadId] || inScope(threads[i.threadId], { me, scope }));
+  const inboxItems = Object.values(inbox).filter((i) => forMe(i, me) && (!threads[i.threadId] || inScope(threads[i.threadId], { me, scope })));
   const unreadInbox = inboxItems.filter((i) => !inboxRead[i.id]);
   const unreadThreads = new Set(unreadInbox.map((i) => i.threadId));
   const workingCount = activity.filter((a) => a.status === 'running').length;
