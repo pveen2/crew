@@ -24,6 +24,8 @@ import type {
   QuestionOption,
   RoleSummary,
   ServerMessage,
+  SharedItem,
+  SharedThread,
   StateResponse,
   Thread,
   ThreadDetailResponse,
@@ -457,6 +459,76 @@ export class Runtime {
       turns: this.store.turnsOfThread(threadId),
       events: this.store.eventsOfThread(threadId),
     };
+  }
+
+  // -------------------------------------------------------------------------
+  // Share links: a read-only snapshot of the chat with the lead
+
+  /** The thread's link (token and when it was taken), if it is shared. */
+  shareOf(threadId: string): { token: string; sharedAt: number } | undefined {
+    return this.store.shareOfThread(threadId);
+  }
+
+  /** Shares the thread, or takes a fresh snapshot for the link it already has. */
+  async shareThread(threadId: string, by: string | null): Promise<{ token: string; sharedAt: number }> {
+    const snapshot = await this.sharedThread(threadId);
+    const token = this.store.saveShare(threadId, randomBytes(32).toString('base64url'), JSON.stringify(snapshot), snapshot.sharedAt, by);
+    return { token, sharedAt: snapshot.sharedAt };
+  }
+
+  unshareThread(threadId: string): void {
+    this.store.deleteShare(threadId);
+  }
+
+  sharedSnapshot(token: string): SharedThread | undefined {
+    const share = this.store.shareByToken(token);
+    return share && (JSON.parse(share.snapshot) as SharedThread);
+  }
+
+  /** An image a shared message carries; nothing else in the thread's folder. */
+  sharedFile(token: string, file: string): { mime: string; data: Buffer } | undefined {
+    const share = this.store.shareByToken(token);
+    if (!share) return undefined;
+    const items = (JSON.parse(share.snapshot) as SharedThread).items;
+    const shared = items.some((i) => i.kind === 'message' && i.attachments?.some((a) => a.file === file));
+    return shared ? this.attachmentFile(share.threadId, file) : undefined;
+  }
+
+  /**
+   * What a link shows: the owner's messages, the lead's answers and questions, and
+   * Markdown drafts it showed. No tool calls, thinking, approvals or specialists' work.
+   */
+  private async sharedThread(threadId: string): Promise<SharedThread> {
+    const thread = this.store.thread(threadId);
+    if (!thread) throw new Error('No such thread');
+    const crew = await loadCrew();
+    const events = this.store.eventsOfThread(threadId).filter((e) => e.sessionId === thread.rootSessionId);
+    const session = this.store.session(thread.rootSessionId);
+    const agent = (session && crew.agents[session.role]?.label) || session?.role || 'Agent';
+
+    // Messages sent while the agent worked can be edited or taken back before it read them.
+    const removed = new Set<number>();
+    const edited = new Map<number, string>();
+    for (const e of events) {
+      if (e.type !== 'message_delivery') continue;
+      if (e.state === 'removed') removed.add(e.messageId);
+      if (e.state === 'edited' && e.text !== undefined) edited.set(e.messageId, e.text);
+    }
+
+    const items: SharedItem[] = [];
+    for (const e of events) {
+      if (e.type === 'message' && !removed.has(e.id)) {
+        const text = edited.get(e.id) ?? e.text;
+        if (e.role === 'user') items.push({ kind: 'message', from: 'person', text, ...(e.attachments?.length ? { attachments: e.attachments } : {}), ts: e.ts });
+        else if (text.trim()) items.push({ kind: 'message', from: 'agent', agent, text, ts: e.ts });
+      } else if (e.type === 'needs_you') {
+        const options = e.options?.length ? '\n\n' + e.options.map((o) => `- ${o.label}${o.detail ? ` (${o.detail})` : ''}`).join('\n') : '';
+        items.push({ kind: 'message', from: 'agent', agent, text: e.question + options, ts: e.ts });
+      } else if (e.type === 'preview') {
+        items.push({ kind: 'doc', agent, title: e.title, format: e.format, ...(e.format === 'markdown' ? { content: e.content } : {}), ts: e.ts });
+      }
+    }
+    return { team: crew.config.name, title: thread.title, createdAt: thread.createdAt, sharedAt: Date.now(), items };
   }
 
   // -------------------------------------------------------------------------

@@ -125,6 +125,16 @@ CREATE TABLE IF NOT EXISTS verdicts (
   note TEXT,
   ts INTEGER NOT NULL
 );
+
+-- Read-only share links (team server): one per thread, a snapshot taken when
+-- shared or updated. Stopping sharing deletes the row, so the link stops working.
+CREATE TABLE IF NOT EXISTS shares (
+  token TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL UNIQUE REFERENCES threads(id),
+  snapshot TEXT NOT NULL,
+  shared_at INTEGER NOT NULL,
+  shared_by TEXT
+);
 `;
 
 type Row = Record<string, SQLInputValue>;
@@ -391,6 +401,30 @@ export class Store {
   }
   private run(sql: string, ...params: SQLInputValue[]): void {
     this.db.prepare(sql).run(...params);
+  }
+
+  // Share links --------------------------------------------------------------
+
+  shareOfThread(threadId: string): { token: string; sharedAt: number } | undefined {
+    const r = this.get('SELECT token, shared_at FROM shares WHERE thread_id = ?', threadId);
+    return r && { token: r.token as string, sharedAt: Number(r.shared_at) };
+  }
+  /** The snapshot behind a link, or undefined when there is no such link (any more). */
+  shareByToken(token: string): { threadId: string; snapshot: string } | undefined {
+    const r = this.get('SELECT thread_id, snapshot FROM shares WHERE token = ?', token);
+    return r && { threadId: r.thread_id as string, snapshot: r.snapshot as string };
+  }
+  /** Creates the thread's link, or takes a new snapshot for the link it has (same token). */
+  saveShare(threadId: string, newToken: string, snapshot: string, sharedAt: number, sharedBy: string | null): string {
+    const token = this.shareOfThread(threadId)?.token ?? newToken;
+    this.run(
+      'INSERT INTO shares (token, thread_id, snapshot, shared_at, shared_by) VALUES (?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET snapshot = excluded.snapshot, shared_at = excluded.shared_at, shared_by = excluded.shared_by',
+      token, threadId, snapshot, sharedAt, sharedBy,
+    );
+    return token;
+  }
+  deleteShare(threadId: string): void {
+    this.run('DELETE FROM shares WHERE thread_id = ?', threadId);
   }
 
   // Threads ------------------------------------------------------------------

@@ -40,6 +40,17 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** A share token: 32 random bytes, base64url. */
+const SHARE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+/** The public link for a share token, on the host the person reached the server on. */
+function shareUrl(req: IncomingMessage, token: string): string {
+  const first = (v: string | string[] | undefined) => String(Array.isArray(v) ? v[0] : (v ?? '')).split(',')[0]!.trim();
+  const host = first(req.headers['x-forwarded-host']) || first(req.headers.host);
+  const proto = first(req.headers['x-forwarded-proto']) || 'https';
+  return `${proto}://${host}/s/${token}`;
+}
+
 function corsHeaders(res: ServerResponse): void {
   // The app renderer may be served from the Vite dev server in development.
   res.setHeader('access-control-allow-origin', '*');
@@ -101,6 +112,37 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         return send(res, 404, { error: 'Not found' });
       }
 
+      // Share links (/s/<token>) are public: anyone with the link sees a read-only
+      // snapshot of one thread, without signing in. Cloudflare Access bypasses /s/*.
+      // /s/assets/* is the app's code (the share page is the same app); no data.
+      if (accessEnabled && req.method === 'GET' && parts[0] === 's') {
+        res.setHeader('x-robots-tag', 'noindex, nofollow');
+        res.setHeader('referrer-policy', 'no-referrer');
+        if (parts[1] === 'assets' && parts.length === 3) {
+          if (await serveWeb(`/assets/${parts[2]}`, res, { fallback: false })) return;
+          return send(res, 404, { error: 'Not found' });
+        }
+        const token = parts[1] ?? '';
+        if (!SHARE_TOKEN.test(token)) return send(res, 404, { error: 'Not found' });
+        if (parts.length === 2) {
+          if (await serveWeb('/index.html', res, { fallback: false })) return;
+          return send(res, 404, { error: 'Not found' });
+        }
+        if (parts.length === 3 && parts[2] === 'data') {
+          const shared = runtime.sharedSnapshot(token);
+          res.setHeader('cache-control', 'no-store');
+          return shared ? send(res, 200, shared) : send(res, 404, { error: 'This link does not work any more.' });
+        }
+        if (parts.length === 4 && parts[2] === 'files') {
+          const file = runtime.sharedFile(token, parts[3]!);
+          if (!file) return send(res, 404, { error: 'Not found' });
+          res.writeHead(200, { 'content-type': file.mime, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+          res.end(file.data);
+          return;
+        }
+        return send(res, 404, { error: 'Not found' });
+      }
+
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
       // Behind Cloudflare Access the person's Access login is what counts; the app
       // token is only needed without it (a conductor on a Mac).
@@ -120,7 +162,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
       const [, a, id, action] = parts;
 
-      if (req.method === 'GET' && a === 'state') return send(res, 200, await runtime.state());
+      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.state()), sharing: accessEnabled });
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
       if (req.method === 'GET' && a === 'spend') {
         const days = Math.min(366, Math.max(1, Math.round(Number(url.searchParams.get('days') ?? 30)) || 30));
@@ -165,7 +207,20 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         }
         if (req.method === 'GET' && id && !action) {
           const detail = runtime.threadDetail(id);
-          return detail ? send(res, 200, detail) : send(res, 404, { error: 'No such thread' });
+          if (!detail) return send(res, 404, { error: 'No such thread' });
+          const share = accessEnabled ? runtime.shareOf(id) : undefined;
+          return send(res, 200, { ...detail, share: share ? { url: shareUrl(req, share.token), sharedAt: share.sharedAt } : null });
+        }
+        // Share links, on a team server only: share (or update the snapshot), and stop sharing.
+        if (req.method === 'POST' && id && (action === 'share' || action === 'unshare')) {
+          if (!accessEnabled) return send(res, 404, { error: 'Share links need a team server.' });
+          if (!runtime.threadDetail(id)) return send(res, 404, { error: 'No such thread' });
+          if (action === 'unshare') {
+            runtime.unshareThread(id);
+            return send(res, 200, { share: null });
+          }
+          const share = await runtime.shareThread(id, email);
+          return send(res, 200, { share: { url: shareUrl(req, share.token), sharedAt: share.sharedAt } });
         }
         if (req.method === 'POST' && id && action === 'messages') {
           const body = await readJson<SendMessageRequest>(req);

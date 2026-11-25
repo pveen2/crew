@@ -20,6 +20,7 @@ import type {
   StateResponse,
   Thread,
   ThreadDetailResponse,
+  ThreadShare,
   Turn,
   ServerLogin,
 } from '@crew/protocol';
@@ -140,6 +141,10 @@ export interface AppState {
   /** Example questions on the New thread screen, from the team. */
   suggestions: string[];
   activity: AgentActivity[];
+  /** Threads can get a read-only share link (a team server). */
+  sharing: boolean;
+  /** Each loaded thread's share link; null when it is not shared. */
+  shares: Record<string, ThreadShare | null>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -338,6 +343,8 @@ let state: AppState = {
   teamFonts: [],
   suggestions: [],
   activity: [],
+  sharing: false,
+  shares: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -427,6 +434,7 @@ async function refreshState(): Promise<void> {
     teamFonts: s.team.fonts ?? [],
     suggestions: s.team.suggestions,
     activity: s.activity,
+    sharing: Boolean(s.sharing),
   });
 }
 
@@ -618,6 +626,7 @@ export async function loadThread(threadId: string): Promise<void> {
     const { [threadId]: _gone, ...loadErrors } = s.loadErrors;
     return {
       loadErrors,
+      ...(d.share !== undefined ? { shares: { ...s.shares, [threadId]: d.share } } : {}),
       details: {
         ...details,
         [threadId]: {
@@ -952,6 +961,19 @@ export async function resumeSession(sessionId: string): Promise<void> {
 
 export async function stopSession(sessionId: string): Promise<void> {
   await api('POST', `/api/sessions/${sessionId}/stop`);
+}
+
+/** Shares the thread read-only, or updates the link's snapshot to the thread as it is now. */
+export async function shareThread(threadId: string): Promise<ThreadShare> {
+  const { share } = await api<{ share: ThreadShare }>('POST', `/api/threads/${threadId}/share`);
+  set((s) => ({ shares: { ...s.shares, [threadId]: share } }));
+  return share;
+}
+
+/** Stops sharing: the link stops working. */
+export async function unshareThread(threadId: string): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/unshare`);
+  set((s) => ({ shares: { ...s.shares, [threadId]: null } }));
 }
 
 export async function archiveThread(threadId: string): Promise<void> {

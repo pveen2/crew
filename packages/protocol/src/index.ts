@@ -249,6 +249,8 @@ export interface StateResponse {
   inbox: InboxItem[];
   roles: RoleSummary[];
   activity: AgentActivity[];
+  /** Threads can get a read-only share link (a team server behind Cloudflare Access). */
+  sharing?: boolean;
 }
 
 /** One day of work, in the owner's time zone. Cost is at API prices (see Usage). */
@@ -289,6 +291,33 @@ export interface ThreadDetailResponse {
   sessions: Session[];
   turns: Turn[];
   events: CrewEvent[];
+  /** The thread's read-only share link, when it has one (team server only). */
+  share?: ThreadShare | null;
+}
+
+// ---------------------------------------------------------------------------
+// Share links: a read-only snapshot of a thread that anyone with the link can
+// open, without signing in. Only on a team server (behind Cloudflare Access).
+
+export interface ThreadShare {
+  /** The public link, e.g. https://crew.example.com/s/<token>. */
+  url: string;
+  /** When the snapshot was taken (shared or last updated). */
+  sharedAt: number;
+}
+
+export type SharedItem =
+  | { kind: 'message'; from: 'person' | 'agent'; /** Agent messages: who wrote it. */ agent?: string; text: string; attachments?: Attachment[]; ts: number }
+  /** A Markdown draft the agent showed. HTML and concept boards carry no content. */
+  | { kind: 'doc'; agent: string; title: string; format: DocFormat; content?: string; ts: number };
+
+/** What a share link shows: the conversation with the lead, without tool calls or internals. */
+export interface SharedThread {
+  team: string;
+  title: string;
+  createdAt: number;
+  sharedAt: number;
+  items: SharedItem[];
 }
 
 export interface CreateThreadRequest {

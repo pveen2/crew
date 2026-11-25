@@ -85,6 +85,12 @@ something here can't be done, stop and ask instead of loosening it.
 - Policies: *Allow* on the email list/domain **and** *Require* an identity
   provider with MFA (Google Workspace or the org's IdP, with 2-step verification
   enforced). Don't use one-time PIN alone. Optionally *Require* country.
+- Share links: add a second policy (or a separate Access application) with
+  action **Bypass** for the path `/s/*` on the app hostname. That is where a
+  thread's read-only share link lives (`/s/<token>`, the page's code under
+  `/s/assets/`); the conductor serves only the shared snapshot there, and only
+  for a token someone created. Without the bypass, share links still work, but
+  only for people who can sign in.
 - Session duration: app 24h, SSH 8h. Turn on "Binding cookie" for the app.
 - If the team uses WARP: add a device-posture requirement (WARP connected,
   disk encryption on) to both apps.

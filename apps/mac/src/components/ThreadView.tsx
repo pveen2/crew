@@ -63,6 +63,7 @@ import {
 import { ApprovalCard } from './ApprovalCard';
 import { PreviewPanel, usePreviewDocs } from './PreviewPanel';
 import { QuestionAnswer } from './QuestionAnswer';
+import { ShareButton } from './ShareDialog';
 
 type Ev<T extends CrewEvent['type']> = Extract<CrewEvent, { type: T }>;
 
@@ -998,6 +999,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
               Run again
             </Button>
           )}
+          {session.depth === 0 && <ShareButton threadId={threadId} />}
           <Button size="slim" icon="checkCircle" className="header-close phone-hide" onClick={() => void archiveThread(threadId)}>
             Close thread
           </Button>
