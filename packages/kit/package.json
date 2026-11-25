@@ -3,13 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Ready-made connections and tools for Crew teams: Shopify, a headless browser, X search, Studio images, Meta ads.",
+  "description": "Ready-made connections and tools for Crew teams: Shopify, a headless browser, X search, Studio images, Meta ads, DataForSEO.",
   "exports": {
     "./shopify": "./src/shopify/index.ts",
     "./browser": "./src/browser/connection.ts",
     "./x": "./src/x/search.ts",
     "./studio": "./src/studio/index.ts",
-    "./meta": "./src/meta/index.ts"
+    "./meta": "./src/meta/index.ts",
+    "./dataforseo": "./src/dataforseo/index.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."
