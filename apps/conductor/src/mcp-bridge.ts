@@ -97,6 +97,17 @@ const HTML_GUIDE =
   'Images: use https URLs, or thread images by path: <img src="attachments/<file>">, which covers images the owner attached ' +
   'and screenshots kept with the browser (agent_browser_screenshot with keep: true). No scripts: they do not run.';
 
+const CONCEPTS_GUIDE =
+  'concepts: for a round of static ad concepts, pass content as JSON and the app draws each concept as the ad itself ' +
+  '(image + headline, in the brand fonts, no logo) with its briefing, headline options and Keep/Drop buttons. Shape: ' +
+  '{"intro": "one or two sentences", "aspect": "4:5" | "1:1" | "9:16", "concepts": [{"name", "angle": "the idea in one sentence", ' +
+  '"tells": "what it tells people", "stop": "why people stop", "click": "why people click", "audience", ' +
+  '"image": {"description": "what the picture shows", "file": "<thread image file, optional>", "background": "#hex", ' +
+  '"textColor": "#hex, optional", "textPosition": "top" | "center" | "bottom"}, ' +
+  '"headlines": [{"text": "Hi, we\'re Wakey. *We only work mornings.*", "star": true}], "primaryText", "linkHeadline", ' +
+  '"notes": "anything the owner must check"}]}. In headlines, *asterisks* mark the words set in the accent font. ' +
+  'Put the strongest headline first with star: true. Only name, angle, image.description and headlines are required.';
+
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
 const fail = (err: unknown) => ({ isError: true, content: [{ type: 'text' as const, text: String((err as Error)?.message ?? err) }] });
 
@@ -163,12 +174,14 @@ server.registerTool(
       "Show a document in the owner's preview panel. Pass artifactId to show an artifact as it is (preferred for anything long), " +
       'or content for something short. Markdown by default; html for layouts and for anything with images (Markdown shows no images). ' +
       'Keep your chat reply short and refer to the preview.\n\n' +
-      HTML_GUIDE,
+      HTML_GUIDE +
+      '\n\n' +
+      CONCEPTS_GUIDE,
     inputSchema: {
       title: z.string().optional().describe('Defaults to the artifact title'),
       artifactId: z.string().optional(),
       content: z.string().optional(),
-      format: z.enum(['markdown', 'html']).optional(),
+      format: z.enum(['markdown', 'html', 'concepts']).optional(),
     },
     annotations: local,
   },
@@ -182,12 +195,14 @@ if (CAN_SAVE_ARTIFACTS) {
       description:
         'Save long work (a draft, table, audit, brief) and get an id back. Return the id with a short summary instead of the full text; ' +
         'the GM shows it to the owner as it is or passes it to a colleague. Markdown by default; html for anything visual or with images ' +
-        '(Markdown shows no images).\n\n' +
-        HTML_GUIDE,
+        '(Markdown shows no images); concepts for ad concepts.\n\n' +
+        HTML_GUIDE +
+        '\n\n' +
+        CONCEPTS_GUIDE,
       inputSchema: {
         title: z.string().min(1),
         content: z.string().min(1),
-        format: z.enum(['markdown', 'html']).optional(),
+        format: z.enum(['markdown', 'html', 'concepts']).optional(),
       },
       annotations: local,
     },

@@ -178,6 +178,15 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         return;
       }
 
+      // A team font, for concept boards: /api/brand-fonts/<role>
+      if (a === 'brand-fonts' && id && req.method === 'GET') {
+        const file = await runtime.brandFontFile(id);
+        if (!file) return send(res, 404, { error: 'No such font' });
+        res.writeHead(200, { 'content-type': file.mime, 'cache-control': 'private, max-age=300' });
+        res.end(file.data);
+        return;
+      }
+
       // A queued owner message, before the agent has it: /api/messages/<eventId>/edit or /remove
       if (a === 'messages' && id && req.method === 'POST') {
         if (action === 'edit') {
