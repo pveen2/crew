@@ -33,7 +33,7 @@ import type {
 } from '@crew/protocol';
 import { parseConceptBoard } from '@crew/protocol';
 import { parseModel } from '@crew/sdk/define';
-import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew, type LoadedTool } from '@crew/sdk/load';
+import { TEAM_ROOT, loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew, type LoadedTool } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
 import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
@@ -604,8 +604,9 @@ export class Runtime {
       question = item;
     } else {
       // A plain reply while exactly one question is open answers that question.
+      // Not "@developer …" or "please ask @developer …": that hands new work to a specialist.
       const open = this.store.openInboxOfThread(threadId, ['needs_you']).filter((i) => i.sessionId === session.id);
-      if (open.length === 1) question = open[0];
+      if (open.length === 1 && !(session.depth === 0 && mentionsSpecialist(text))) question = open[0];
     }
     if (question) this.resolveInbox(question.id);
     const answers = question?.id;
@@ -1680,4 +1681,15 @@ function toolEnv(agent: LoadedAgent): Record<string, string> {
     if (v) out[name] = v;
   }
   return out;
+}
+
+/** "@developer" (a specialist's folder name) anywhere in the text, as a word of its own. */
+function mentionsSpecialist(text: string): boolean {
+  let names: string[];
+  try {
+    names = readdirSync(join(TEAM_ROOT, 'agent', 'subagents'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+  } catch {
+    return false;
+  }
+  return [...text.toLowerCase().matchAll(/(?:^|\s)@([\w-]+)(?=$|[\s.,;:!?)])/g)].some((m) => names.includes(m[1]!));
 }

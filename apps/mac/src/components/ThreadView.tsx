@@ -22,6 +22,7 @@ import {
   TextField,
   type BadgeTone,
   type IconName,
+  type MentionOption,
 } from '@crew/ui';
 import {
   archiveThread,
@@ -751,7 +752,8 @@ type SessionOption = ReturnType<typeof sessionOptions>[number];
 /**
  * Exact match of a known agent name right after "@", ending at a space or the
  * end of the text. The longest name wins ("@store manager" over "@store").
- * Several sessions of one role: the one you are talking to, otherwise ask.
+ * Several sessions of one role: the one whose label it is ("@developer-2"),
+ * else the one you are talking to, otherwise ask.
  */
 export function resolveMention(
   body: string,
@@ -775,9 +777,46 @@ export function resolveMention(
   }
   const rest = body.slice(1 + best.key.length).trim();
   if (!rest) return { error: 'Write a message after the @ name.' };
-  const pick = best.matches.length === 1 ? best.matches[0] : best.matches.find((m) => m.value === currentSessionId);
+  const byLabel = best.matches.filter((m) => [m.label.toLowerCase(), m.label.toLowerCase().replace(/\s+/g, '-')].includes(best!.key));
+  const pick =
+    best.matches.length === 1 ? best.matches[0] : byLabel.length === 1 ? byLabel[0] : best.matches.find((m) => m.value === currentSessionId);
   if (!pick) return { error: `There are several ${best.matches[0]!.label} sessions here. Pick one with the Talk to menu.` };
   return { sessionId: pick.value, rest };
+}
+
+/**
+ * "@developer …" in a thread the lead owns: which agent it names. The message
+ * itself stays with the lead, who calls that specialist. Names (what the menu
+ * writes) first, labels only when no name fits; the longest wins.
+ */
+export function mentionedRole(body: string, roles: Array<{ name: string; label: string }>): { role: string; rest: string } | { error: string } {
+  const lower = body.toLowerCase();
+  let best: { key: string; role: string } | undefined;
+  for (const byName of [true, false]) {
+    for (const r of roles) {
+      const keys = byName ? [r.name.toLowerCase()] : [r.label.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')];
+      for (const key of keys) {
+        const end = 1 + key.length;
+        if (!lower.startsWith('@' + key) || (lower.length > end && !/\s/.test(lower[end]!))) continue;
+        if (!best || key.length > best.key.length) best = { key, role: r.name };
+      }
+    }
+    if (best) break;
+  }
+  if (!best) {
+    const name = /^@(\S+)/.exec(body)?.[1] ?? '';
+    return { error: `No agent called @${name} on this thread's team.` };
+  }
+  const rest = body.slice(1 + best.key.length).trim();
+  if (!rest) return { error: 'Write a message after the @ name.' };
+  return { role: best.role, rest };
+}
+
+/** An "@specialist" anywhere in the text (after a space), by name or dashed label. */
+function mentionsSpecialist(body: string, roles: Array<{ name: string; label: string; isLead: boolean }>): boolean {
+  const keys = new Set(roles.filter((r) => !r.isLead).flatMap((r) => [r.name.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')]));
+  // A word of its own: "@developer," counts, "@developer/tools" (a package) does not.
+  return [...body.toLowerCase().matchAll(/(?:^|\s)@([\w-]+)(?=$|[\s.,;:!?)])/g)].some((m) => keys.has(m[1]!));
 }
 
 function ThreadComposer({ threadId, session, data, rootId }: { threadId: string; session: Session; data: ThreadData; rootId: string }) {
@@ -791,6 +830,25 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const working = session.status === 'running' || session.status === 'queued';
   const ref = useRef<HTMLTextAreaElement>(null);
   const options = useMemo(() => sessionOptions(data, rootId, labels), [data, rootId, labels]);
+  // In a thread the lead owns, @ lists the whole team: the question stays here
+  // and the lead starts that specialist. Otherwise @ talks to an agent in the thread.
+  const roles = useApp((s) => s.roles);
+  const benched = useApp((s) => (s.threads[threadId] ?? s.details[threadId]?.thread)?.benched);
+  const root = data.sessions[rootId];
+  const leadOwns = !!root && roles.some((r) => r.isLead && r.name === root.role);
+  const team = useMemo(
+    () => (leadOwns ? roles.filter((r) => r.isLead || !benched?.includes(r.name)).sort((a, b) => Number(b.isLead) - Number(a.isLead)) : []),
+    [leadOwns, roles, benched],
+  );
+  // Typed by hand, a switched-off specialist still goes to the lead, who says it is off.
+  const allNames = useMemo(() => (leadOwns ? roles : []), [leadOwns, roles]);
+  const mentions = useMemo<MentionOption[]>(
+    () =>
+      leadOwns
+        ? team.map((r) => ({ value: r.name, label: r.label, description: r.isLead ? 'Keep it with the lead' : r.description, prefix: <RoleFace role={r.name} size="sm" decorative /> }))
+        : options.map((o) => ({ value: o.label.toLowerCase().replace(/\s+/g, '-'), label: o.label, prefix: <RoleFace role={o.role} size="sm" decorative /> })),
+    [leadOwns, team, options],
+  );
 
   // Not on a phone: the keyboard would come up over the conversation you just opened.
   useEffect(() => {
@@ -802,9 +860,21 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const submit = async () => {
     let body = text.trim();
     if ((!body && !images.files.length) || busy) return;
-    // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
     let target = session;
-    if (body.startsWith('@')) {
+    if (body.startsWith('@') && leadOwns) {
+      // "@developer …" goes to the lead in the main thread, word for word; the lead calls the developer.
+      const named = mentionedRole(body, allNames);
+      if ('error' in named) {
+        setError(named.error);
+        return;
+      }
+      target = root;
+      if (roles.find((r) => r.name === named.role)?.isLead) body = named.rest;
+    } else if (leadOwns && session.id !== rootId && mentionsSpecialist(body, roles)) {
+      // "Please ask @developer …" from a stepped-in session also goes to the lead.
+      target = root;
+    } else if (body.startsWith('@')) {
+      // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
       const resolved = resolveMention(body, options, session.id);
       if ('error' in resolved) {
         setError(resolved.error);
@@ -842,6 +912,7 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         onChange={setText}
         onSubmit={() => void submit()}
         onPaste={images.onPaste}
+        mentions={mentions}
         leading={images.button}
         disabled={!online}
         placeholder={session.depth > 0 ? `Message ${label} directly, or @ an agent` : 'Reply, or @ an agent'}

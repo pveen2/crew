@@ -14,6 +14,7 @@ import {
   Panel,
   PanelHeader,
   Text,
+  type MentionOption,
 } from '@crew/ui';
 import { createThread, navigate, takeNewDraft, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
@@ -55,6 +56,15 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
     }
   };
 
+  // "@developer …" to the lead: the lead starts that specialist in the new thread.
+  const mentions = useMemo<MentionOption[]>(
+    () =>
+      specialists
+        .filter((r) => !benched.includes(r.name))
+        .map((r) => ({ value: r.name, label: r.label, description: r.description, prefix: <RoleFace role={r.name} size="sm" decorative /> })),
+    [specialists, benched],
+  );
+
   const options = roles.length ? roles.map((r) => ({ value: r.name, label: r.label })) : [{ value: 'gm', label: 'GM' }];
 
   return (
@@ -78,6 +88,7 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
               onChange={setText}
               onSubmit={() => void submit()}
               onPaste={images.onPaste}
+              mentions={mentions}
               disabled={!online}
               placeholder="Ask the team anything…"
               leading={
