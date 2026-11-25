@@ -824,6 +824,10 @@ body,
 .inbox-card-actions {
   padding-top: var(--cr-space-100);
 }
+.inbox-card-error {
+  flex-basis: 100%;
+  text-align: right;
+}
 .inbox-empty {
   min-height: 60vh;
 }

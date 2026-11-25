@@ -245,6 +245,9 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       if (a === 'inbox' && id && action === 'resolve' && req.method === 'POST') {
         return send(res, 200, runtime.resolveInbox(id) ?? { error: 'No such item' });
       }
+      if (a === 'inbox' && id && action === 'merge' && req.method === 'POST') {
+        return send(res, 200, await runtime.mergePullRequest(id));
+      }
       if (a === 'inbox' && id && ['approve', 'allow', 'allow-all', 'deny'].includes(action) && req.method === 'POST') {
         const always = action === 'allow' ? 'tool' : action === 'allow-all' ? 'all' : undefined;
         return send(res, 200, runtime.decideApproval(id, action !== 'deny', always));

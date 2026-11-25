@@ -37,7 +37,7 @@ import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from
 import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
-import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, openPullRequest, snapshot, themePreview } from './code.ts';
+import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, mergePullRequest, openPullRequest, snapshot, themePreview } from './code.ts';
 
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
 
@@ -349,6 +349,20 @@ export class Runtime {
       this.refreshThread(item.threadId);
     }
     return item;
+  }
+
+  /** The owner merges a Developer's pull request from the Inbox. The item leaves the Inbox and the thread says so. */
+  async mergePullRequest(id: string): Promise<InboxItem> {
+    const item = this.store.inboxItem(id);
+    if (!item) throw new Error('No such item');
+    if (item.kind !== 'pull_request' || !item.url) throw new Error('This item is not a pull request.');
+    if (item.status !== 'open') return item;
+    const crew = await loadCrew();
+    const { method } = await mergePullRequest(codeSettings(crew.config.code), item.url);
+    const session = this.store.session(item.sessionId);
+    const what = item.title.replace(/^Pull request /, '').split(':')[0];
+    if (session) this.emit(session, null, { type: 'status', text: `The owner merged pull request ${what} (${method}): ${item.url}` });
+    return this.resolveInbox(id) ?? item;
   }
 
   private resolveInboxOf(threadId: string, kinds: InboxKind[], sessionId?: string): void {
