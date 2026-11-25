@@ -34,6 +34,13 @@ export interface Thread {
   createdBy?: string | null;
   /** Team server: everyone in the thread (started it, wrote in it, or was tagged), by email. */
   people?: string[];
+  /**
+   * A direct message between people: only they see it. No agent reads it until
+   * someone calls one with @; from then on it is a thread with that agent.
+   */
+  dm?: boolean;
+  /** DMs: the last message, as "Juliette: see you at 3". */
+  lastMessage?: string;
 }
 
 /** Someone on the team server, known from their sign-in. */

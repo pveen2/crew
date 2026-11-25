@@ -163,6 +163,7 @@ function toThread(r: Row): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     archived: Boolean(r.archived),
     benched: parseList(r.benched),
     createdBy: (r.created_by as string | null) ?? null,
+    ...(r.dm ? { dm: true } : {}),
   };
 }
 
@@ -299,6 +300,7 @@ export class Store {
     'ALTER TABLE artifacts ADD COLUMN archived_at INTEGER',
     'ALTER TABLE threads ADD COLUMN created_by TEXT',
     'ALTER TABLE inbox ADD COLUMN for_email TEXT',
+    'ALTER TABLE threads ADD COLUMN dm INTEGER NOT NULL DEFAULT 0',
     'ALTER TABLE inbox ADD COLUMN by_email TEXT',
     ]) {
       try {
@@ -451,6 +453,21 @@ export class Store {
   addThreadPerson(threadId: string, email: string): void {
     this.run('INSERT OR IGNORE INTO thread_people (thread_id, email) VALUES (?, ?)', threadId, email.toLowerCase());
   }
+  /** A DM's members; null for a thread everyone sees. */
+  dmMembers(threadId: string): string[] | null {
+    const r = this.get('SELECT dm FROM threads WHERE id = ?', threadId);
+    return r?.dm ? this.peopleOfThread(threadId) : null;
+  }
+  /** The DM between exactly these people, if there is one. */
+  dmBetween(emails: string[]): string | undefined {
+    const want = [...new Set(emails.map((e) => e.toLowerCase()))].sort().join(',');
+    const rows = this.all('SELECT id FROM threads WHERE dm = 1 AND archived = 0 ORDER BY updated_at DESC');
+    return rows.map((r) => r.id as string).find((id) => [...this.peopleOfThread(id)].sort().join(',') === want);
+  }
+  lastMessageOfThread(threadId: string): CrewEvent | undefined {
+    const r = this.get("SELECT * FROM events WHERE thread_id = ? AND type = 'message' ORDER BY id DESC LIMIT 1", threadId);
+    return r && toEvent(r);
+  }
   peopleOfThread(threadId: string): string[] {
     return this.all('SELECT email FROM thread_people WHERE thread_id = ? ORDER BY rowid', threadId).map((r) => r.email as string);
   }
@@ -482,8 +499,8 @@ export class Store {
 
   insertThread(t: Omit<Thread, 'roles' | 'statusText' | 'usage'>): void {
     this.run(
-      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, created_by) VALUES (?,?,?,?,?,?,?,?,?)',
-      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.createdBy ?? null,
+      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, created_by, dm) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.createdBy ?? null, t.dm ? 1 : 0,
     );
     if (t.createdBy) this.addThreadPerson(t.id, t.createdBy);
   }

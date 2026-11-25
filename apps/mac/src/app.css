@@ -2047,3 +2047,52 @@ body,
 .held-line {
   padding: 0 var(--cr-space-100);
 }
+
+/* Direct messages in the sidebar: ＋ lists the people to message. */
+.sidebar-people {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 var(--cr-space-100) var(--cr-space-150);
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--cr-color-bg-sidebar-raised);
+}
+.sidebar-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--cr-color-text-sidebar);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-person:hover,
+.sidebar-person:focus-visible {
+  background: var(--cr-color-bg-sidebar-hover);
+}
+.sidebar-person__name {
+  font-weight: 500;
+  color: var(--cr-color-text-sidebar-strong);
+}
+.sidebar-person__email {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--cr-color-text-sidebar-secondary);
+}
+.dm-private {
+  font-size: 11px;
+  color: var(--cr-color-text-secondary);
+  border: 1px solid var(--cr-color-border);
+  border-radius: 5px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}

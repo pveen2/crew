@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { forMe, inScope, isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
+import { createDm, dmTitle, forMe, inScope, isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
 import { offerMacApp } from '../macApp';
 import { PersonFace, RoleFaces, ScopeToggle, age, usageLabel, usageTitle, useNow } from './common';
 
@@ -25,7 +25,7 @@ export function Sidebar() {
   const now = useNow(1000);
 
   const sorted = useMemo(
-    () => Object.values(threads).filter((t) => inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
+    () => Object.values(threads).filter((t) => !t.dm && inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
     [threads, me, scope],
   );
   // The Inbox count follows Mine / All too. An item whose thread is not loaded counts.
@@ -100,6 +100,8 @@ export function Sidebar() {
         onClick={() => navigate({ name: 'agents' })}
         count={workingCount || undefined}
       />
+
+      {me ? <Messages /> : null}
 
       <div className="sidebar-section">
         <span>{me ? 'Threads' : 'Active threads'}</span>
@@ -288,5 +290,77 @@ function Connections() {
         );
       })}
     </div>
+  );
+}
+
+/** Direct messages (team server): only the people in them see them. ＋ starts one. */
+function Messages() {
+  const view = useApp((s) => s.view);
+  const threads = useApp((s) => s.threads);
+  const me = useApp((s) => s.me);
+  const people = useApp((s) => s.people);
+  const seen = useApp((s) => s.dmSeen);
+  const [picking, setPicking] = useState(false);
+  const [error, setError] = useState('');
+  const now = useNow(30_000);
+  const dms = useMemo(() => Object.values(threads).filter((t) => t.dm).sort((a, b) => b.updatedAt - a.updatedAt), [threads]);
+  const others = people.filter((p) => p.email !== me);
+
+  const start = async (email: string) => {
+    setPicking(false);
+    setError('');
+    try {
+      await createDm([email]);
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  return (
+    <>
+      <div className="sidebar-section">
+        <span>Messages</span>
+        <IconButton tone="dark" size="sm" icon="plus" label="New message" pressed={picking} onClick={() => setPicking(!picking)} />
+      </div>
+      {picking && (
+        <div className="sidebar-people" role="menu" aria-label="Message someone">
+          {others.length === 0 ? (
+            <Text variant="caption" tone="sidebarSecondary" className="sidebar-empty">
+              Nobody else has signed in yet.
+            </Text>
+          ) : (
+            others.map((p) => (
+              <button key={p.email} type="button" role="menuitem" className="sidebar-person" onClick={() => void start(p.email)}>
+                <PersonFace email={p.email} size={18} />
+                <span className="sidebar-person__name">{p.name}</span>
+                <span className="sidebar-person__email">{p.email}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+      {error && (
+        <Text variant="caption" tone="sidebarSecondary" className="sidebar-empty">
+          {error}
+        </Text>
+      )}
+      {dms.map((t) => {
+        const other = (t.people ?? []).find((p) => p !== me);
+        const unread = t.updatedAt > (seen[t.id] ?? 0) && !(view.name === 'thread' && view.threadId === t.id);
+        return (
+          <ListItem
+            key={t.id}
+            surface="dark"
+            title={dmTitle(t, me, people)}
+            unread={unread}
+            selected={view.name === 'thread' && view.threadId === t.id}
+            onClick={() => navigate({ name: 'thread', threadId: t.id })}
+            meta={age(t.updatedAt, now)}
+            subtitle={t.statusText || 'No messages yet'}
+            trailing={other ? <PersonFace email={other} size={14} /> : undefined}
+          />
+        );
+      })}
+    </>
   );
 }

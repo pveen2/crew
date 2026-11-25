@@ -152,6 +152,8 @@ export interface AppState {
   people: Person[];
   /** Threads and Inbox: only mine, or the whole team's. */
   scope: Scope;
+  /** DMs: when each was last looked at on this device. */
+  dmSeen: Record<string, number>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -268,6 +270,15 @@ const READ_KEY = 'crew.inbox.read';
 function loadRead(): Record<string, true> {
   try {
     return JSON.parse(localStorage.getItem(READ_KEY) ?? '{}') as Record<string, true>;
+  } catch {
+    return {};
+  }
+}
+
+const DM_SEEN_KEY = 'crew.dm.seen';
+function loadDmSeen(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(DM_SEEN_KEY) ?? '{}') as Record<string, number>;
   } catch {
     return {};
   }
@@ -394,6 +405,7 @@ let state: AppState = {
   me: null,
   people: [],
   scope: loadScope(),
+  dmSeen: loadDmSeen(),
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -976,6 +988,32 @@ export async function sendMessage(
   people: { mentions?: string[]; toAgent?: boolean } = {},
 ): Promise<void> {
   await api('POST', `/api/threads/${threadId}/messages`, { text, sessionId, replyTo, attachments: await toUploads(files), ...people });
+}
+
+/** Starts (or reopens) a direct message with these people, and opens it. */
+export async function createDm(withEmails: string[], text?: string): Promise<void> {
+  const thread = await api<Thread>('POST', '/api/dms', { with: withEmails, text });
+  set((s) => ({ threads: { ...s.threads, [thread.id]: thread } }));
+  navigate({ name: 'thread', threadId: thread.id });
+}
+
+/** A DM's name for whoever looks at it: the other people in it. */
+export function dmTitle(thread: Thread, me: string | null = state.me, people: Person[] = state.people): string {
+  const others = (thread.people ?? []).filter((p) => p !== me);
+  return others.length ? others.map((e) => personName(e, people)).join(', ') : thread.title;
+}
+
+/** A DM was looked at: its unread dot goes. */
+export function markDmSeen(threadId: string): void {
+  const at = Math.max(Date.now(), state.threads[threadId]?.updatedAt ?? 0);
+  if ((state.dmSeen[threadId] ?? 0) >= at) return;
+  const dmSeen = { ...state.dmSeen, [threadId]: at };
+  set({ dmSeen });
+  try {
+    localStorage.setItem(DM_SEEN_KEY, JSON.stringify(dmSeen));
+  } catch {
+    /* storage unavailable: unread lasts for this session */
+  }
 }
 
 /** Go ahead: the agent stops waiting for the people it held off for. */

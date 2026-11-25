@@ -40,6 +40,26 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** The thread a socket message is about, if any. */
+function threadOf(msg: ServerMessage): string | null {
+  switch (msg.kind) {
+    case 'event':
+      return msg.event.threadId;
+    case 'thread':
+      return msg.thread.id;
+    case 'session':
+      return msg.session.threadId;
+    case 'turn':
+      return msg.turn.threadId;
+    case 'inbox':
+      return msg.item.threadId;
+    case 'doc':
+      return msg.doc.threadId;
+    default:
+      return null;
+  }
+}
+
 /** A share token: 32 random bytes, base64url. */
 const SHARE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 
@@ -171,7 +191,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
       const [, a, id, action] = parts;
 
-      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.state()), sharing: accessEnabled, me: email, people: accessEnabled ? runtime.people() : [] });
+      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.stateFor(email)), sharing: accessEnabled, me: email, people: accessEnabled ? runtime.people() : [] });
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
       if (req.method === 'GET' && a === 'spend') {
         const days = Math.min(366, Math.max(1, Math.round(Number(url.searchParams.get('days') ?? 30)) || 30));
@@ -208,6 +228,17 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         }
       }
 
+      // A direct message (team server): POST /api/dms { with: [emails], text? }
+      if (a === 'dms' && !id && req.method === 'POST') {
+        if (!accessEnabled || !email) return send(res, 404, { error: 'Direct messages need a team server.' });
+        const body = await readJson<{ with?: unknown; text?: unknown }>(req);
+        const others = Array.isArray(body.with) ? body.with.map(String) : [];
+        return send(res, 200, await runtime.createDm(email, others, typeof body.text === 'string' ? body.text : undefined));
+      }
+
+      // A DM is only for the people in it: to anyone else it does not exist.
+      if ((a === 'threads' || a === 'attachments') && id && !runtime.canSee(id, email)) return send(res, 404, { error: 'No such thread' });
+
       if (a === 'threads') {
         if (req.method === 'POST' && !id) {
           const body = await readJson<CreateThreadRequest>(req);
@@ -223,6 +254,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         // Share links, on a team server only: share (or update the snapshot), and stop sharing.
         if (req.method === 'POST' && id && (action === 'share' || action === 'unshare')) {
           if (!accessEnabled) return send(res, 404, { error: 'Share links need a team server.' });
+          if (runtime.threadDetail(id)?.thread.dm) return send(res, 400, { error: 'Direct messages cannot be shared.' });
           if (!runtime.threadDetail(id)) return send(res, 404, { error: 'No such thread' });
           if (action === 'unshare') {
             runtime.unshareThread(id);
@@ -268,10 +300,10 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
 
       // Docs (the Docs tab): GET /api/docs, GET /api/docs/<id>, POST /api/docs/<id>/status, POST /api/docs/<id>/archive
       if (a === 'docs') {
-        if (req.method === 'GET' && !id) return send(res, 200, runtime.docs());
+        if (req.method === 'GET' && !id) return send(res, 200, runtime.docs().filter((d) => runtime.canSee(d.threadId, email)));
         if (req.method === 'GET' && id && !action) {
           const doc = runtime.doc(id);
-          return doc ? send(res, 200, doc) : send(res, 404, { error: 'No such doc' });
+          return doc && runtime.canSee(doc.threadId, email) ? send(res, 200, doc) : send(res, 404, { error: 'No such doc' });
         }
         if (req.method === 'POST' && id && action === 'status') {
           const body = await readJson<unknown>(req);
@@ -347,20 +379,19 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
   server.keepAliveTimeout = 5_000;
 
   const wss = new WebSocketServer({ noServer: true });
-  const clients = new Set<WebSocket>();
+  /** Each connection and who it is (null without Access: one person). */
+  const clients = new Map<WebSocket, string | null>();
 
   server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (
-      url.pathname !== '/ws' ||
-      (accessEnabled ? !(await accessEmail(req)) : !sameToken(url.searchParams.get('token') ?? '', opts.token))
-    ) {
+    const who = accessEnabled ? ((await accessEmail(req))?.toLowerCase() ?? null) : null;
+    if (url.pathname !== '/ws' || (accessEnabled ? !who : !sameToken(url.searchParams.get('token') ?? '', opts.token))) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      clients.add(ws);
+      clients.set(ws, who);
       ws.send(JSON.stringify({ kind: 'hello', version: 1 } satisfies ServerMessage));
       ws.on('close', () => clients.delete(ws));
       ws.on('error', () => clients.delete(ws));
@@ -369,7 +400,13 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
 
   runtime.subscribe((msg) => {
     const data = JSON.stringify(msg);
-    for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(data);
+    const threadId = threadOf(msg);
+    for (const [ws, who] of clients) {
+      if (ws.readyState !== ws.OPEN) continue;
+      // DMs go only to the people in them.
+      if (threadId && who && !runtime.canSee(threadId, who)) continue;
+      ws.send(data);
+    }
   });
 
   return new Promise<typeof server>((resolve, reject) => {

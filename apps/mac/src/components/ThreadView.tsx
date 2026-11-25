@@ -27,6 +27,8 @@ import {
   archiveThread,
   editQueuedMessage,
   isPhone,
+  dmTitle,
+  markDmSeen,
   mentionedPeople,
   navigate,
   openAsPreview,
@@ -823,6 +825,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
 
   const me = useApp((s) => s.me);
   const people = useApp((s) => s.people);
+  // A DM before anyone called an agent: messages go to people only.
+  const dmQuiet = Boolean(data.thread.dm) && !Object.values(data.turns).some((t) => t.sessionId === rootId);
   const picker = useMentionPicker(text, setText, ref, options, me ? people.filter((p) => p.email !== me) : []);
 
   const submit = async () => {
@@ -866,7 +870,7 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
     <BlockStack gap="200" {...images.dropProps}>
       <WaitingMessages data={data} session={session} />
       <SessionStatus session={session} />
-      {session.depth === 0 ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
+      {session.depth === 0 && !dmQuiet ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
       {error || images.error ? <StatusLine tone="critical" icon="alert">{error || images.error}</StatusLine> : null}
       <AttachmentTray files={images.files} onRemove={images.remove} />
       <div className="composer-anchor">
@@ -884,7 +888,13 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         leading={images.button}
         disabled={!online}
         placeholder={
-          session.depth > 0 ? `Message ${label} directly, or @ an agent` : me && people.length > 1 ? 'Reply, or @ an agent or a colleague' : 'Reply, or @ an agent'
+          session.depth > 0
+            ? `Message ${label} directly, or @ an agent`
+            : dmQuiet
+              ? `Message, or @${label} to bring in an agent`
+              : me && people.length > 1
+                ? 'Reply, or @ an agent or a colleague'
+                : 'Reply, or @ an agent'
         }
         trailing={
           <>
@@ -1074,6 +1084,12 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
   const labels = useRoleLabels();
   const me = useApp((s) => s.me);
   const starter = usePersonName(me && thread?.createdBy && thread.createdBy !== me ? thread.createdBy : null);
+  const people = useApp((s) => s.people);
+  const updatedAt = thread?.updatedAt;
+  // Looking at a DM reads it, including what arrives while it is open.
+  useEffect(() => {
+    if (thread?.dm) markDmSeen(threadId);
+  }, [thread?.dm, threadId, updatedAt]);
 
   const rootId = thread?.rootSessionId ?? '';
   const session = data?.sessions[sessionId ?? rootId];
@@ -1137,6 +1153,24 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 </Text>
               </BlockStack>
             </InlineStack>
+          ) : thread.dm ? (
+            <InlineStack gap="200" blockAlign="center" className="thread-title">
+              {(thread.people ?? [])
+                .filter((p) => p !== me)
+                .slice(0, 3)
+                .map((p) => (
+                  <PersonFace key={p} email={p} size={24} />
+                ))}
+              <BlockStack className="thread-title__text">
+                <Text variant="headingMd" as="h1" leading="tight" truncate>
+                  {dmTitle(thread, me, people)}
+                </Text>
+                <Text variant="caption" tone="secondary" leading="tight" truncate>
+                  Direct message · @ an agent to bring one in
+                </Text>
+              </BlockStack>
+              <span className="dm-private">🔒 Only {(thread.people?.length ?? 2) > 2 ? 'you' : 'you two'}</span>
+            </InlineStack>
           ) : (
             <BlockStack className="thread-title thread-title__text">
               <Text variant="headingMd" as="h1" leading="tight" truncate title={thread.title}>
@@ -1157,7 +1191,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
           )}
           <span className="cr-spacer" />
           <span className="header-faces phone-hide">
-            {me && (thread.people?.length ?? 0) > 1 ? (
+            {me && !thread.dm && (thread.people?.length ?? 0) > 1 ? (
               <span className="list-trailing" aria-label="People in this thread">
                 {thread.people!.map((p) => (
                   <PersonFace key={p} email={p} size={20} />
@@ -1166,12 +1200,12 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
             ) : null}
             <RoleFaces roles={thread.roles} size="md" />
           </span>
-          {session.depth === 0 && (
+          {session.depth === 0 && !thread.dm && (
             <Button size="slim" icon="reload" className="phone-hide" title="Ask the same question in a new thread, with specialists switched on or off" onClick={() => runAgain(threadId)}>
               Run again
             </Button>
           )}
-          {session.depth === 0 && <ShareButton threadId={threadId} />}
+          {session.depth === 0 && !thread.dm && <ShareButton threadId={threadId} />}
           <Button size="slim" icon="checkCircle" className="header-close phone-hide" onClick={() => void archiveThread(threadId)}>
             Close thread
           </Button>

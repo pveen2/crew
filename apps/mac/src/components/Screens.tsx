@@ -162,10 +162,10 @@ export function ThreadsView({ done = false }: { done?: boolean }) {
   const scope = useApp((s) => s.scope);
   const now = useNow(30_000);
   const list = useMemo(
-    () => Object.values(threads).filter((t) => inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
+    () => Object.values(threads).filter((t) => !t.dm && inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
     [threads, me, scope],
   );
-  const hidden = Object.keys(threads).length - list.length;
+  const hidden = Object.values(threads).filter((t) => !t.dm).length - list.length;
   return (
     <Panel as="main" className="pane-main">
       <PanelHeader>

@@ -402,6 +402,8 @@ export class Runtime {
       if (last?.type === 'subagent_started') statusText = `Waiting for ${last.role}`;
       else if (last?.type === 'tool_call') statusText = `Using ${last.name.replace(/^mcp__\w+?__/, '')}`;
       else statusText = 'Working';
+    } else if (t.dm) {
+      statusText = '';
     } else {
       const waiting = this.waitingFor(t.id, t.rootSessionId);
       statusText = waiting.length
@@ -410,7 +412,17 @@ export class Runtime {
           ? 'Draft to review'
           : 'Done';
     }
-    return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id), people: this.store.peopleOfThread(t.id) };
+    const meta: Thread = { ...t, roles, statusText, usage: this.store.usageOfThread(t.id), people: this.store.peopleOfThread(t.id) };
+    if (t.dm) {
+      const last = this.store.lastMessageOfThread(t.id);
+      if (last?.type === 'message') {
+        const who = last.role === 'assistant' ? (this.store.session(last.sessionId)?.role ?? 'Agent') : last.by ? personName(last.by) : '';
+        meta.lastMessage = snippet(`${who ? `${who}: ` : ''}${last.text}`, 120);
+      }
+      if (t.status === 'running') meta.statusText = statusText;
+      else meta.statusText = meta.lastMessage ?? '';
+    }
+    return meta;
   }
 
   // -------------------------------------------------------------------------
@@ -449,6 +461,10 @@ export class Runtime {
   /** The messages the agent held off on, for its next prompt. */
   private heldSummary(held: CrewEvent[]): string {
     const lines = held.map((e) => (e.type === 'message' ? `- ${e.by ? personName(e.by) : 'Someone'}: ${e.text}` : '')).filter(Boolean);
+    const thread = held[0] && this.store.thread(held[0].threadId);
+    if (thread?.dm && this.agentAbsent(thread.id, thread.rootSessionId)) {
+      return `This is a direct message between ${this.store.peopleOfThread(thread.id).map(personName).join(' and ')}. They have just called you in. What they wrote before:\n${lines.join('\n')}`;
+    }
     return `While you waited, people in this thread talked to each other (you held off because they tagged a person, not you):\n${lines.join('\n')}`;
   }
 
@@ -507,6 +523,59 @@ export class Runtime {
         since: turn?.startedAt ?? s.updatedAt,
       };
     });
+  }
+
+  /** Whether someone may see a thread: every thread, except DMs they are not in. Without people (a Mac), everything. */
+  canSee(threadId: string, email: string | null): boolean {
+    if (!email) return true;
+    const members = this.store.dmMembers(threadId);
+    return !members || members.includes(email.toLowerCase());
+  }
+
+  /** The state for one person: DMs they are not in are left out. */
+  async stateFor(email: string | null): Promise<StateResponse> {
+    const s = await this.state();
+    if (!email) return s;
+    const ok = (threadId: string) => this.canSee(threadId, email);
+    return {
+      ...s,
+      threads: s.threads.filter((t) => ok(t.id)),
+      done: s.done.filter((t) => ok(t.id)),
+      inbox: s.inbox.filter((i) => ok(i.threadId)),
+      activity: s.activity.filter((a) => ok(a.threadId)),
+    };
+  }
+
+  /**
+   * A direct message between people (team server). No turn runs: the lead is in
+   * the thread but stays out until someone calls it with @. The same people get
+   * their existing DM back.
+   */
+  async createDm(by: string, others: string[], text?: string): Promise<Thread> {
+    by = by.toLowerCase();
+    const members = [...new Set([by, ...others.map((o) => String(o).toLowerCase().trim())])].filter((e) => /^[^@\s]+@[^@\s]+$/.test(e));
+    if (members.length < 2) throw new Error('Pick someone to message.');
+    const existing = this.store.dmBetween(members);
+    let threadId = existing;
+    if (!threadId) {
+      const crew = await loadCrew();
+      const now = Date.now();
+      threadId = newId('t');
+      const title = members.filter((m) => m !== by).map(personName).join(', ');
+      this.store.insertThread({ id: threadId, title, status: 'idle', rootSessionId: 'pending', createdAt: now, updatedAt: now, archived: false, benched: [], createdBy: by, dm: true });
+      for (const m of members) this.store.addThreadPerson(threadId, m);
+      const root = this.createSession(crew, threadId, crew.lead, null);
+      this.store.db.prepare('UPDATE threads SET root_session_id = ? WHERE id = ?').run(root.id, threadId);
+    }
+    if (text?.trim()) this.sendMessage(threadId, text, undefined, undefined, undefined, by);
+    const saved = this.withMeta(this.store.thread(threadId)!);
+    this.broadcast({ kind: 'thread', thread: saved });
+    return saved;
+  }
+
+  /** A DM's agent has not been called yet: no turn ran in it. */
+  private agentAbsent(threadId: string, rootSessionId: string): boolean {
+    return !this.store.turnsOfThread(threadId).some((t) => t.sessionId === rootSessionId);
   }
 
   async state(): Promise<StateResponse> {
@@ -765,14 +834,16 @@ export class Runtime {
 
     // A message to people only (@Juliette, is this OK?): the agent holds off until
     // someone answers, talks to it, or says Go ahead. Not for an answer to its question.
-    if (by && mentions.length && !opts.toAgent && !replyTo && session.depth === 0) {
+    // A DM before anyone called an agent: every message is between people.
+    const dmQuiet = Boolean(thread.dm) && !opts.toAgent && this.agentAbsent(threadId, thread.rootSessionId);
+    if ((by && mentions.length && !opts.toAgent && !replyTo && session.depth === 0) || dmQuiet) {
       const attachmentsHeld = saveAttachments(threadId, uploads);
       const heldText = text.trim() || (attachmentsHeld.length ? 'See the attached image.' : text);
       this.emit(session, null, {
-        type: 'message', role: 'user', text: heldText, from: 'owner', by, mentions, delivery: 'held',
+        type: 'message', role: 'user', text: heldText, from: 'owner', ...(by ? { by } : {}), ...(mentions.length ? { mentions } : {}), delivery: 'held',
         ...(attachmentsHeld.length ? { attachments: attachmentsHeld } : {}),
       });
-      this.notifyMentions(session, by, mentions, heldText);
+      if (by) this.notifyMentions(session, by, mentions, heldText);
       this.refreshThread(threadId);
       return { sessionId: session.id };
     }
