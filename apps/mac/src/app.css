@@ -517,6 +517,12 @@ body,
   margin: 0 auto;
   padding: var(--cr-space-250) var(--cr-space-500) var(--cr-space-450);
 }
+/* Approvals a specialist in this thread waits on, above the composer. */
+.thread-approvals {
+  margin-bottom: var(--cr-space-250);
+  max-height: 45vh;
+  overflow-y: auto;
+}
 .session-status {
   padding: 0 var(--cr-space-150);
   color: var(--cr-color-text-secondary);
