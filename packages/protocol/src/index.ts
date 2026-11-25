@@ -453,7 +453,8 @@ export function parseConceptBoard(json: string): ConceptBoard {
     if (pos !== 'top' && pos !== 'center' && pos !== 'bottom') fail(`${at}.image.textPosition must be top, center or bottom`);
     if (!Array.isArray(c.headlines) || c.headlines.length === 0) fail(`${at}.headlines must list at least one headline`);
     return {
-      name: str(c.name, `${at}.name`, true)!,
+      // The board numbers concepts itself: "3. Between…" would read "3. 3. Between…".
+      name: str(c.name, `${at}.name`, true)!.replace(/^\s*\d+\s*[.):-]\s*/, ''),
       angle: str(c.angle, `${at}.angle`, true)!,
       tells: str(c.tells, `${at}.tells`),
       stop: str(c.stop, `${at}.stop`),

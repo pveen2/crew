@@ -600,6 +600,9 @@ body,
   .concept {
     grid-template-columns: 1fr;
   }
+  .concept > .ad {
+    width: min(100%, 300px);
+  }
 }
 .doc-scroll:has(.concepts) {
   container-type: inline-size;
