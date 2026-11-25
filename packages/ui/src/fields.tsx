@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, type ClipboardEvent, type InputHTMLAttributes, type ReactNode } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, type ClipboardEvent, type InputHTMLAttributes, type ReactNode } from 'react';
 import { cx } from './cx';
 import { Icon, type IconName } from './Icon';
 
@@ -47,6 +47,11 @@ export interface ComposerProps {
   onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
 }
 
+function fitHeight(el: HTMLTextAreaElement, maxHeight: number) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
+}
+
 /** The message box: an auto-growing textarea with slots, as in "Reply, or @ an agent". */
 export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function Composer(
   { label, value, onChange, onSubmit, placeholder, disabled, autoFocus, leading, trailing, size = 'default', maxHeight = 220, enterSends = true, onPaste },
@@ -54,12 +59,24 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
 ) {
   const inner = useRef<HTMLTextAreaElement>(null);
   useImperativeHandle(ref, () => inner.current!, []);
+  // Fit the box to its text: on every change, and whenever its width changes
+  // (a pane resized or a preview opened), since narrower means more lines.
+  useLayoutEffect(() => {
+    const el = inner.current;
+    if (el) fitHeight(el, maxHeight);
+  }, [value, maxHeight]);
   useEffect(() => {
     const el = inner.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, maxHeight) + 'px';
-  }, [value, maxHeight]);
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    let width = el.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (el.clientWidth === width) return; // our own height change, not a new width
+      width = el.clientWidth;
+      fitHeight(el, maxHeight);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [maxHeight]);
 
   const textarea = (
     <textarea
