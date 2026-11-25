@@ -36,6 +36,9 @@ export const writeScopes = [
 ].join(',');
 /** What to sign in with: everything the read path and shopify_mutate need. */
 export const authScopes = `${readScopes},${writeScopes}`;
+const requested = new Set(authScopes.split(','));
+/** Whether Crew's sign-in asks for `scope` (a write scope implies its read scope). */
+const requests = (scope: string) => requested.has(scope) || requested.has(scope.replace(/^read_/, 'write_'));
 const timeoutMs = 30_000;
 const execShopify = promisify(execFile);
 
@@ -128,7 +131,15 @@ export async function graphql(
           `shopify store auth --store ${store} --scopes ${scopes}`,
       );
     }
-    const missing = /Required access: `?(\w+)`?/i.exec(detail)?.[1];
+    // "Required access: `write_x` or `write_y` access scope. Also: …" names one or more alternative scopes.
+    const required = /Required access:([^\n.]*)/i.exec(detail)?.[1].match(/\b(?:unauthenticated_)?(?:read|write)_\w+/g) ?? [];
+    const missing = required.join(' or ') || undefined;
+    if (required.length && !required.some(requests)) {
+      throw new Error(
+        `Shopify refused: it needs ${missing}, which Crew's Shopify sign-in does not ask for, so signing in again will not help. ` +
+          `Add ${required.length > 1 ? "one of them" : missing} to the scopes in packages/kit/src/shopify/cli.ts first, then sign in again.\n${detail.slice(0, 1500)}`,
+      );
+    }
     if (!opts.allowMutations && missing) {
       throw new Error(
         `Shopify refused the query: the stored authentication lacks ${missing}. Ask the owner to sign in to Shopify again ` +
@@ -144,12 +155,26 @@ export async function graphql(
     throw new Error(`Shopify CLI query failed (exit ${failure.code ?? 'unknown'}).${detail ? `\n${detail.slice(0, 1500)}` : ''}`);
   }
 
+  let parsed: unknown;
   try {
-    // The CLI prints the data object. Preserve the Admin API response shape.
-    return { data: JSON.parse(stdout) };
+    parsed = JSON.parse(stdout);
   } catch {
     throw new Error('Shopify CLI returned invalid JSON.');
   }
+  return asResponse(parsed);
+}
+
+/**
+ * Shopify CLI 5 prints the whole Admin API response ({data, errors?, extensions?});
+ * older versions printed only the data object. Return the response shape either way,
+ * so results are never wrapped twice (data.data).
+ */
+export function asResponse(parsed: unknown): unknown {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const keys = Object.keys(parsed);
+    if (keys.includes('data') && keys.every((k) => k === 'data' || k === 'errors' || k === 'extensions')) return parsed;
+  }
+  return { data: parsed };
 }
 
 /**
