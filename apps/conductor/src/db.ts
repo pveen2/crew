@@ -289,6 +289,23 @@ export class Store {
   /** False while the Docs backfill has not completed: legacy draft Inbox items must stay. */
   readonly docsBackfilled: boolean;
 
+  /** Runs fn in one transaction: all of its writes land, or none. */
+  transaction<T>(fn: () => T): T {
+    this.db.exec('BEGIN');
+    try {
+      const out = fn();
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // No transaction left to roll back.
+      }
+      throw err;
+    }
+  }
+
   /**
    * Runs a data migration once, in one transaction, and records it only when it completed.
    * A failure rolls back and is retried on the next start.

@@ -205,7 +205,8 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
           const archived = body && typeof body === 'object' ? (body as { archived?: unknown }).archived : undefined;
           if (typeof archived !== 'boolean') return send(res, 400, { error: 'archived must be true or false' });
           if (!runtime.doc(id)) return send(res, 404, { error: 'No such doc' });
-          return send(res, 200, runtime.setDocArchived(id, archived));
+          const thread = (body as { thread?: unknown }).thread === true;
+          return send(res, 200, runtime.setDocArchived(id, archived, thread));
         }
       }
 

@@ -1496,23 +1496,29 @@ export class Runtime {
   setDocStatus(id: string, status: DocStatus): DocSummary {
     const before = this.store.artifact(id);
     if (!before?.shownAt) throw new Error('No such doc');
-    let a = this.store.setDocStatus(id, status, Date.now())!;
-    // An approved version is the one that counts: approving one from the archive brings it back.
-    if (status === 'approved' && a.archivedAt) a = this.store.setDocArchived(id, null)!;
+    const now = Date.now();
+    // Approving a version settles the drafts made before it: they leave the Docs list (still under
+    // Archived). An approved version is the one that counts, so approving one from the archive
+    // brings it back. One transaction, and it runs on every approve, so a retry finishes the job.
+    // Versions are ordered by when they were made: showing an old one again does not make it newer.
+    const { a, archived } = this.store.transaction(() => {
+      let a = this.store.setDocStatus(id, status, before.status === 'approved' && status === 'approved' ? (before.approvedAt ?? now) : now)!;
+      const archived: string[] = [];
+      if (status === 'approved') {
+        if (a.archivedAt) a = this.store.setDocArchived(id, null)!;
+        for (const old of this.store.docs(a.threadId)) {
+          if (old.id === a.id || old.archivedAt || (old.status ?? 'draft') !== 'draft' || old.createdAt >= a.createdAt) continue;
+          this.store.setDocArchived(old.id, now);
+          archived.push(old.id);
+        }
+      }
+      return { a, archived };
+    });
+    for (const old of archived) this.broadcastDoc(old);
     const thread = this.store.thread(a.threadId);
     const root = thread && this.store.session(thread.rootSessionId);
     if (root && before.status !== status) {
       this.emit(root, null, { type: 'status', text: status === 'approved' ? `Owner approved "${a.title}" (artifact ${a.id}).` : `Owner moved "${a.title}" (artifact ${a.id}) back to draft.` });
-    }
-    // Approving a version settles the drafts before it: they leave the Docs list (still under Archived).
-    if (status === 'approved' && before.status !== 'approved') {
-      const shownAt = a.shownAt ?? a.createdAt;
-      const now = Date.now();
-      for (const old of this.store.docs(a.threadId)) {
-        if (old.id === a.id || old.archivedAt || (old.status ?? 'draft') !== 'draft' || (old.shownAt ?? old.createdAt) >= shownAt) continue;
-        this.store.setDocArchived(old.id, now);
-        this.broadcastDoc(old.id);
-      }
     }
     const doc = this.docSummary(a);
     this.broadcast({ kind: 'doc', doc });
@@ -1520,12 +1526,24 @@ export class Runtime {
     return doc;
   }
 
-  /** The owner archives a doc (or brings it back). Only the Docs list changes; agents can still read it. */
-  setDocArchived(id: string, archived: boolean): DocSummary {
+  /**
+   * The owner archives a doc (or brings it back). Only the Docs list changes; agents can still read it.
+   * With `thread`, archiving takes every version in the doc's thread, in one transaction.
+   */
+  setDocArchived(id: string, archived: boolean, thread = false): DocSummary {
     const before = this.store.artifact(id);
     if (!before?.shownAt) throw new Error('No such doc');
-    const a = this.store.setDocArchived(id, archived ? (before.archivedAt ?? Date.now()) : null)!;
-    const doc = this.docSummary(a);
+    const now = Date.now();
+    const changed = this.store.transaction(() => {
+      const ids = archived && thread ? this.store.docs(before.threadId).filter((d) => !d.archivedAt || d.id === id).map((d) => d.id) : [id];
+      for (const one of ids) {
+        const cur = one === id ? before : this.store.artifact(one);
+        this.store.setDocArchived(one, archived ? (cur?.archivedAt ?? now) : null);
+      }
+      return ids;
+    });
+    for (const one of changed) if (one !== id) this.broadcastDoc(one);
+    const doc = this.docSummary(this.store.artifact(id)!);
     this.broadcast({ kind: 'doc', doc });
     return doc;
   }

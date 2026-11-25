@@ -88,7 +88,7 @@ export function App() {
           </Banner>
         )}
         <div className="panes">
-          <PaneErrorBoundary key={JSON.stringify(view)}>
+          <PaneErrorBoundary resetKey={JSON.stringify(view)}>
           {view.name === 'new' && <NewThreadView key={view.role ?? ''} initialRole={view.role} />}
           {view.name === 'threads' && <ThreadsView />}
           {view.name === 'done' && <ThreadsView done key="done" />}
