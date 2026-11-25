@@ -78,15 +78,12 @@ const PUBLIC_ORIGIN = (() => {
 })();
 
 /**
- * The public link for a share token: on CREW_PUBLIC_URL, otherwise on the Host the
- * request came in on (behind the Cloudflare tunnel, the app's hostname). Always
- * https, and never from X-Forwarded-Host, which the caller controls.
+ * The public link for a share token, always on CREW_PUBLIC_URL: never on a Host or
+ * X-Forwarded-Host header, which the caller controls. Without it, no share links.
  */
-function shareUrl(req: IncomingMessage, token: string): string {
-  if (PUBLIC_ORIGIN) return `${PUBLIC_ORIGIN}/s/${token}`;
-  const host = String(req.headers.host ?? '').trim().toLowerCase();
-  if (!/^[a-z0-9.-]+(:\d{1,5})?$/.test(host)) throw new Error('Set CREW_PUBLIC_URL to make share links.');
-  return `https://${host}/s/${token}`;
+function shareUrl(token: string): string {
+  if (!PUBLIC_ORIGIN) throw new Error('Share links need CREW_PUBLIC_URL (the app’s https address) in the server’s .env.local.');
+  return `${PUBLIC_ORIGIN}/s/${token}`;
 }
 
 function corsHeaders(res: ServerResponse): void {
@@ -215,7 +212,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
       const [, a, id, action] = parts;
 
-      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.stateFor(email)), sharing: accessEnabled, me: email, people: accessEnabled ? runtime.people() : [] });
+      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.stateFor(email)), sharing: accessEnabled && Boolean(PUBLIC_ORIGIN), me: email, people: accessEnabled ? runtime.people() : [] });
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
       if (req.method === 'GET' && a === 'spend') {
         const days = Math.min(366, Math.max(1, Math.round(Number(url.searchParams.get('days') ?? 30)) || 30));
@@ -278,7 +275,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
           const detail = runtime.threadDetail(id);
           if (!detail) return send(res, 404, { error: 'No such thread' });
           const share = accessEnabled ? runtime.shareOf(id) : undefined;
-          return send(res, 200, { ...detail, share: share ? { url: shareUrl(req, share.token), sharedAt: share.sharedAt } : null });
+          return send(res, 200, { ...detail, share: share && PUBLIC_ORIGIN ? { url: shareUrl(share.token), sharedAt: share.sharedAt } : null });
         }
         // Share links, on a team server only: share (or update the snapshot), and stop sharing.
         if (req.method === 'POST' && id && (action === 'share' || action === 'unshare')) {
@@ -289,8 +286,9 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
             runtime.unshareThread(id);
             return send(res, 200, { share: null });
           }
+          if (!PUBLIC_ORIGIN) return send(res, 400, { error: 'Share links need CREW_PUBLIC_URL (the app’s https address) in the server’s .env.local.' });
           const share = await runtime.shareThread(id, email);
-          return send(res, 200, { share: { url: shareUrl(req, share.token), sharedAt: share.sharedAt } });
+          return send(res, 200, { share: { url: shareUrl(share.token), sharedAt: share.sharedAt } });
         }
         if (req.method === 'POST' && id && action === 'messages') {
           const body = await readJson<SendMessageRequest>(req);

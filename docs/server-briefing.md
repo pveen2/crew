@@ -96,7 +96,8 @@ something here can't be done, stop and ask instead of loosening it.
 - Bypass skips Cloudflare's HTTPS handling, and the token is in the link: turn
   on **Always Use HTTPS** and **HSTS** for the zone (SSL/TLS → Edge
   Certificates), and set `CREW_PUBLIC_URL=https://<app hostname>` in
-  `.env.local` so links are always built on that address.
+  `.env.local`: links are only built on that address, and without it the app
+  offers no Share button.
 - Session duration: app 24h, SSH 8h. Turn on "Binding cookie" for the app.
 - If the team uses WARP: add a device-posture requirement (WARP connected,
   disk encryption on) to both apps.

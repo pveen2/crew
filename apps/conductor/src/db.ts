@@ -466,19 +466,30 @@ export class Store {
   }
   /** The last message as people see it: edits applied, taken-back messages skipped. */
   lastMessageOfThread(threadId: string): CrewEvent | undefined {
-    const rows = this.all("SELECT * FROM events WHERE thread_id = ? AND type IN ('message', 'message_delivery') ORDER BY id DESC LIMIT 200", threadId).map(toEvent);
-    const removed = new Set<number>();
-    const edited = new Map<number, string>();
-    for (const e of rows) {
-      if (e.type === 'message_delivery') {
-        if (e.state === 'removed') removed.add(e.messageId);
-        // Newest first: the first edit seen is the latest.
-        if (e.state === 'edited' && e.text !== undefined && !edited.has(e.messageId)) edited.set(e.messageId, e.text);
-        continue;
+    // Messages and their edits or removals are looked up apart: a big batch of
+    // other delivery events (Go ahead on many held messages) cannot crowd them out.
+    let before = Number.MAX_SAFE_INTEGER;
+    for (;;) {
+      const messages = this.all("SELECT * FROM events WHERE thread_id = ? AND type = 'message' AND id < ? ORDER BY id DESC LIMIT 50", threadId, before).map(toEvent);
+      if (!messages.length) return undefined;
+      const ids = messages.map((m) => m.id);
+      const changes = this.all(
+        `SELECT * FROM events WHERE thread_id = ? AND type = 'message_delivery'
+           AND json_extract(body, '$.messageId') IN (${ids.map(() => '?').join(',')})
+           AND json_extract(body, '$.state') IN ('removed', 'edited') ORDER BY id`,
+        threadId, ...ids,
+      ).map(toEvent);
+      const removed = new Set<number>();
+      const edited = new Map<number, string>();
+      for (const c of changes) {
+        if (c.type !== 'message_delivery') continue;
+        if (c.state === 'removed') removed.add(c.messageId);
+        if (c.state === 'edited' && c.text !== undefined) edited.set(c.messageId, c.text); // oldest first: the last wins
       }
-      if (e.type === 'message' && !removed.has(e.id)) return edited.has(e.id) ? { ...e, text: edited.get(e.id)! } : e;
+      const hit = messages.find((m) => !removed.has(m.id));
+      if (hit) return edited.has(hit.id) ? ({ ...hit, text: edited.get(hit.id)! } as CrewEvent) : hit;
+      before = ids.at(-1)!;
     }
-    return undefined;
   }
   peopleOfThread(threadId: string): string[] {
     return this.all('SELECT email FROM thread_people WHERE thread_id = ? ORDER BY rowid', threadId).map((r) => r.email as string);
@@ -822,8 +833,14 @@ export class Store {
 
   // Memory -------------------------------------------------------------------
 
+  /** An agent's memory entries. Never ones saved in a DM: memory is shared with the whole team. */
   memories(agent: string, memory: string): MemoryRow[] {
-    return this.all('SELECT * FROM memories WHERE agent = ? AND memory = ? ORDER BY created_at', agent, memory).map((r) => ({
+    return this.all(
+      `SELECT * FROM memories WHERE agent = ? AND memory = ?
+         AND (thread_id IS NULL OR thread_id NOT IN (SELECT id FROM threads WHERE dm = 1))
+       ORDER BY created_at`,
+      agent, memory,
+    ).map((r) => ({
       id: r.id as string,
       agent: r.agent as string,
       memory: r.memory as string,
