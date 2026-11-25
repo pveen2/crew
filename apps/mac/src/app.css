@@ -1271,6 +1271,9 @@ body,
     position: static;
     width: 100%;
     height: 100%;
+    /* A short screen (landscape): the whole menu scrolls, so the footer stays reachable. */
+    overflow-y: auto;
+    overscroll-behavior: contain;
     opacity: 1;
     pointer-events: auto;
   }
@@ -1280,6 +1283,24 @@ body,
     z-index: 29;
     inset: 0;
     background: rgb(0 0 0 / 0.4);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--cr-duration-medium) var(--cr-easing);
+  }
+  .nav-backdrop--open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sidebar,
+    .sidebar--collapsed,
+    .nav-backdrop {
+      transition: none;
+    }
+  }
+  /* Sideways swipes on the menu are ours (swipe.ts), not the browser's. */
+  .sidebar {
+    touch-action: pan-y;
   }
 
   /* One pane at a time. */
@@ -1359,10 +1380,131 @@ body,
     gap: var(--cr-space-150);
   }
 
+  /* ---- Made for a finger, as in the ChatGPT and Claude apps. ---- */
+
+  /* Top bar: 44pt buttons (Apple's minimum tap size) for the menu and New thread. */
+  .titlebar {
+    padding: 0 var(--cr-space-100);
+  }
+  .titlebar .cr-icon-button {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--cr-radius-full);
+  }
+  .titlebar .cr-icon-button svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* The menu: taller rows, room around the list, the active row clearly marked. */
+  .sidebar-full {
+    padding: var(--cr-space-200) var(--cr-space-200) var(--cr-space-200);
+  }
+  .sidebar .cr-nav-item {
+    height: 44px;
+    border-radius: var(--cr-radius-400);
+  }
+  .sidebar .cr-list-item {
+    padding-block: var(--cr-space-250);
+  }
+  .sidebar-threads {
+    flex-shrink: 0;
+    min-height: min-content;
+    overflow-y: visible;
+  }
+  @media (min-height: 640px) {
+    /* Room enough: only the thread list scrolls, the footer stays put. */
+    .sidebar .sidebar-full {
+      overflow-y: hidden;
+    }
+    .sidebar-threads {
+      flex-shrink: 1;
+      min-height: 120px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+  }
+
+  /* Panel headers: icon buttons big enough to hit. */
+  .cr-panel__header .cr-icon-button {
+    width: 40px;
+    height: 40px;
+  }
+  .cr-panel__header--lg {
+    height: var(--cr-height-header);
+    padding: 0 var(--cr-space-200);
+  }
+
+  /* Lists: roomier rows. */
+  .threads-list {
+    padding: var(--cr-space-200) var(--cr-space-150);
+  }
+  .threads-list .cr-list-item,
+  .pane-list .cr-list-item {
+    padding-block: var(--cr-space-300);
+  }
+
+  /* Scrolling: native momentum, and the page itself never rubber-bands. */
+  .pane-scroll,
+  .sidebar-threads,
+  .doc-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
+  }
+
+  /* The composer: a rounder pill with a bigger send button. */
+  .composer-dock .cr-composer {
+    align-items: flex-end;
+    border-radius: 24px;
+    padding: var(--cr-space-100) var(--cr-space-100) var(--cr-space-100) var(--cr-space-150);
+  }
+  .cr-composer .cr-icon-button {
+    width: 36px;
+    height: 36px;
+  }
+  .cr-composer .cr-icon-button--primary svg {
+    width: 18px;
+    height: 18px;
+  }
+  .cr-composer__slot {
+    min-height: 36px;
+  }
+  .composer-dock .cr-composer textarea {
+    min-height: 36px;
+    padding-block: var(--cr-space-150);
+  }
+  .cr-chip-select {
+    height: 36px;
+  }
+  /* New thread: start closer to the top, the box within thumb reach. */
+  .new-thread {
+    padding: var(--cr-space-700) var(--cr-space-400) var(--cr-space-800);
+  }
+  .page {
+    padding: var(--cr-space-500) var(--cr-space-400) var(--cr-space-800);
+  }
+
   /* iOS zooms into any field with text under 16px. */
   input,
   textarea,
   select {
     font-size: max(16px, 1em) !important;
+  }
+}
+
+/* Touch screens have no hover: a tap leaves :hover stuck on what you touched.
+   Show the hover colour only while pressing instead. */
+@media (hover: none) {
+  .cr-list-item:hover:not(:active):not([aria-current='true']):not(.cr-list-item--selected),
+  .cr-nav-item:hover:not(:active):not([aria-current='page']):not(.cr-nav-item--raised),
+  .cr-icon-button:hover:not(:active):not(.cr-icon-button--pressed):not(.cr-icon-button--primary) {
+    background: transparent;
+  }
+  .cr-list-item--dark:active,
+  .cr-nav-item:active {
+    background: var(--cr-color-bg-sidebar-hover);
+  }
+  .cr-list-item:not(.cr-list-item--dark):active {
+    background: var(--cr-color-bg-fill-hover);
   }
 }

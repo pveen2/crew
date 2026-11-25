@@ -70,6 +70,7 @@ export const Composer = forwardRef<HTMLTextAreaElement, ComposerProps>(function 
       placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       onPaste={onPaste}
+      enterKeyHint={enterSends ? 'send' : 'enter'}
       onKeyDown={(e) => {
         if (e.key !== 'Enter' || e.nativeEvent.isComposing) return;
         if ((enterSends && !e.shiftKey) || e.metaKey) {
