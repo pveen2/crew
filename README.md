@@ -37,7 +37,8 @@ pnpm crew login claude            # signs Claude Code in for Crew only
 pnpm crew login codex             # signs Codex in for Crew only
 pnpm crew login grok              # signs Grok Build in for Crew only
 pnpm crew login antigravity       # Google sign-in for Gemini models, then /quit
-shopify store auth --store <your-store>.myshopify.com --scopes read_products,read_inventory,read_orders,read_customers,write_products,write_inventory
+# Shopify: use Shopify → Sign in in Crew's sidebar; it asks for the full scope list
+# (authScopes in packages/kit/src/shopify/cli.ts).
 pnpm crew doctor                  # checks sign-in, team, Shopify, conductor
 ```
 
@@ -295,8 +296,10 @@ Close thread also drop queued turns, and say so in the thread.
   refuses mutations without `--allow-mutations` (not passed there).
 - Shopify changes: only the store manager's `shopify_mutate` tool passes
   `--allow-mutations`, and every call waits in the Inbox for the owner's
-  approval first. The stored authentication has write access to products,
-  collections and inventory only (`write_products`, `write_inventory`). External connection
+  approval first. The stored authentication has write access to the whole
+  store (products, orders, customers, markets, shipping, discounts, themes, content and
+  more; `writeScopes` in `packages/kit/src/shopify/cli.ts`), so the Inbox approval is
+  the only gate on changes. External connection
   tools on Codex run only when marked read-only.
 - The local API binds to 127.0.0.1 and needs the token from `conductor.json`
   as a header (the WebSocket takes it as `?token=`). The Electron window only

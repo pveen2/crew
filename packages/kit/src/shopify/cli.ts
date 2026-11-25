@@ -10,8 +10,32 @@ import { Kind, OperationTypeNode, parse } from 'graphql';
 /** What the store manager can look at. Markets, languages, locations and discounts are read so questions about them can be answered. */
 export const readScopes =
   'read_products,read_inventory,read_orders,read_customers,read_markets,read_locales,read_locations,read_discounts';
-/** Products and collections (write_products) and stock levels (write_inventory). Nothing on orders, customers or discounts. */
-export const writeScopes = 'write_products,write_inventory';
+/**
+ * Full control over the store. Every change still waits for the owner's approval in the Inbox
+ * (shopify_mutate), so the token can do whatever the owner could do in Shopify Admin.
+ * A write scope implies its read scope. Protected scopes that need Shopify's review
+ * (read_all_orders, payment methods, staff accounts) are left out: asking for them can fail the sign-in.
+ */
+export const writeScopes = [
+  // Catalogue and stock
+  'write_products', 'write_inventory', 'write_product_listings', 'write_publications', 'write_files',
+  'write_metaobjects', 'write_metaobject_definitions', 'write_purchase_options',
+  // Orders, customers and fulfilment
+  'write_orders', 'write_draft_orders', 'write_order_edits', 'write_customers', 'write_returns',
+  'write_fulfillments', 'write_assigned_fulfillment_orders', 'write_merchant_managed_fulfillment_orders',
+  'write_third_party_fulfillment_orders', 'write_gift_cards',
+  // Markets, languages, shipping and locations
+  'write_markets', 'write_locales', 'write_translations', 'write_shipping', 'write_locations',
+  // Discounts and marketing
+  'write_discounts', 'write_price_rules', 'write_marketing_events',
+  // Online store
+  'write_themes', 'write_content', 'write_online_store_pages', 'write_online_store_navigation',
+  'write_legal_policies', 'write_script_tags',
+  // Checkout customisations
+  'write_delivery_customizations', 'write_payment_customizations', 'write_cart_transforms', 'write_validations',
+].join(',');
+/** What to sign in with: everything the read path and shopify_mutate need. */
+export const authScopes = `${readScopes},${writeScopes}`;
 const timeoutMs = 30_000;
 const execShopify = promisify(execFile);
 
@@ -56,7 +80,8 @@ export async function graphql(
   const args = ['store', 'execute', '--store', store, '--json', '--query', query];
   if (variables !== undefined) args.push('--variables', JSON.stringify(variables));
   if (opts.allowMutations) args.push('--allow-mutations');
-  const scopes = opts.allowMutations ? `${readScopes},${writeScopes}` : readScopes;
+  // Always ask for the full set, so signing in again after a read error never drops write access.
+  const scopes = authScopes;
 
   let stdout: string;
   try {

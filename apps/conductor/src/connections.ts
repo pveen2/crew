@@ -9,14 +9,14 @@ import { loadCrew } from '@crew/sdk/load';
 import { paths, sharedEngineHome } from './config.ts';
 import { engines } from './engines/index.ts';
 
-import { readScopes, writeScopes } from '@crew/kit/shopify';
+import { authScopes, writeScopes } from '@crew/kit/shopify';
 import type { ServerLogin } from '@crew/protocol';
 import { startLogin } from './server-login.ts';
 
 /** No Terminal to open for sign-ins: a conductor on a (Linux) server. */
 const onServer = process.platform !== 'darwin';
 
-const shopifyScopes = `${readScopes},${writeScopes}`;
+const shopifyScopes = authScopes;
 
 interface Run {
   ok: boolean;
@@ -147,10 +147,18 @@ const defs: Def[] = [
     signIn: (shopifyStore) => `shopify store auth --store ${sh(shopifyStore)} --scopes ${sh(shopifyScopes)}`,
     async check(shopifyStore) {
       if (!shopifyStore) return { status: 'unknown', detail: 'Set shopify.store in the team’s crew.config.ts' };
-      const r = await run('shopify', ['store', 'execute', '--store', shopifyStore, '--json', '--query', '{ shop { name } }'], {}, 20_000);
+      const query = '{ shop { name } currentAppInstallation { accessScopes { handle } } }';
+      const r = await run('shopify', ['store', 'execute', '--store', shopifyStore, '--json', '--query', query], {}, 20_000);
       const c = common(r, 'The Shopify CLI');
       if (c) return c;
-      if (r.ok) return { status: 'connected', detail: shopifyStore };
+      if (r.ok) {
+        // A sign-in from before the scopes were widened still works for reads; ask for a new one.
+        const missing = writeScopes.split(',').filter((s) => !r.out.includes(`"${s}"`));
+        if (missing.length) {
+          return { status: 'signed_out', detail: `${shopifyStore}: sign in again for full store access (missing ${missing.join(', ')})` };
+        }
+        return { status: 'connected', detail: shopifyStore };
+      }
       if (/no stored app authentication|stored app authentication.*(?:expired|no longer valid)/i.test(r.out)) {
         return { status: 'signed_out', detail: shopifyStore };
       }
