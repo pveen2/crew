@@ -57,7 +57,7 @@ function RoleCard({ role, activity }: { role: RoleSummary; activity: AgentActivi
             {role.description}
           </Text>
           <Text as="span" variant="micro" tone="tertiary" leading="snug" truncate>
-            {engineName(role.engine)} · {role.model} · {role.permissions === 'draft' ? 'drafts' : 'read only'}
+            {engineName(role.engine)} · {role.model} · {role.permissions === 'draft' ? 'drafts' : role.permissions === 'code' ? 'code, pull requests' : 'read only'}
           </Text>
         </BlockStack>
         <Text as="span" variant="caption" tone={state.tone} className="no-shrink">

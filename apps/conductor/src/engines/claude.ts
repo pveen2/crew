@@ -73,15 +73,37 @@ export const claudeCode: EngineAdapter = {
       // Claude Code writes absolute paths as //abs; cover the path itself and anything below it.
       for (const tool of ['Read', 'Edit', 'Write', 'Glob', 'Grep']) deny.push(`${tool}(/${p})`, `${tool}(/${p}/**)`);
     }
+    const code = opts.permissions === 'code' && !opts.oneShot;
+    const settings: Record<string, unknown> = { permissions: { deny } };
+    if (code) {
+      // The shell runs only inside Claude Code's OS sandbox (Seatbelt on macOS, bubblewrap on
+      // Linux): it writes only in its own folder (the checkout is repo/), never Crew's setup files
+      // there, reads none of the deny paths and has no network. It refuses to start rather than
+      // run commands unsandboxed, and never retries outside it. Absolute paths: the sandbox
+      // ignores relative ones in denyWrite (checked on macOS, Claude Code 2.x).
+      settings.sandbox = {
+        enabled: true,
+        failIfUnavailable: true,
+        autoAllowBashIfSandboxed: true,
+        allowUnsandboxedCommands: false,
+        filesystem: {
+          allowWrite: [join(opts.workdir, 'repo')],
+          denyWrite: ['AGENTS.md', '.agents', 'context', 'attachments'].map((f) => join(opts.workdir, f)),
+          denyRead: opts.denyPaths,
+        },
+        network: { allowedDomains: [], strictAllowlist: true },
+      };
+    }
     const settingsFile = join(opts.runDir, 'claude-settings.json');
-    writeFileSync(settingsFile, JSON.stringify({ permissions: { deny } }, null, 2), { mode: 0o600 });
+    writeFileSync(settingsFile, JSON.stringify(settings, null, 2), { mode: 0o600 });
 
     const web = opts.webAccess ? WEB_TOOLS : [];
-    const tools = [...READ_TOOLS, ...web, ...(opts.permissions === 'draft' ? DRAFT_TOOLS : [])];
+    const tools = [...READ_TOOLS, ...web, ...(opts.permissions === 'draft' || code ? DRAFT_TOOLS : []), ...(code ? ['Bash'] : [])];
     const allowed = [
       ...READ_TOOLS,
       ...web,
       ...(opts.permissions === 'draft' ? ['Write(./drafts/**)', 'Edit(./drafts/**)'] : []),
+      ...(code ? ['Write(./repo/**)', 'Edit(./repo/**)', 'Bash'] : []),
       ...Object.entries(opts.mcpServers).flatMap(([n, s]) => (s.allowTools ? s.allowTools.map((t) => `mcp__${n}__${t}`) : [`mcp__${n}`])),
     ];
 

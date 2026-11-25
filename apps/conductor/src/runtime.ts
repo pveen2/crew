@@ -31,11 +31,13 @@ import type {
   Usage,
 } from '@crew/protocol';
 import { parseConceptBoard } from '@crew/protocol';
+import { parseModel } from '@crew/sdk/define';
 import { loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
 import type { ArtifactRow, SessionRow, Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
+import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, openPullRequest, themePreview } from './code.ts';
 
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
 
@@ -319,7 +321,7 @@ export class Runtime {
     kind: InboxKind,
     title: string,
     body: string,
-    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect'> = {},
+    extra: Pick<InboxItem, 'previewId' | 'options' | 'recommended' | 'multiSelect' | 'url'> = {},
   ): InboxItem {
     const item: InboxItem = {
       id: newId('i'),
@@ -783,6 +785,8 @@ export class Runtime {
           CREW_AGENT: agent.name,
           CREW_CAN_SAVE_ARTIFACTS: agent.isLead ? '0' : '1',
           CREW_CAN_RENAME_THREAD: agent.isLead && session.depth === 0 ? '1' : '0',
+          CREW_CAN_CODE: agent.permissions === 'code' ? '1' : '0',
+          CREW_HAS_THEME: crew.config.code?.theme ? '1' : '0',
           CREW_TOOL_FILES: JSON.stringify(agent.tools.map((t) => t.file)),
           CREW_SUBAGENTS: JSON.stringify(subagents),
           CREW_MEMORIES: JSON.stringify(agent.memories.map((m) => ({ name: m.name, description: m.def.description }))),
@@ -925,6 +929,12 @@ export class Runtime {
 
       // Only the lead, in the thread it owns, calls specialists.
       const canDelegate = agent.isLead && session.depth === 0;
+      if (agent.permissions === 'code') {
+        const title = this.store.thread(session.threadId)?.title ?? '';
+        const fresh = !existsSync(join(session.workdir, 'repo', '.git'));
+        if (fresh) this.emit(session, turnId, { type: 'status', text: `Getting a fresh copy of ${crew.config.code?.repo ?? 'the code repo'}…` });
+        await ensureCheckout(codeSettings(crew.config.code), session.workdir, session.threadId, title);
+      }
       translateAgent({
         crew,
         agent,
@@ -1128,9 +1138,81 @@ export class Runtime {
         return this.readArtifact(session, String(args.id ?? ''));
       case 'list_docs':
         return this.listDocs(session);
+      case 'theme_preview':
+      case 'code_review':
+      case 'open_pull_request':
+        if (agent.permissions !== 'code') throw new Error(`${tool} is only for agents with permissions 'code'.`);
+        return this.codeTool(crew, session, tool, args, signal);
       default:
         throw new Error(`Unknown tool ${tool}`);
     }
+  }
+
+  private async codeTool(crew: LoadedCrew, session: SessionRow, tool: string, args: Record<string, unknown>, signal: AbortSignal): Promise<string> {
+    const settings = codeSettings(crew.config.code);
+    const turnId = this.running.get(session.id)?.turnId ?? null;
+    if (tool === 'theme_preview') {
+      const p = await themePreview(settings, session.workdir, crew.config.shopify?.store);
+      this.emit(session, turnId, { type: 'status', text: `Theme preview of ${p.branch}: ${p.previewUrl}` });
+      return [
+        `Pushed ${p.branch} to the development theme ${p.themeId}.`,
+        `Preview: ${p.previewUrl}`,
+        p.editorUrl ? `Theme editor: ${p.editorUrl}` : '',
+        'The link shows whichever branch was pushed last; push again right before sharing it. The storefront may ask for its password.',
+      ].filter(Boolean).join('\n');
+    }
+    if (tool === 'code_review') {
+      const { repo, stat, diff } = await branchDiff(settings, session.workdir);
+      if (!stat) return `There are no changes against ${settings.base} to review.`;
+      const max = 150_000;
+      const shown = diff.length > max ? `${diff.slice(0, max)}\n… (diff cut at ${max} characters; read the rest of the files yourself)` : diff;
+      const rules = ['AGENTS.md', settings.themePath ? join(settings.themePath, 'AGENTS.md') : '']
+        .filter(Boolean)
+        .map((f) => join(repo, f))
+        .filter((f) => existsSync(f))
+        .map((f) => readFileSync(f, 'utf8'))
+        .join('\n\n---\n\n');
+      const { engine, model, reasoning } = parseModel(settings.reviewer);
+      this.emit(session, turnId, { type: 'status', text: `Code review by ${model}…` });
+      const dir = join(paths.run, `review-${session.id}-${Date.now()}`);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try {
+        const result = await engines[engine].run({
+          workdir: repo,
+          runDir: dir,
+          model,
+          reasoning,
+          permissions: 'read-only',
+          prompt: REVIEW_PROMPT(shown, stat, typeof args.focus === 'string' ? args.focus : undefined, rules.slice(0, 40_000)),
+          resumeId: null,
+          newSessionId: engine === 'claude-code' ? randomUUID() : undefined,
+          mcpServers: {},
+          denyPaths: denyPaths(),
+          webAccess: false,
+          signal,
+          onEvent: () => {},
+        });
+        if (!result.ok) throw new Error(`The review failed: ${result.error ?? 'no answer'}`);
+        return `Review by ${model}:\n\n${result.finalText.trim()}`;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+    // open_pull_request
+    const title = String(args.title ?? '').trim();
+    const body = String(args.body ?? '').trim();
+    if (!title || !body) throw new Error('open_pull_request needs a title and a body.');
+    const pr = await openPullRequest(settings, session.workdir, {
+      title,
+      body: `${body}\n\n---\nOpened by the ${crew.agents[session.role]?.label ?? session.role} in Crew.`,
+      commitMessage: typeof args.commitMessage === 'string' ? args.commitMessage : undefined,
+    });
+    if (pr.created) {
+      // The owner merges: the pull request waits for them in the Inbox.
+      this.addInbox(session, 'pull_request', `Pull request #${pr.number}: ${title}`, `${body.split('\n\n')[0]!.slice(0, 600)}\n\n\`${pr.branch}\` · ${pr.stat.split('\n').pop()?.trim() ?? ''}`, { url: pr.url });
+    }
+    this.emit(session, turnId, { type: 'status', text: `${pr.created ? 'Opened' : 'Updated'} pull request #${pr.number}: ${pr.url}` });
+    return `${pr.created ? 'Opened' : 'Updated'} pull request #${pr.number} from ${pr.branch}: ${pr.url}\n\n${pr.stat}`;
   }
 
   /**

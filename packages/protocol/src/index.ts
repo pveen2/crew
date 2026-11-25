@@ -3,7 +3,11 @@
 // runtime dependencies so it can be imported anywhere.
 
 export type Engine = 'claude-code' | 'codex' | 'grok' | 'antigravity';
-export type Permissions = 'read-only' | 'draft';
+/**
+ * 'read-only': reads its own folder. 'draft': also writes in drafts/. 'code': also works in its own
+ * git checkout of the team's code repo (repo/), with a sandboxed shell, and can preview and open pull requests.
+ */
+export type Permissions = 'read-only' | 'draft' | 'code';
 
 export type ThreadStatus = 'idle' | 'running' | 'needs_you' | 'interrupted' | 'error';
 export type SessionStatus = 'idle' | 'running' | 'queued' | 'interrupted' | 'error';
@@ -173,7 +177,7 @@ export type CrewEventType = CrewEventBody['type'];
 // ---------------------------------------------------------------------------
 // Inbox: things that need the owner.
 
-export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft';
+export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft' | 'pull_request';
 
 /** A clickable answer to an ask_owner question. */
 export interface QuestionOption {
@@ -199,6 +203,8 @@ export interface InboxItem {
   recommended?: number;
   /** The owner may pick more than one option. */
   multiSelect?: boolean;
+  /** pull_request: the pull request on GitHub. */
+  url?: string;
   status: 'open' | 'resolved';
   createdAt: number;
 }

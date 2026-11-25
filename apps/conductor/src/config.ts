@@ -26,6 +26,8 @@ export const paths = {
   /** Conductor-owned files per session (MCP config, settings). Agents do not get these as context. */
   run: join(CREW_HOME, 'run'),
   try: join(CREW_HOME, 'try'),
+  /** Bare copies of team code repos; agents with permissions 'code' clone from them. */
+  repos: join(CREW_HOME, 'repos'),
   /** Images the owner attached, per thread. Agents get copies in their own attachments/ folder. */
   attachments: join(CREW_HOME, 'attachments'),
   /** Separate engine configuration folders, signed in once with `pnpm crew login`. */
@@ -66,6 +68,7 @@ export function ensureDirs(): void {
     paths.sessions,
     paths.run,
     paths.try,
+    paths.repos,
     paths.attachments,
     paths.engines.claude,
     paths.engines.codex,

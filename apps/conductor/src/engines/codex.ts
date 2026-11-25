@@ -60,7 +60,9 @@ export const codex: EngineAdapter = {
     }
 
     const cfg: Array<[string, unknown]> = [
-      ['sandbox_mode', opts.permissions === 'draft' ? 'workspace-write' : 'read-only'],
+      // 'code': writes in its own folder (the checkout is repo/), still without network.
+      ['sandbox_mode', opts.permissions === 'draft' || opts.permissions === 'code' ? 'workspace-write' : 'read-only'],
+      ['sandbox_workspace_write.network_access', false],
       ['approval_policy', 'never'],
       // Shell commands get only the core variables (PATH, HOME, …), never anything else.
       ['shell_environment_policy.inherit', 'core'],

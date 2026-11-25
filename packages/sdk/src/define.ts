@@ -82,7 +82,11 @@ export interface AgentDefinition {
    */
   description?: string;
   model: ModelRef;
-  /** 'read-only' (default) or 'draft': may write files in its own drafts/ folder. */
+  /**
+   * 'read-only' (default); 'draft': may write files in its own drafts/ folder; 'code': works in its own
+   * branch of the team's code repo (CrewConfig.code) with a sandboxed shell, and gets theme_preview,
+   * open_pull_request and code_review. Claude Code and Codex only.
+   */
   permissions?: Permissions;
   /**
    * Web search and fetch. Defaults to on, except for agents with a connection:
@@ -202,6 +206,8 @@ export interface CrewConfig {
   shopify?: { store: string };
   /** Example questions on the app's New thread screen. */
   suggestions?: string[];
+  /** The code repo that agents with permissions 'code' work in, each on its own branch. */
+  code?: CodeConfig;
   /**
    * What every session gets read-only in context/brand/. Paths are relative to
    * the team folder and may point outside it, e.g. into the brand's own repo:
@@ -216,6 +222,19 @@ export interface CrewConfig {
    * Without them the app uses its own font.
    */
   fonts?: { text?: FontSource; accent?: FontSource };
+}
+
+export interface CodeConfig {
+  /** GitHub repo, 'owner/name'. */
+  repo: string;
+  /** Branch that work starts from and pull requests go into. Default 'main'. */
+  base?: string;
+  /** Prefix of the agents' branches. Default 'crew/'. */
+  branchPrefix?: string;
+  /** A Shopify theme in the repo, for theme_preview: its folder, relative to the repo root. */
+  theme?: { path: string };
+  /** Model for code_review, from another vendor than the developer. Default 'codex/gpt-6.2-sol@high'. */
+  reviewer?: ModelRef;
 }
 
 export interface FontSource {

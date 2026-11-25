@@ -1,12 +1,13 @@
 import { useEffect, useMemo } from 'react';
 import type { InboxItem } from '@crew/protocol';
 import { BlockStack, Button, Card, Disclosure, Icon, InlineStack, Panel, PanelHeader, Text, cx, type IconName } from '@crew/ui';
-import { decideApproval, ensureThreads, markRead, navigate, resolveInbox, resumeThread, useApp } from '../store';
+import { decideApproval, ensureThreads, markRead, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
 import { Markdown, RoleFace, age, useNow, useRoleLabel } from './common';
 import { QuestionAnswer } from './QuestionAnswer';
 
 /**
- * The Inbox: only what an agent is waiting on (a question, an approval, a run that stopped).
+ * The Inbox: only what an agent is waiting on (a question, an approval, a run that stopped),
+ * and pull requests a Developer opened, which wait for the owner to review and merge.
  * Every item is a card with its action on it, and it leaves the Inbox once handled. Drafts are
  * not here: they live in Docs.
  */
@@ -15,6 +16,7 @@ const KIND: Record<InboxItem['kind'], { label: string; icon: IconName; order: nu
   approval: { label: 'Approval', icon: 'question', order: 0 },
   interrupted: { label: 'Interrupted', icon: 'alert', order: 1 },
   error: { label: 'Failed', icon: 'alert', order: 2 },
+  pull_request: { label: 'Pull request', icon: 'checkCircle', order: 1 },
   // From builds before Docs; cleared on the conductor's next start.
   draft: { label: 'Draft', icon: 'document', order: 3 },
 };
@@ -147,6 +149,15 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
                 <Button variant="primary" onClick={() => void decideApproval(item.id, true)}>
                   Approve
                 </Button>
+              </>
+            ) : item.kind === 'pull_request' ? (
+              <>
+                <Button onClick={() => void resolveInbox(item.id)}>Done</Button>
+                {item.url ? (
+                  <Button variant="primary" icon="arrowUpRight" onClick={() => openExternal(item.url!)}>
+                    Review on GitHub
+                  </Button>
+                ) : null}
               </>
             ) : item.kind === 'interrupted' ? (
               <>
