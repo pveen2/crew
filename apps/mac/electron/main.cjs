@@ -575,16 +575,10 @@ ipcMain.handle('crew:reauth', async (event) => {
   if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
   const info = conductorInfo();
   if (!info) return null;
-  const before = loginEmail(accessToken());
   forgetAccess(info.url, CREW_HOME);
   if (!(await ensureAccess(info.url, CREW_HOME))) return null;
-  // Signed in as someone else: what is on screen is the other person's, so start over.
-  const after = loginEmail(accessToken());
-  if (before && after && before !== after) {
-    BrowserWindow.fromWebContents(event.sender)?.webContents.reload();
-    return null;
-  }
-  return info;
+  // Who signed in: the app checks it is still the person on screen before resending.
+  return { ...info, email: loginEmail(accessToken()) };
 });
 
 // Sign out of the server: the login is forgotten, and the window starts over with a new sign-in.

@@ -69,7 +69,7 @@ declare global {
        * The server turned the Access login away (it ran out): forget it and sign in
        * again in the browser. The conductor's address and token, or null when that failed.
        */
-      reauth?: () => Promise<{ url: string; token: string } | null>;
+      reauth?: () => Promise<{ url: string; token: string; email: string | null } | null>;
       /**
        * A waiting update, or null: new commits on main (running from a checkout)
        * or a new release on GitHub (installed from the DMG).
@@ -504,35 +504,42 @@ const SIGNED_OUT = webApp
   : 'Your sign-in to the server ran out. Sign in again in the browser, then try again.';
 
 /** One sign-in at a time, however many calls ran into the expired login. */
-let reauthing: Promise<boolean> | null = null;
-function reauth(): Promise<boolean> {
+let reauthing: Promise<{ url: string; token: string } | null> | null = null;
+function reauth(): Promise<{ url: string; token: string } | null> {
   const host = window.crewHost;
-  if (!host?.reauth) return Promise.resolve(false);
+  if (!host?.reauth) return Promise.resolve(null);
   reauthing ??= (async () => {
-    const before = conn;
     const next = await host.reauth!().catch(() => null);
-    // Only the same server: never resend a request somewhere else.
-    if (!next || !before || next.url !== before.url) return false;
-    conn = next;
-    return true;
+    if (!next) return null;
+    // Signed in as someone else: what is on screen is the other person's. Start over
+    // instead of sending anything on their behalf.
+    if (state.me && next.email !== state.me.toLowerCase()) {
+      location.reload();
+      return null;
+    }
+    if (conn?.url === next.url) conn = { url: next.url, token: next.token };
+    return { url: next.url, token: next.token };
   })().finally(() => (reauthing = null));
   return reauthing;
 }
 
 async function api<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   if (!conn) throw new Error('Not connected to the conductor');
-  const res = await fetch(conn.url + path, {
+  const target = conn;
+  const res = await fetch(target.url + path, {
     method,
-    headers: { ...(conn.token && { authorization: `Bearer ${conn.token}` }), 'content-type': 'application/json' },
+    headers: { ...(target.token && { authorization: `Bearer ${target.token}` }), 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
     // Behind Cloudflare Access (https) an expired login is answered with a redirect
     // to its sign-in page: stop there instead of reading that page as data.
-    redirect: conn.url.startsWith('https:') ? 'manual' : 'follow',
+    redirect: target.url.startsWith('https:') ? 'manual' : 'follow',
   });
   if (res.type === 'opaqueredirect' || (res.status === 403 && !isJson(res))) {
-    // The Mac app signs in again in the browser and sends the request once more.
-    // (The web app does not reload by itself: that would lose what was being typed.)
-    if (!retried && (await reauth())) return api<T>(method, path, body, true);
+    // The Mac app signs in again in the browser and sends the request once more,
+    // to the same server only. (The web app does not reload by itself: that would
+    // lose what was being typed.)
+    const next = retried ? null : await reauth();
+    if (next && next.url === target.url && conn?.url === target.url) return api<T>(method, path, body, true);
     throw new Error(SIGNED_OUT);
   }
   if (!isJson(res)) throw new Error(`The server did not answer (HTTP ${res.status}). Try again in a moment.`);
