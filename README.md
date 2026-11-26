@@ -329,9 +329,10 @@ Close thread also drop queued turns, and say so in the thread.
   more; `writeScopes` in `packages/kit/src/shopify/cli.ts`), so the Inbox approval is
   the only gate on changes. External connection
   tools on Codex run only when marked read-only.
-- DataForSEO (`@crew/kit/dataforseo`): a local MCP server with six reading
+- DataForSEO (`@crew/kit/dataforseo`): a local MCP server with ten reading
   tools over DataForSEO's live API (Google results, keyword volumes and ideas,
-  a domain's rankings and competitors, on-page checks), signed in with
+  a domain's rankings and competitors, on-page checks; and GEO: mentions and
+  citations in AI answers, AI search volume, live LLM answers), signed in with
   `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`. Every call costs cents, so one
   agent session may spend at most `maxCostPerSession` (USD, default 2, kept
   across the session's turns); a call that would go over it is refused.
