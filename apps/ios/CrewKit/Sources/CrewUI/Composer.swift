@@ -329,7 +329,9 @@ private struct HeldLine: View {
 
   var body: some View {
     let waiting = waitingFor
-    if !waiting.isEmpty {
+    // A closed thread cannot go on: the conductor would refuse.
+    let closed = data.thread.archived || model.done[threadId] != nil
+    if !waiting.isEmpty && !closed {
       HStack(spacing: 8) {
         Image(systemName: "clock").foregroundStyle(.secondary)
         Text("\(model.label(session.role)) is waiting for \(waiting.map(model.personName).joined(separator: ", "))")

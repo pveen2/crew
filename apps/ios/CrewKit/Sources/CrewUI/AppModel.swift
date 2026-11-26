@@ -57,6 +57,8 @@ public final class AppModel {
   @ObservationIgnored var revealed: [String: (text: String, shown: Int, at: Date)] = [:]
   var loadErrors: [String: String] = [:]
   var dmMessages: [String: [DmMessage]] = [:]
+  /// Why a DM's history could not load, by DM: the chat offers Try again.
+  var dmLoadErrors: [String: String] = [:]
   /// Socket messages for a DM that was not loaded yet, merged in when it is.
   @ObservationIgnored private var dmEarly: [String: [DmMessage]] = [:]
   /// When I last read each DM (its updatedAt then).
@@ -94,9 +96,11 @@ public final class AppModel {
   /// A client for this server. A request that finds the sign-in ran out (an action
   /// while the socket is still open, say) sends the app back to the sign-in screen.
   private func makeClient(_ endpoint: Endpoint) -> ConductorClient {
-    ConductorClient(endpoint: endpoint) { [weak self] in
+    let tag = UUID()
+    return ConductorClient(endpoint: endpoint, tag: tag) { [weak self] in
       Task { @MainActor in
-        guard let self, self.endpoint == endpoint else { return }
+        // Only this client's: a late answer to a replaced one (signed in again since) changes nothing.
+        guard let self, self.client?.tag == tag else { return }
         self.signInRanOut()
       }
     }
@@ -138,13 +142,18 @@ public final class AppModel {
     reset()
   }
 
+  /// Which sign-in this is. Bumped by reset(): an answer to a request made before
+  /// (another person's, possibly) is dropped instead of written into this one.
+  @ObservationIgnored private var generation = 0
+
   /// Forgets everything the server sent.
   private func reset() {
+    generation += 1
     loaded = false
     teamName = "Crew"; suggestions = []; roles = []; activity = []; sharing = false
     threads = [:]; done = [:]; inbox = [:]; details = [:]; loadErrors = [:]
     me = nil; people = []; online = []; presence = [:]
-    dms = [:]; dmMessages = [:]; dmEarly = [:]
+    dms = [:]; dmMessages = [:]; dmEarly = [:]; dmLoadErrors = [:]
     drafts = [:]; revealed = [:]; images = [:]
   }
 
@@ -200,6 +209,8 @@ public final class AppModel {
         if let openId {
           if dms[openId] != nil { await loadDm(openId) } else { await loadThread(openId) }
         }
+        // Signed out (or the login ran out) while those loaded: not online any more.
+        guard !Task.isCancelled, self.client === client else { return }
         phase = .online
         delay = 1
         sendPresence()
@@ -225,7 +236,9 @@ public final class AppModel {
 
   func refreshState() async throws {
     guard let client else { return }
+    let gen = generation
     let s = try await client.get("/api/state", as: StateResponse.self)
+    guard gen == generation else { return }
     teamName = s.team.name
     suggestions = s.team.suggestions
     threads = Dictionary(s.threads.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
@@ -342,8 +355,10 @@ public final class AppModel {
 
   func loadThread(_ id: String) async {
     guard let client else { return }
+    let gen = generation
     do {
       let d = try await client.get("/api/threads/\(id)", as: ThreadDetailResponse.self)
+      guard gen == generation else { return }
       var data = ThreadData(d)
       // Events the socket delivered after this snapshot was taken stay.
       let lastId = d.events.last?.id ?? 0
@@ -354,14 +369,16 @@ public final class AppModel {
       loadErrors[id] = nil
       if !d.thread.archived { threads[id] = d.thread }
     } catch {
-      loadErrors[id] = error.localizedDescription
+      if gen == generation { loadErrors[id] = error.localizedDescription }
     }
   }
 
   @discardableResult
   func createThread(text: String, role: String?, attachments: [AttachmentUpload]) async throws -> CrewThread {
     guard let client else { throw ConductorError.offline("Not connected.") }
+    let gen = generation
     let t = try await client.post("/api/threads", CreateThreadRequest(text: text, attachments: attachments.isEmpty ? nil : attachments, role: role), as: CrewThread.self)
+    guard gen == generation else { throw CancellationError() }
     threads[t.id] = t
     return t
   }
@@ -401,7 +418,9 @@ public final class AppModel {
 
   func shareThread(_ id: String) async throws -> ThreadShare? {
     nonisolated struct Answer: Decodable { var share: ThreadShare? }
+    let gen = generation
     let a = try await client?.post("/api/threads/\(id)/share", Empty(), as: Answer.self)
+    guard gen == generation else { return nil }
     details[id]?.share = a?.share
     return a?.share
   }
@@ -446,47 +465,62 @@ public final class AppModel {
 
   func loadDm(_ id: String) async {
     guard let client else { return }
-    if let list = try? await client.get("/api/dms/\(id)/messages", as: [DmMessage].self) {
+    let gen = generation
+    do {
+      let list = try await client.get("/api/dms/\(id)/messages", as: [DmMessage].self)
+      guard gen == generation else { return }
       let early = (dmMessages[id] ?? []) + (dmEarly.removeValue(forKey: id) ?? [])
       var merged = list
       for m in early where !merged.contains(where: { $0.id == m.id }) { merged.append(m) }
       dmMessages[id] = merged.sorted { $0.id < $1.id }
+      dmLoadErrors[id] = nil
+    } catch {
+      if gen == generation { dmLoadErrors[id] = error.localizedDescription }
     }
   }
 
   /// `clientId`: made once per message, so sending it again after a lost answer does not post it twice.
   func sendDm(_ id: String, text: String, attachments: [AttachmentUpload], clientId: String) async throws {
     guard let client else { return }
+    let gen = generation
     let sent = try await client.post("/api/dms/\(id)/messages", SendDmRequest(text: text, attachments: attachments.isEmpty ? nil : attachments, clientId: clientId), as: SentDm.self)
-    gotDm(sent)
+    guard gen == generation else { throw CancellationError() }
+    await gotDm(sent)
   }
 
   func sendDm(to emails: [String], text: String, clientId: String) async throws -> Dm {
     guard let client else { throw ConductorError.offline("Not connected.") }
+    let gen = generation
     let sent = try await client.post("/api/dms", SendDmRequest(with: emails, text: text, clientId: clientId), as: SentDm.self)
-    gotDm(sent)
+    guard gen == generation else { throw CancellationError() }
+    await gotDm(sent)
     return sent.dm
   }
 
-  private func gotDm(_ sent: SentDm) {
+  private func gotDm(_ sent: SentDm) async {
     dms[sent.dm.id] = newer(dms[sent.dm.id], sent.dm)
-    // Only into a loaded DM: a DM that never loaded must still fetch its history.
     if var list = dmMessages[sent.dm.id] {
       if !list.contains(where: { $0.id == sent.message.id }) { list.append(sent.message) }
       dmMessages[sent.dm.id] = list.sorted { $0.id < $1.id }
+    } else if sent.dm.id == openId {
+      // On screen but its history never loaded (it failed): load it now, sent message included.
+      await loadDm(sent.dm.id)
     }
     markDmSeen(sent.dm.id)
   }
 
+  /// Read markers are per person: someone else signing in on this phone has their own.
+  private func seenKey(_ id: String) -> String { "\(me ?? "")|\(id)" }
+
   func markDmSeen(_ id: String) {
     guard let dm = dms[id] else { return }
-    dmSeen[id] = dm.updatedAt
+    dmSeen[seenKey(id)] = dm.updatedAt
     UserDefaults.standard.set(dmSeen, forKey: "crew.dm.seen")
   }
 
   func dmUnread(_ dm: Dm) -> Bool {
     guard let last = dm.last, last.by != me else { return false }
-    return dm.updatedAt > (dmSeen[dm.id] ?? 0)
+    return dm.updatedAt > (dmSeen[seenKey(dm.id)] ?? 0)
   }
 
   func dmName(_ dm: Dm) -> String {
@@ -504,7 +538,9 @@ public final class AppModel {
   func image(threadId: String, file: String) async -> PlatformImage? {
     let key = "\(threadId)/\(file)"
     if let cached = images[key] { return cached }
-    guard let client, let data = try? await client.data("/api/attachments/\(threadId)/\(file)"), let image = PlatformImage(data: data) else { return nil }
+    let gen = generation
+    guard let client, let data = try? await client.data("/api/attachments/\(threadId)/\(file)"), let image = PlatformImage(data: data),
+          gen == generation else { return nil }
     if images.count > 60 { images.removeAll() }
     images[key] = image
     return image

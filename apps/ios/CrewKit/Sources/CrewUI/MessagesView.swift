@@ -101,6 +101,8 @@ private struct NewDmSheet: View {
         HStack(spacing: 8) {
           TextField("Message", text: $text, axis: .vertical)
             .lineLimit(1...5)
+            // Changed text is a new message: it must not be taken for the one that was lost.
+            .onChange(of: text) { clientId = UUID().uuidString }
             .padding(.horizontal, 16)
             .padding(.vertical, 11)
             .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
@@ -169,7 +171,21 @@ struct DmView: View {
     .defaultScrollAnchor(.bottom)
     .defaultScrollAnchor(.bottom, for: .sizeChanges)
     .dismissesKeyboardOnScroll()
-    .overlay { if model.dmMessages[dmId] == nil { ProgressView() } }
+    .overlay {
+      if model.dmMessages[dmId] == nil {
+        if let error = model.dmLoadErrors[dmId] {
+          ContentUnavailableView {
+            Label("Messages could not load", systemImage: "exclamationmark.bubble")
+          } description: {
+            Text(error)
+          } actions: {
+            Button("Try again") { Task { await model.loadDm(dmId) } }.buttonStyle(.glass)
+          }
+        } else {
+          ProgressView()
+        }
+      }
+    }
     .safeAreaBar(edge: .bottom) {
       VStack(spacing: 8) {
         PickedImagesTray(images: images)
@@ -186,7 +202,11 @@ struct DmView: View {
               .padding(.vertical, 11)
               .frame(minHeight: 44)
               .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 22))
-              .onChange(of: text) { _, t in if !t.isEmpty { model.typing() } }
+              .onChange(of: text) { _, t in
+                if !t.isEmpty { model.typing() }
+                // Changed text is a new message: it must not be taken for the one that was lost.
+                clientId = UUID().uuidString
+              }
             Button {
               let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
               let uploads = images.uploads

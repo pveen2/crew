@@ -78,9 +78,12 @@ public final class ConductorClient: Sendable {
   private let session: URLSession
   /// Called when a request finds the sign-in ran out (Access turned it away).
   private let onSignInRequired: (@Sendable () -> Void)?
+  /// Tells this client from another for the same server (signed in again since).
+  public let tag: UUID
 
-  public init(endpoint: Endpoint, onSignInRequired: (@Sendable () -> Void)? = nil) {
+  public init(endpoint: Endpoint, tag: UUID = UUID(), onSignInRequired: (@Sendable () -> Void)? = nil) {
     self.endpoint = endpoint
+    self.tag = tag
     self.onSignInRequired = onSignInRequired
     let config = URLSessionConfiguration.default
     config.httpCookieStorage = nil
