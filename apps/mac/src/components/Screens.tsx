@@ -16,7 +16,7 @@ import {
   Text,
   type MentionOption,
 } from '@crew/ui';
-import { createThread, inScope, navigate, takeNewDraft, useApp } from '../store';
+import { createThread, inScope, navigate, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
 import { isPhoneTouch } from '../swipe';
 import { PersonFace, RoleFace, RoleFaces, ScopeToggle, age, useNow, usePersonName } from './common';
@@ -26,13 +26,11 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
   // Example questions come from the team (suggestions in crew.config.ts).
   const suggestions = useApp((s) => s.suggestions);
   const online = useApp((s) => s.connection === 'online');
-  // "Run again" from a thread opens this screen with its question and team.
-  const [draft] = useState(takeNewDraft);
-  const [text, setText] = useState(draft?.text ?? '');
+  const [text, setText] = useState('');
   const images = useAttachments();
   const lead = roles.find((r) => r.isLead)?.name ?? 'gm';
-  const [role, setRole] = useState(draft?.role ?? initialRole ?? lead);
-  const [benched, setBenched] = useState<string[]>(draft?.benched ?? []);
+  const [role, setRole] = useState(initialRole ?? lead);
+  const [benched, setBenched] = useState<string[]>([]);
   // Only the lead calls specialists, so the team row is for threads it owns.
   const specialists = role === lead ? roles.filter((r) => !r.isLead) : [];
   const toggle = (name: string) => setBenched((b) => (b.includes(name) ? b.filter((n) => n !== name) : [...b, name]));

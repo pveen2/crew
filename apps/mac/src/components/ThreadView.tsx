@@ -40,7 +40,6 @@ import {
   renameThread,
   resolveInbox,
   resumeSession,
-  runAgain,
   selectPreview,
   sendMessage,
   setPreviewWidth,
@@ -1198,11 +1197,6 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
             ) : null}
             <RoleFaces roles={thread.roles} size="md" />
           </span>
-          {session.depth === 0 && (
-            <Button size="slim" icon="reload" className="phone-hide" title="Ask the same question in a new thread, with specialists switched on or off" onClick={() => runAgain(threadId)}>
-              Run again
-            </Button>
-          )}
           {session.depth === 0 && <ShareButton threadId={threadId} />}
           <Button size="slim" icon="checkCircle" className="header-close phone-hide" onClick={() => void archiveThread(threadId)}>
             Close thread
