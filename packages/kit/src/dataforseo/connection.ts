@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { defineConnection, fromEnv } from '@crew/sdk/define';
 
-/** The tools an agent gets: all six read. */
+/** The tools an agent gets: all ten read. */
 export const DATAFORSEO_TOOLS = [
   'seo_google_serp',
   'seo_search_volume',
@@ -9,11 +9,18 @@ export const DATAFORSEO_TOOLS = [
   'seo_ranked_keywords',
   'seo_competitors',
   'seo_page_audit',
+  'geo_llm_mentions',
+  'geo_mentions_summary',
+  'geo_ai_search_volume',
+  'geo_ask_llm',
 ] as const;
 
 // Search data from DataForSEO (https://dataforseo.com): live Google results,
 // keyword volumes and ideas, the searches a domain ranks for, its competitors,
-// and on-page checks. Reading only, so no tool waits for the owner.
+// and on-page checks (seo_*); and visibility in AI answers (geo_*): where a
+// brand or domain is mentioned or cited in recorded Google AI Overview and
+// ChatGPT answers, AI search volume, and live answers from ChatGPT, Gemini,
+// Claude and Perplexity. Reading only, so no tool waits for the owner.
 //
 // `location` and `language` are the defaults for every call ("Netherlands",
 // "en"); an agent can ask for another country or language per call.
@@ -24,7 +31,7 @@ export const DATAFORSEO_TOOLS = [
 // environment (the app's settings env, or .env.local). Never written to disk.
 export const dataForSeoConnection = (opts: { location?: string; language?: string; maxCostPerSession?: number } = {}) =>
   defineConnection({
-    description: `Search data from DataForSEO: live Google results, keyword volumes and ideas, a domain's rankings and competitors, on-page checks (default ${opts.location ?? 'Netherlands'}, ${opts.language ?? 'en'}; costs cents per call)`,
+    description: `Search data from DataForSEO: live Google results, keyword volumes and ideas, a domain's rankings and competitors, on-page checks; GEO: mentions and citations in AI answers, AI search volume, live answers from ChatGPT/Gemini/Claude/Perplexity (default ${opts.location ?? 'Netherlands'}, ${opts.language ?? 'en'}; costs cents per call)`,
     command: process.execPath,
     args: [fileURLToPath(new URL('./mcp-server.ts', import.meta.url))],
     env: {

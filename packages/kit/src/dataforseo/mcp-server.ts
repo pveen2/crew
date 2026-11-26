@@ -1,12 +1,19 @@
 // Read-only DataForSEO MCP server (stdio). Started by the agent CLI through
-// connection.ts (dataForSeoConnection). Six tools over DataForSEO's live
-// endpoints, each trimmed to what an SEO answer needs: DataForSEO's raw
-// responses are far too large for an agent's context.
+// connection.ts (dataForSeoConnection). Ten tools over DataForSEO's live
+// endpoints, each trimmed to what an SEO or GEO answer needs: DataForSEO's raw
+// responses are far too large for an agent's context. The seo_* tools cover
+// Google search; the geo_* tools cover visibility in AI answers.
 //
 // Coverage differs per data source (checked 25 November 2026):
 // - SERP and Google Ads keyword data: any country and language.
 // - DataForSEO Labs (a domain's rankings, competitors): a few languages per
 //   country only, e.g. Netherlands = Dutch, United Kingdom = English.
+// - LLM Mentions (geo_llm_mentions, geo_mentions_summary; checked 26 November
+//   2026): ChatGPT answers for United States / English only; Google AI
+//   Overview answers for a limited set of country and language pairs.
+//   Recorded answers, not live.
+// - LLM Responses (geo_ask_llm): live, any prompt; the web search can be
+//   pointed at a country (not for Gemini).
 //
 // Every call costs money. CREW_DATAFORSEO_MAX_COST (USD) caps what one agent
 // session spends. The conductor starts this server again for every turn, so the
@@ -124,6 +131,9 @@ async function run(path: string, task: Item, place: { location?: string; languag
     };
   } catch (err) {
     const msg = String((err as Error)?.message ?? err);
+    if (path.startsWith('ai_optimization/llm_mentions/') && /language|location/i.test(msg)) {
+      throw new Error(`${msg.replace(/\.+$/, '')}. LLM Mentions has Google AI Overview answers for a limited set of country and language pairs, and ChatGPT answers for United States / English only. Retry with another language for the country (e.g. Netherlands "nl", Belgium "nl" or "fr"), or with location "United States" and language "en".`);
+    }
     if (path.startsWith('dataforseo_labs/') && /language_code|location/.test(msg)) {
       throw new Error(`${msg.replace(/\.+$/, '')}. DataForSEO Labs covers only some languages per country (Netherlands: nl only; United Kingdom: en). Retry with a supported language, or use seo_search_volume / seo_keyword_ideas, which cover every language.`);
     }
@@ -367,6 +377,301 @@ server.registerTool(
         page_size_bytes: p.size ?? null,
         load_time_ms: p.page_timing?.duration_time ?? null,
         problems,
+      });
+    } catch (err) {
+      return asError(err);
+    }
+  },
+);
+
+// --- GEO: visibility in AI answers (DataForSEO AI Optimization API) ---------
+//
+// LLM Mentions is a database of recorded AI answers (Google AI Overviews and
+// ChatGPT), refreshed on a 60-day cycle: $0.10 per call plus $0.001 per row.
+// ChatGPT data is United States / English only; Google AI Overview data covers
+// a limited set of country and language pairs. LLM Responses asks a model live:
+// $0.0006 plus what the model's provider charges (tokens and web search).
+
+/** "wakey.care" from "https://www.wakey.care/x". */
+const bareDomain = (d: string) => d.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/[/?#].*$/, '');
+
+/** Answer text without images, Google redirect noise and text-fragment anchors. */
+const cleanAnswer = (s: unknown) =>
+  typeof s === 'string'
+    ? s
+        .replace(/!\[[^\]]*\]\([^)]*\)\n?/g, '')
+        .replace(/#:~:text=[^)\s]*/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim()
+    : null;
+
+/** True when `host` is `domain` or one of its subdomains. */
+const onDomain = (host: string, domain: string) => host === domain || host.endsWith(`.${domain}`);
+
+const cleanUrl = (u: unknown) => (typeof u === 'string' ? u.replace(/#:~:text=.*$/, '') : null);
+
+/** Up to `max` characters around the first mention of one of `terms`, else the start. */
+function excerpt(text: string | null, terms: string[], max: number): string | null {
+  if (!text) return null;
+  if (text.length <= max) return text;
+  const lower = text.toLowerCase();
+  const hit = terms.map((t) => lower.indexOf(t.toLowerCase())).filter((i) => i >= 0).sort((a, b) => a - b)[0];
+  if (hit === undefined) return `${text.slice(0, max)}…`;
+  const start = Math.max(0, hit - Math.floor(max / 3));
+  return `${start > 0 ? '…' : ''}${text.slice(start, start + max)}${start + max < text.length ? '…' : ''}`;
+}
+
+const geoTarget = {
+  domain: z.string().optional().describe('A domain without https:// ("wakey.care"): finds answers that cite or mention it.'),
+  keyword: z.string().max(250).optional().describe('A brand or phrase ("wakey", "morning routine"): finds answers whose question or answer contains it.'),
+  scope: z
+    .enum(['any', 'sources', 'answer', 'question', 'brands'])
+    .optional()
+    .describe(
+      'Where to look. For a domain: "any" (default) or "sources" (only answers that cite it). ' +
+        'For a keyword: "any" (default), "answer", "question" or "brands" (named as a brand in the answer; ChatGPT data only).',
+    ),
+};
+
+const geoPlace = {
+  platform: z
+    .enum(['google', 'chat_gpt'])
+    .optional()
+    .describe('"google" = Google AI Overviews (default), "chat_gpt" = ChatGPT. ChatGPT data exists for United States / English only; this tool then uses that location.'),
+  location: z.string().optional().describe(`Country name or numeric location code. Default: ${LOCATION}. Ignored for chat_gpt (always United States).`),
+  language: z.string().optional().describe(`Language code ("en", "nl"). Default: ${LANGUAGE}. Not every country has every language: if a call is rejected, try the country's own language.`),
+};
+
+/** The `target` array for LLM Mentions, from a domain and/or keyword. */
+function mentionTarget(domain: string | undefined, keyword: string | undefined, scope: string | undefined): Item[] {
+  const t: Item[] = [];
+  if (domain?.trim()) t.push({ domain: bareDomain(domain), include_subdomains: true, search_scope: [scope === 'sources' ? 'sources' : 'any'] });
+  if (keyword?.trim()) {
+    const ks = scope === 'answer' || scope === 'question' ? scope : scope === 'brands' ? 'brand_entities' : 'any';
+    t.push({ keyword: keyword.trim(), search_scope: [ks] });
+  }
+  if (!t.length) throw new Error('Give a domain, a keyword, or both.');
+  return t;
+}
+
+const mentionPlace = (platform: string | undefined, location?: string, language?: string) =>
+  platform === 'chat_gpt' ? { location: 'United States', language: 'en' } : { location, language };
+
+server.registerTool(
+  'geo_llm_mentions',
+  {
+    description:
+      'Recorded AI answers that mention or cite a domain or brand, from DataForSEO\'s LLM Mentions database (Google AI Overviews, or ChatGPT): the question asked, ' +
+      'an excerpt of the answer around the mention, the sources it cited, brands named next to it (ChatGPT only) and the question\'s AI search volume. Highest volume first. ' +
+      'Coverage: ChatGPT = United States / English only; Google AI Overviews = a limited set of countries and languages (answers are recorded, refreshed over about 60 days, not live). ' +
+      'About $0.10 per call plus $0.001 per answer returned.',
+    inputSchema: {
+      ...geoTarget,
+      ...geoPlace,
+      limit: z.number().int().min(1).max(50).optional().describe('How many answers to return. Default 10.'),
+    },
+    annotations: READ,
+  },
+  async ({ domain, keyword, scope, platform, location, language, limit }, { signal }) => {
+    try {
+      const n = limit ?? 10;
+      const { result, meta } = await run(
+        'ai_optimization/llm_mentions/search/live',
+        { target: mentionTarget(domain, keyword, scope), platform: platform ?? 'google', limit: n, order_by: ['ai_search_volume,desc'] },
+        mentionPlace(platform, location, language),
+        0.1 + 0.001 * n,
+        signal,
+      );
+      const r = result[0] ?? {};
+      const terms = [keyword?.trim(), domain ? bareDomain(domain) : undefined, domain ? bareDomain(domain).split('.')[0] : undefined].filter((t): t is string => !!t);
+      const own = domain ? bareDomain(domain) : null;
+      const answers = (r.items ?? []).map((i: Item) => {
+        const sources = (i.sources ?? []) as Item[];
+        return {
+          question: i.question ?? null,
+          model: i.model_name ?? null,
+          ai_search_volume: i.ai_search_volume ?? null,
+          answer_excerpt: excerpt(cleanAnswer(i.answer), terms, 700),
+          ...(own ? { cites_domain: sources.some((s) => onDomain(bareDomain(String(s.domain ?? s.url ?? '')), own)) } : {}),
+          sources: sources.slice(0, 8).map((s) => ({ domain: s.domain ?? null, title: clip(s.title, 120), url: cleanUrl(s.url) })),
+          ...(Array.isArray(i.brand_entities) && i.brand_entities.length ? { brands_named: i.brand_entities.map((b: Item) => b.title).filter(Boolean).slice(0, 15) } : {}),
+          answer_recorded: String(i.last_response_at ?? '').slice(0, 10) || null,
+        };
+      });
+      return asText({
+        target: { domain: own, keyword: keyword ?? null, scope: scope ?? 'any' },
+        platform: platform ?? 'google',
+        ...meta,
+        source: 'DataForSEO LLM Mentions (recorded answers, not live)',
+        total_answers_found: r.total_count ?? 0,
+        answers,
+      });
+    } catch (err) {
+      return asError(err);
+    }
+  },
+);
+
+server.registerTool(
+  'geo_mentions_summary',
+  {
+    description:
+      'Totals for how often a domain or brand appears in recorded AI answers, from DataForSEO\'s LLM Mentions database: mention count and the AI search volume behind those answers, ' +
+      'split by platform, the domains most cited as sources in those answers, and (ChatGPT only) the brands and brand categories named alongside. ' +
+      'Leave platform empty for Google AI Overviews and ChatGPT together. Coverage: ChatGPT = United States / English only; Google AI Overviews = a limited set of countries and languages. About $0.10 per call.',
+    inputSchema: {
+      ...geoTarget,
+      platform: z.enum(['google', 'chat_gpt']).optional().describe('"google" (AI Overviews) or "chat_gpt". Default: both (ChatGPT only counts for United States / English).'),
+      location: geoPlace.location,
+      language: geoPlace.language,
+      top: z.number().int().min(1).max(20).optional().describe('How many top source domains and brands to list. Default 10.'),
+    },
+    annotations: READ,
+  },
+  async ({ domain, keyword, scope, platform, location, language, top }, { signal }) => {
+    try {
+      const { result, meta } = await run(
+        'ai_optimization/llm_mentions/target_metrics/live',
+        { target: mentionTarget(domain, keyword, scope), ...(platform ? { platform } : {}), internal_list_limit: top ?? 10 },
+        mentionPlace(platform, location, language),
+        0.102,
+        signal,
+      );
+      const a = result[0]?.aggregated_metrics ?? result[0] ?? {};
+      const group = (g: unknown) => (Array.isArray(g) ? g.map((x: Item) => ({ key: x.key, mentions: x.mentions ?? 0, ai_search_volume: x.ai_search_volume ?? null })) : []);
+      return asText({
+        target: { domain: domain ? bareDomain(domain) : null, keyword: keyword ?? null, scope: scope ?? 'any' },
+        platform: platform ?? 'google + chat_gpt',
+        ...meta,
+        source: 'DataForSEO LLM Mentions (recorded answers, not live)',
+        mentions_are: 'recorded AI answers that match the target; ai_search_volume = estimated monthly AI searches behind those answers',
+        total: { mentions: a.total?.mentions ?? 0, ai_search_volume: a.total?.ai_search_volume ?? null },
+        by_platform: group(a.platform),
+        by_language: group(a.language),
+        top_cited_domains: group(a.sources_domain),
+        brands_named_alongside: group(a.brand_entities_title),
+        brand_categories: group(a.brand_entities_category),
+      });
+    } catch (err) {
+      return asError(err);
+    }
+  },
+);
+
+server.registerTool(
+  'geo_ai_search_volume',
+  {
+    description:
+      'AI search volume for up to 200 keywords: DataForSEO\'s estimate of how often each keyword is used in questions to AI tools in a country (last month, plus a 12-month trend). ' +
+      'An estimate built from Google "People also ask" data, not counts from ChatGPT; compare keywords with each other rather than reading it as real traffic. About $0.01 per call plus $0.0001 per keyword: batch them.',
+    inputSchema: {
+      keywords: z.array(z.string().min(1).max(250)).min(1).max(200).describe('Keywords or short questions'),
+      ...place,
+    },
+    annotations: READ,
+  },
+  async ({ keywords, location, language }, { signal }) => {
+    try {
+      const { result, meta } = await run('ai_optimization/ai_keyword_data/keywords_search_volume/live', { keywords }, { location, language }, 0.01 + 0.0001 * keywords.length, signal);
+      const items = (result[0]?.items ?? []) as Item[];
+      const series = (k: Item) => (Array.isArray(k.ai_monthly_searches) ? k.ai_monthly_searches : []);
+      const newest = items.map(series).find((m) => m.length)?.[0];
+      return asText({
+        ...meta,
+        source: 'DataForSEO AI Keyword Data',
+        ai_search_volume_is: 'estimated monthly uses of the keyword in questions to AI tools (DataForSEO model, from Google People also ask data)',
+        data_through: newest ? `${newest.year}-${String(newest.month).padStart(2, '0')}` : null,
+        keywords: items
+          .sort((x, y) => (y.ai_search_volume ?? 0) - (x.ai_search_volume ?? 0))
+          .map((k) => ({
+            keyword: k.keyword,
+            ai_search_volume: k.ai_search_volume ?? null,
+            monthly: series(k).slice(0, 12).map((m: Item) => `${m.year}-${String(m.month).padStart(2, '0')}: ${m.ai_search_volume ?? '?'}`),
+          })),
+      });
+    } catch (err) {
+      return asError(err);
+    }
+  },
+);
+
+/** Default model per assistant: cheap, current, with web search. */
+const LLM_DEFAULTS = { chat_gpt: 'gpt-5-mini', gemini: 'gemini-2.5-flash', claude: 'claude-haiku-4-5', perplexity: 'sonar' } as const;
+
+/** ISO country codes for the web search, from the location name. */
+const COUNTRY_ISO: Record<string, string> = {
+  netherlands: 'NL', belgium: 'BE', germany: 'DE', france: 'FR', 'united kingdom': 'GB', 'united states': 'US', spain: 'ES', italy: 'IT',
+  austria: 'AT', switzerland: 'CH', denmark: 'DK', sweden: 'SE', norway: 'NO', finland: 'FI', poland: 'PL', portugal: 'PT', ireland: 'IE', luxembourg: 'LU',
+};
+
+server.registerTool(
+  'geo_ask_llm',
+  {
+    description:
+      'Ask one AI assistant (ChatGPT, Gemini, Claude or Perplexity) a prompt live through DataForSEO, with web search on, and get its answer (trimmed), the URLs it cited and the searches it ran. ' +
+      'Optionally checks which of the given brands or domains the answer names or cites. One run is one sample: answers vary between runs. ' +
+      'About $0.01-0.08 per call (DataForSEO $0.0006 plus the model\'s own token and web-search price).',
+    inputSchema: {
+      prompt: z.string().min(1).max(500).describe('The question, as a shopper would ask it (max 500 characters)'),
+      assistant: z.enum(['chat_gpt', 'gemini', 'claude', 'perplexity']).describe('Which assistant to ask'),
+      model: z
+        .string()
+        .optional()
+        .describe(`Model name, to override the default (${Object.entries(LLM_DEFAULTS).map(([k, v]) => `${k}: ${v}`).join(', ')}).`),
+      country: z
+        .string()
+        .regex(/^[A-Za-z]{2}$/)
+        .optional()
+        .describe('ISO country code the web search runs from ("NL", "BE", "DE", "GB", "US"). Default: from the connection\'s location. Not used by Gemini.'),
+      look_for: z.array(z.string().min(1)).max(10).optional().describe('Brands or domains to check in the answer, e.g. ["wakey", "wakey.care", "loop earplugs"]'),
+    },
+    annotations: READ,
+  },
+  async ({ prompt, assistant, model, country, look_for }, { signal }) => {
+    try {
+      const model_name = model?.trim() || LLM_DEFAULTS[assistant];
+      const iso = (country ?? COUNTRY_ISO[LOCATION.toLowerCase()] ?? '').toUpperCase();
+      const task: Item = { user_prompt: prompt, model_name, max_output_tokens: 2048 };
+      if (assistant !== 'perplexity') task.web_search = true;
+      if (iso && assistant !== 'gemini') task.web_search_country_iso_code = iso;
+      const { result, cost, spent, warning } = await paid(`ai_optimization/${assistant}/llm_responses/live`, task, 0.08, signal);
+      const r = result[0] ?? {};
+      const messages = ((r.items ?? []) as Item[]).filter((i) => i.type === 'message');
+      const sections = messages.flatMap((m) => (m.sections ?? []) as Item[]);
+      const text = sections.map((s) => s.text ?? '').join('\n').trim();
+      const seen = new Set<string>();
+      const cited = sections
+        .flatMap((s) => (s.annotations ?? []) as Item[])
+        .map((a) => ({ title: clip(a.title, 120), url: cleanUrl(a.direct_url ?? a.url) }))
+        .filter((a) => a.url && !seen.has(a.url) && (seen.add(a.url), true))
+        .slice(0, 20);
+      const fanOut = [...new Set(sections.flatMap((s) => (Array.isArray(s.fan_out_queries) ? s.fan_out_queries : [])))].slice(0, 10);
+      const lower = text.toLowerCase();
+      const checks = (look_for ?? []).map((t) => {
+        const term = t.trim().toLowerCase();
+        const dom = term.includes('.') ? bareDomain(term) : null;
+        return {
+          term: t,
+          named_in_answer: lower.includes(dom ?? term),
+          ...(dom ? { cited: cited.some((c) => onDomain(bareDomain(String(c.url)), dom)) } : {}),
+        };
+      });
+      return asText({
+        assistant,
+        model: r.model_name ?? model_name,
+        prompt,
+        web_search: r.web_search ?? null,
+        web_search_country: assistant === 'gemini' ? null : iso || null,
+        answered_at: r.datetime ?? null,
+        ...(warning ? { warning } : {}),
+        cost_usd: round(cost, 4),
+        session_spent_usd: round(spent, 4),
+        session_limit_usd: MAX_COST,
+        source: 'DataForSEO LLM Responses (live, through the model\'s API; consumer apps may answer differently)',
+        ...(checks.length ? { look_for: checks } : {}),
+        answer: clip(text, 4000),
+        cited_urls: cited,
+        ...(fanOut.length ? { searches_run: fanOut } : {}),
       });
     } catch (err) {
       return asError(err);
