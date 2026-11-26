@@ -15,7 +15,7 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
-const { ensureAccess, accessToken, forgetAccess, signOut } = require('./access.cjs');
+const { ensureAccess, accessToken, forgetAccess, loginEmail, signOut } = require('./access.cjs');
 const { createServer } = require('node:http');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
@@ -575,8 +575,16 @@ ipcMain.handle('crew:reauth', async (event) => {
   if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
   const info = conductorInfo();
   if (!info) return null;
+  const before = loginEmail(accessToken());
   forgetAccess(info.url, CREW_HOME);
-  return (await ensureAccess(info.url, CREW_HOME)) ? info : null;
+  if (!(await ensureAccess(info.url, CREW_HOME))) return null;
+  // Signed in as someone else: what is on screen is the other person's, so start over.
+  const after = loginEmail(accessToken());
+  if (before && after && before !== after) {
+    BrowserWindow.fromWebContents(event.sender)?.webContents.reload();
+    return null;
+  }
+  return info;
 });
 
 // Sign out of the server: the login is forgotten, and the window starts over with a new sign-in.

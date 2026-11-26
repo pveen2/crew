@@ -499,7 +499,9 @@ async function resolveConductor(): Promise<{ url: string; token: string } | null
   return { url: q.get('conductor') ?? 'http://127.0.0.1:4317', token };
 }
 
-const SIGNED_OUT = 'Your sign-in to the server ran out. Sign in again in the browser, then try again.';
+const SIGNED_OUT = webApp
+  ? 'Your sign-in to the server ran out. Reload the page to sign in again.'
+  : 'Your sign-in to the server ran out. Sign in again in the browser, then try again.';
 
 /** One sign-in at a time, however many calls ran into the expired login. */
 let reauthing: Promise<boolean> | null = null;
@@ -507,9 +509,12 @@ function reauth(): Promise<boolean> {
   const host = window.crewHost;
   if (!host?.reauth) return Promise.resolve(false);
   reauthing ??= (async () => {
+    const before = conn;
     const next = await host.reauth!().catch(() => null);
-    if (next) conn = next;
-    return Boolean(next);
+    // Only the same server: never resend a request somewhere else.
+    if (!next || !before || next.url !== before.url) return false;
+    conn = next;
+    return true;
   })().finally(() => (reauthing = null));
   return reauthing;
 }
@@ -520,14 +525,14 @@ async function api<T>(method: string, path: string, body?: unknown, retried = fa
     method,
     headers: { ...(conn.token && { authorization: `Bearer ${conn.token}` }), 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
-    // Behind Cloudflare Access an expired login is answered with a redirect to its
-    // sign-in page: stop there instead of reading that page as data.
-    redirect: 'manual',
+    // Behind Cloudflare Access (https) an expired login is answered with a redirect
+    // to its sign-in page: stop there instead of reading that page as data.
+    redirect: conn.url.startsWith('https:') ? 'manual' : 'follow',
   });
   if (res.type === 'opaqueredirect' || (res.status === 403 && !isJson(res))) {
     // The Mac app signs in again in the browser and sends the request once more.
+    // (The web app does not reload by itself: that would lose what was being typed.)
     if (!retried && (await reauth())) return api<T>(method, path, body, true);
-    if (webApp) void accessExpired();
     throw new Error(SIGNED_OUT);
   }
   if (!isJson(res)) throw new Error(`The server did not answer (HTTP ${res.status}). Try again in a moment.`);

@@ -151,7 +151,6 @@ function forgetAccess(conductorUrl, home) {
   crewHome = home;
   const host = new URL(conductorUrl).host;
   token = null;
-  declinedUntil = 0;
   try {
     if (existsSync(storeFile())) {
       const all = JSON.parse(readFileSync(storeFile(), 'utf8'));
@@ -159,6 +158,15 @@ function forgetAccess(conductorUrl, home) {
       writeFileSync(storeFile(), JSON.stringify(all, null, 2) + '\n', { mode: 0o600 });
     }
   } catch {}
+}
+
+/** Who a login is for (the email in the Access JWT), or null. */
+function loginEmail(jwt) {
+  try {
+    return String(JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString('utf8')).email ?? '').toLowerCase() || null;
+  } catch {
+    return null;
+  }
 }
 
 /** The current Access login, for requests the main process makes itself. */
@@ -184,4 +192,4 @@ async function signOut(conductorUrl, home) {
   await shell.openExternal(`${origin}/cdn-cgi/access/logout`).catch((err) => console.error('[access] could not open the browser:', err.message));
 }
 
-module.exports = { ensureAccess, accessToken, forgetAccess, signOut };
+module.exports = { ensureAccess, accessToken, forgetAccess, loginEmail, signOut };
