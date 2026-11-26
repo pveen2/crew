@@ -15,6 +15,7 @@ Status: early. Read and draft only; everything runs on your own machine.
 ```
 apps/conductor   local server: sessions, subagent calls, approvals, events, SQLite, WebSocket
 apps/mac         Electron + React app (display only, no agent logic)
+apps/ios         native iPhone app, SwiftUI (display only; see apps/ios/README.md)
 crew/            an example team, eve-style: crew.config.ts, agent/ (lead), agent/subagents/, lib/, evals/
 packages/sdk     @crew/sdk: defineAgent, defineTool, defineCrew, evals and the team loader
 packages/kit     @crew/kit: ready-made Shopify, headless browser, X search, Studio, Meta ads, DataForSEO and Search Console connections
