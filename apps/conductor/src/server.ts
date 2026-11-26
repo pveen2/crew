@@ -310,6 +310,14 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
           runtime.resumeThread(id);
           return send(res, 200, { ok: true });
         }
+        if (req.method === 'POST' && id && action === 'title') {
+          const body = await readJson<unknown>(req);
+          const title = body && typeof body === 'object' ? (body as { title?: unknown }).title : undefined;
+          if (typeof title !== 'string' || !title.trim()) return send(res, 400, { error: 'title is required' });
+          if (!runtime.threadExists(id)) return send(res, 404, { error: 'No such thread' });
+          runtime.retitleThread(id, title);
+          return send(res, 200, { ok: true });
+        }
         if (req.method === 'POST' && id && action === 'archive') {
           runtime.archiveThread(id);
           return send(res, 200, { ok: true });
