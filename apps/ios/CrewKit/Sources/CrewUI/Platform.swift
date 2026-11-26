@@ -100,6 +100,13 @@ extension View {
   }
 }
 
+/// Closes the keyboard: after you send a message, as in Messages and ChatGPT.
+@MainActor func dismissKeyboard() {
+  #if canImport(UIKit)
+  UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+  #endif
+}
+
 enum Clipboard {
   static func copy(_ text: String) {
     #if canImport(UIKit)

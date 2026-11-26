@@ -61,8 +61,9 @@ struct InboxMenu: View {
     switch item.kind {
     case .approval:
       Button("Approve", systemImage: "checkmark") { action.run { try await model.decideApproval(item.id, approved: true) } }
+      Button("Always allow this tool", systemImage: "checkmark.seal") { action.run { try await model.decideApproval(item.id, approved: true, always: "tool") } }
+      // A tool that asks every time is only covered by "always allow this tool".
       if item.askEveryTime != true {
-        Button("Always allow this tool", systemImage: "checkmark.seal") { action.run { try await model.decideApproval(item.id, approved: true, always: "tool") } }
         Button("Approve all in this thread", systemImage: "checkmark.circle.badge.questionmark") { action.run { try await model.decideApproval(item.id, approved: true, always: "all") } }
       }
       Button("Deny", systemImage: "xmark", role: .destructive) { action.run { try await model.decideApproval(item.id, approved: false) } }

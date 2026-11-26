@@ -159,7 +159,8 @@ struct DmView: View {
         }
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 12)
+      .padding(.top, 12)
+      .padding(.bottom, 24)
     }
     .defaultScrollAnchor(.bottom)
     .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -185,6 +186,7 @@ struct DmView: View {
             Button {
               let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
               let uploads = images.uploads
+              dismissKeyboard()
               action.run {
                 try await model.sendDm(dmId, text: body, attachments: uploads)
                 text = ""
@@ -201,7 +203,8 @@ struct DmView: View {
         }
       }
       .padding(.horizontal, 12)
-      .padding(.bottom, 8)
+      .padding(.top, 6)
+      .padding(.bottom, 10)
     }
     .navigationTitle(model.dms[dmId].map(model.dmName) ?? "Message")
     .inlineTitle()

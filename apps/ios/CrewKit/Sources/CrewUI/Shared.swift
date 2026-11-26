@@ -17,6 +17,8 @@ struct MarkdownView: View {
   var fadeFrom: Int?
   /// An answer being written: how many of its newest words are still fading in.
   var fadingWords = 0
+  /// Take the full width (agent answers). False: as wide as the text (your bubbles).
+  var fill = true
 
   var body: some View {
     let blocks = Markdown.blocks(text)
@@ -27,7 +29,7 @@ struct MarkdownView: View {
       }
     }
     .textSelection(.enabled)
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .frame(maxWidth: fill ? .infinity : nil, alignment: .leading)
   }
 }
 

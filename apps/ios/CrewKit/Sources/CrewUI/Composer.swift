@@ -50,7 +50,8 @@ struct ComposerDock: View {
       bar
     }
     .padding(.horizontal, 12)
-    .padding(.bottom, 8)
+    .padding(.top, 6)
+    .padding(.bottom, 10)
     .animation(.snappy, value: text.isEmpty)
     .errorAlert(action)
   }
@@ -172,6 +173,8 @@ struct ComposerDock: View {
       toAgent: toAgent ? true : nil)
     busy = true
     error = nil
+    focused = false
+    dismissKeyboard()
     Task {
       defer { busy = false }
       do {

@@ -60,7 +60,9 @@ struct ThreadView: View {
         }
       }
       .padding(.horizontal, 16)
-      .padding(.vertical, 12)
+      .padding(.top, 12)
+      // Room between the last message and the composer, as in ChatGPT.
+      .padding(.bottom, 24)
     }
     .defaultScrollAnchor(.bottom)
     .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -256,7 +258,7 @@ private struct UserMessage: View {
         .defaultScrollAnchor(colleague == nil ? .trailing : .leading)
       }
       if !message.text.isEmpty {
-        MarkdownView(text: message.text)
+        MarkdownView(text: message.text, fill: colleague != nil)
           .fixedSize(horizontal: false, vertical: true)
           // As in ChatGPT: yours in a grey bubble on the right; a colleague's as plain
           // text under their name, like the agents'.
@@ -441,8 +443,9 @@ struct ApprovalCard: View {
       .tint(.secondary)
       HStack(spacing: 10) {
         Menu {
+          Button("Always allow this tool", systemImage: "checkmark.seal") { action.run { try await model.decideApproval(item.id, approved: true, always: "tool") } }
+          // A tool that asks every time is only covered by "always allow this tool".
           if item.askEveryTime != true {
-            Button("Always allow this tool", systemImage: "checkmark.seal") { action.run { try await model.decideApproval(item.id, approved: true, always: "tool") } }
             Button("Approve all in this thread", systemImage: "checkmark.circle") { action.run { try await model.decideApproval(item.id, approved: true, always: "all") } }
           }
           Button("Deny", systemImage: "xmark", role: .destructive) { action.run { try await model.decideApproval(item.id, approved: false) } }
@@ -570,6 +573,7 @@ private struct QuestionCard: View {
   private func send(_ answer: String) {
     let a = answer.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !a.isEmpty else { return }
+    dismissKeyboard()
     action.run {
       try await model.sendMessage(threadId: threadId, SendMessageRequest(text: a, sessionId: sessionId, replyTo: inboxId))
       text = ""
