@@ -14,7 +14,9 @@
     "conductor": "node --env-file-if-exists=.env.local apps/conductor/src/main.ts",
     "app": "pnpm --filter @crew/mac dev",
     "crew": "node --env-file-if-exists=.env.local scripts/crew.ts",
-    "install-app": "zsh apps/mac/scripts/install-app.sh"
+    "install-app": "zsh apps/mac/scripts/install-app.sh",
+    "ios": "cd apps/ios && xcodegen generate && open Crew.xcodeproj",
+    "ios:demo": "node apps/ios/scripts/demo-conductor.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.10.0",
