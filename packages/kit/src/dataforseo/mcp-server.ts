@@ -10,8 +10,10 @@
 //   country only, e.g. Netherlands = Dutch, United Kingdom = English.
 // - LLM Mentions (geo_llm_mentions, geo_mentions_summary; checked 26 November
 //   2026): ChatGPT answers for United States / English only; Google AI
-//   Overview answers for a limited set of country and language pairs.
-//   Recorded answers, not live.
+//   Overview answers for a limited set of country and language pairs
+//   (Netherlands: nl only; en is rejected). Recorded answers, not live.
+// - AI Keyword Data (geo_ai_search_volume): also a limited set of pairs
+//   (Netherlands + en is rejected).
 // - LLM Responses (geo_ask_llm): live, any prompt; the web search can be
 //   pointed at a country (not for Gemini).
 //
@@ -132,7 +134,10 @@ async function run(path: string, task: Item, place: { location?: string; languag
   } catch (err) {
     const msg = String((err as Error)?.message ?? err);
     if (path.startsWith('ai_optimization/llm_mentions/') && /language|location/i.test(msg)) {
-      throw new Error(`${msg.replace(/\.+$/, '')}. LLM Mentions has Google AI Overview answers for a limited set of country and language pairs, and ChatGPT answers for United States / English only. Retry with another language for the country (e.g. Netherlands "nl", Belgium "nl" or "fr"), or with location "United States" and language "en".`);
+      throw new Error(`${msg.replace(/\.+$/, '')}. LLM Mentions has Google AI Overview answers for a limited set of country and language pairs (Netherlands: nl only), and ChatGPT answers for United States / English only. Retry with another language for the country (e.g. Netherlands "nl", Belgium "nl" or "fr"), or with location "United States" and language "en".`);
+    }
+    if (path.startsWith('ai_optimization/ai_keyword_data/') && /language|location/i.test(msg)) {
+      throw new Error(`${msg.replace(/\.+$/, '')}. AI search volume covers a limited set of country and language pairs (Netherlands + en is rejected). Retry with the country's own language, or with location "United States" or "United Kingdom" and language "en".`);
     }
     if (path.startsWith('dataforseo_labs/') && /language_code|location/.test(msg)) {
       throw new Error(`${msg.replace(/\.+$/, '')}. DataForSEO Labs covers only some languages per country (Netherlands: nl only; United Kingdom: en). Retry with a supported language, or use seo_search_volume / seo_keyword_ideas, which cover every language.`);
