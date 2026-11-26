@@ -15,7 +15,7 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
-const { ensureAccess, accessToken, signOut } = require('./access.cjs');
+const { ensureAccess, accessToken, forgetAccess, loginEmail, signOut } = require('./access.cjs');
 const { createServer } = require('node:http');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
@@ -301,7 +301,7 @@ const isWebUrl = (url) => /^https?:\/\//i.test(url);
 // Sites where the owner signs in go to their own browser, which has their password manager
 // and passkeys; Google also refuses sign-in in embedded browsers. Everything else opens in
 // the browser tab.
-const SIGN_IN_HOSTS = ['twombly.app', 'accounts.google.com'];
+const SIGN_IN_HOSTS = ['accounts.google.com'];
 function needsOwnBrowser(url) {
   try {
     const { hostname } = new URL(url);
@@ -566,6 +566,19 @@ ipcMain.handle('crew:info', async (event) => {
   // A conductor on a server sits behind Cloudflare Access: sign in first.
   if (info && !(await ensureAccess(info.url, CREW_HOME))) return null;
   return info;
+});
+
+// The server turned the Access login away (it ran out, or the session was ended):
+// forget it and sign in again in the browser.
+ipcMain.handle('crew:reauth', async (event) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
+  const info = conductorInfo();
+  if (!info) return null;
+  forgetAccess(info.url, CREW_HOME);
+  if (!(await ensureAccess(info.url, CREW_HOME))) return null;
+  // Who signed in: the app checks it is still the person on screen before resending.
+  return { ...info, email: loginEmail(accessToken()) };
 });
 
 // Sign out of the server: the login is forgotten, and the window starts over with a new sign-in.

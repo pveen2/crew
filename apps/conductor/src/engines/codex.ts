@@ -82,6 +82,8 @@ export const codex: EngineAdapter = {
 
     let engineSessionId: string | null = opts.resumeId;
     let lastText = '';
+    // The message item the draft text belongs to.
+    let draftItem: unknown = null;
     let failure: string | undefined;
     let lastError: string | undefined;
     let completed = false;
@@ -199,6 +201,13 @@ export const codex: EngineAdapter = {
         } else if (method === 'error') {
           // Also sent for retries; only fatal if the turn never completes.
           lastError = (p.error as { message?: string })?.message ?? 'Codex error';
+        } else if (method === 'item/agentMessage/delta') {
+          if (typeof p.delta === 'string') {
+            // A new message item (Codex retried after a failed stream) starts the draft over.
+            const restart = p.itemId !== draftItem;
+            draftItem = p.itemId;
+            emit({ kind: 'text_delta', text: p.delta, restart });
+          }
         } else if (method === 'item/started' || method === 'item/completed') {
           const item = p.item as Record<string, unknown>;
           const id = String(item.id);

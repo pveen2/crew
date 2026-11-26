@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Face, FaceStack, type FaceSize } from '@crew/ui';
@@ -43,9 +43,196 @@ function wrapTables(html: string): string {
   return tpl.innerHTML;
 }
 
+function markdownHtml(text: string): string {
+  return wrapTables(DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY));
+}
+
 export function Markdown({ text, className }: { text: string; className?: string }) {
-  const html = useMemo(() => wrapTables(DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY)), [text]);
+  const html = useMemo(() => markdownHtml(text), [text]);
   return <div className={`md ${className ?? ''}`} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming: an agent message shows while it is being written, at an even pace.
+
+/**
+ * How far each streamed message is shown, by its key, so it goes on from there
+ * when it is shown again (another thread and back) instead of starting over.
+ */
+const revealed = new Map<string, number>();
+
+/** Characters a second at the least; a backlog is shown within about this many ms. */
+const MIN_RATE = 90;
+const CATCH_UP_MS = 300;
+/** Re-render at most this often while revealing (Markdown is parsed on each one). */
+const FRAME_MS = 32;
+
+/**
+ * The part of `target` to show now. Text comes in bursts; this lets it out at a
+ * steady pace that speeds up when there is more waiting, so it never lags far behind.
+ */
+function useReveal(target: string, start: number, onProgress?: (shown: number) => void): number {
+  const pos = useRef(Math.min(start, target.length));
+  const [shown, setShown] = useState(pos.current);
+  const targetRef = useRef(target);
+  // What was being shown: when the text no longer starts with it (a retried message), start over.
+  const prevRef = useRef(target);
+  targetRef.current = target;
+  const progress = useRef(onProgress);
+  progress.current = onProgress;
+  const raf = useRef(0);
+
+  useEffect(() => {
+    if (!target.startsWith(prevRef.current.slice(0, pos.current))) pos.current = 0;
+    prevRef.current = target;
+    if (pos.current > target.length) pos.current = target.length;
+    if (pos.current !== shown) setShown(pos.current);
+    if (raf.current || pos.current >= target.length) return;
+    let last = performance.now();
+    let painted = 0;
+    let exact = pos.current;
+    const tick = (now: number) => {
+      const t = targetRef.current;
+      const dt = Math.min(now - last, 100);
+      last = now;
+      if (pos.current < Math.floor(exact)) exact = pos.current; // started over
+      const backlog = t.length - exact;
+      exact = Math.min(t.length, exact + Math.max((backlog * dt) / CATCH_UP_MS, (MIN_RATE * dt) / 1000));
+      pos.current = Math.floor(exact);
+      const done = pos.current >= t.length;
+      if (done || now - painted >= FRAME_MS) {
+        painted = now;
+        setShown(pos.current);
+        progress.current?.(pos.current);
+      }
+      raf.current = done ? 0 : requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on new text only
+  }, [target]);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(raf.current);
+      // Strict Mode mounts twice: the next mount must be able to start the loop again.
+      raf.current = 0;
+    },
+    [],
+  );
+  return shown;
+}
+
+/**
+ * Markdown cut off mid-way, made to render as it will once finished: an open
+ * code fence, bold, or inline code is closed for now, and a lone marker at the
+ * very end is left out, so the formatting does not flicker as the text grows.
+ */
+export function closeOpenMarkdown(text: string): string {
+  let fence: string | null = null;
+  for (const line of text.split('\n')) {
+    const f = FENCE.exec(line);
+    if (!f) continue;
+    if (!fence) fence = f[1]!;
+    else if (f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) fence = null;
+  }
+  if (fence) return text + (text.endsWith('\n') ? '' : '\n') + fence;
+  const lastLine = text.slice(text.lastIndexOf('\n') + 1);
+  // A rule (*** or ___) is finished as it is.
+  if (/^ {0,3}(?:>[ \t]*)*([*_-])(?:[ \t]*\1){2,}[ \t]*$/.test(lastLine)) return text;
+  let t = text.replace(/[*_`~]+$/, '');
+  const line = t.slice(t.lastIndexOf('\n') + 1);
+  // Inline code: an open run of backticks is closed with a run as long.
+  const runs = line.match(/`+/g) ?? [];
+  const open: string[] = [];
+  for (const r of runs) {
+    if (open.length && open[0] === r) open.pop();
+    else if (!open.length) open.push(r);
+  }
+  if (open.length) return t + open[0];
+  if ((line.match(/\*\*/g)?.length ?? 0) % 2 === 1) t += '**';
+  if ((line.match(/~~/g)?.length ?? 0) % 2 === 1) t += '~~';
+  return t;
+}
+
+/**
+ * An agent message. Streamed (`streamKey`): written out at an even pace, block
+ * by block, with a caret while `streaming`; the finished message takes the
+ * draft's key, so it is the same element on screen and nothing jumps or
+ * remounts. Otherwise it shows at once.
+ */
+export function AgentMarkdown({ text, streamKey, streaming = false }: { text: string; streamKey?: string; streaming?: boolean }) {
+  const [start] = useState(() => (streamKey === undefined ? text.length : Math.min(revealed.get(streamKey) ?? (streaming ? 0 : text.length), text.length)));
+  const shown = useReveal(text, start, streamKey === undefined ? undefined : (n) => revealed.set(streamKey, n));
+  const writing = streaming || shown < text.length;
+  useEffect(() => {
+    if (streamKey !== undefined && !writing) revealed.delete(streamKey);
+  }, [streamKey, writing]);
+  // Never streamed here: plain. Streamed: kept as blocks, so its DOM (and any sideways scroll) stays.
+  if (streamKey === undefined || (start >= text.length && !streaming)) return <Markdown text={text} />;
+  return <BlockMarkdown text={writing ? closeOpenMarkdown(text.slice(0, shown)) : text} seen={start} writing={writing} />;
+}
+
+// Lines that tie blocks together across blank lines (link definitions, footnotes, raw HTML).
+// Also inside quotes and list items, nested any way.
+const DOCUMENT_WIDE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
+
+/**
+ * Cuts Markdown at blank lines that end a block, so each piece renders as it
+ * would inside the whole text. Whole when the text uses syntax that spans blocks.
+ */
+export function splitMarkdownBlocks(text: string): string[] {
+  if (DOCUMENT_WIDE.test(text)) return [text];
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let fence: string | null = null;
+  let afterBlank = false;
+  let inList = false;
+  for (const line of text.split('\n')) {
+    const f = FENCE.exec(line);
+    if (fence) {
+      current.push(line);
+      if (f && f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) fence = null;
+      continue;
+    }
+    // After a blank line, indented content and the next item of a list still belong to the block before.
+    const continues = /^[ \t]/.test(line) || (inList && LIST_ITEM.test(line));
+    if (afterBlank && line.trim() && !continues && current.some((l) => l.trim())) {
+      blocks.push(current.join('\n'));
+      current = [];
+      inList = false;
+    }
+    if (f) fence = f[1]!;
+    if (LIST_ITEM.test(line)) inList = true;
+    afterBlank = !line.trim();
+    current.push(line);
+  }
+  blocks.push(current.join('\n'));
+  return blocks;
+}
+
+/** One block of a message being written. Unchanged blocks are not parsed again. */
+const MarkdownBlock = memo(function MarkdownBlock({ text, fresh }: { text: string; fresh: boolean }) {
+  const html = useMemo(() => markdownHtml(text), [text]);
+  return <div className={fresh ? 'md-block md-block--new' : 'md-block'} dangerouslySetInnerHTML={{ __html: html }} />;
+});
+
+/**
+ * A message being written, block by block: only the last block is parsed again
+ * as it grows, and each new block fades in once (as in T3 Code). Blocks already
+ * on screen before this mounted (`seen` characters) do not fade again.
+ */
+function BlockMarkdown({ text, seen, writing }: { text: string; seen: number; writing: boolean }) {
+  const blocks = splitMarkdownBlocks(text);
+  const [seenBlocks] = useState(() => (seen > 0 ? splitMarkdownBlocks(text.slice(0, seen)).length : 0));
+  return (
+    <div className={writing ? 'md md--streaming' : 'md'}>
+      {blocks.map((block, i) => (
+        // Blocks only change at the end.
+        <MarkdownBlock key={i} text={block} fresh={i >= seenBlocks} />
+      ))}
+    </div>
+  );
 }
 
 export function useRoleLabel(role: string): string {

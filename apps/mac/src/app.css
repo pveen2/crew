@@ -544,6 +544,12 @@ body,
   margin-bottom: var(--cr-space-250);
   max-height: 45vh;
   overflow-y: auto;
+  /* The scroll box clips shadows: room for the card's 1px ring, and no soft drop shadow here. */
+  padding: 1px;
+  margin-inline: -1px;
+}
+.thread-approvals > .cr-card--elevated {
+  box-shadow: 0 0 0 1px var(--cr-color-border-elevated);
 }
 .thread-approvals > * {
   flex-shrink: 0;
@@ -878,6 +884,10 @@ body,
 .inbox-card-actions {
   padding-top: var(--cr-space-100);
 }
+/* A text button first in the row (Step in): its label lines up with the card's text. */
+.thread-approvals .inbox-card-actions > .cr-button--tertiary:first-child {
+  margin-left: calc(-1 * var(--cr-space-250));
+}
 .inbox-card-error {
   flex-basis: 100%;
   text-align: right;
@@ -1001,10 +1011,12 @@ body,
   font-size: var(--cr-font-size-375);
   line-height: var(--cr-line-height-reading);
 }
-.md > :first-child {
+.md > :first-child,
+.md > .md-block:first-child > :first-child {
   margin-top: 0;
 }
-.md > :last-child {
+.md > :last-child,
+.md > .md-block:last-child > :last-child {
   margin-bottom: 0;
 }
 .md p,
@@ -2178,4 +2190,40 @@ body,
 .typing-line {
   margin: 0;
   padding: 0 var(--cr-space-200);
+}
+
+/* An agent message being written: a soft, pulsing caret at the end of its last line. */
+.md--streaming > .md-block:last-child > :last-child:not(ul, ol)::after,
+.md--streaming > .md-block:last-child > :is(ul, ol) > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-left: 0.25em;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.55;
+  animation: md-caret 1s ease-in-out infinite;
+}
+@keyframes md-caret {
+  50% {
+    opacity: 0.15;
+  }
+}
+/* Each new block of a message being written fades in once, opacity only (as in T3 Code). */
+@media (prefers-reduced-motion: no-preference) {
+  .md-block--new {
+    transition: opacity 600ms ease-out;
+  }
+  @starting-style {
+    .md-block--new {
+      opacity: 0;
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md--streaming *::after {
+    animation: none;
+  }
 }

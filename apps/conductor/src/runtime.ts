@@ -248,6 +248,11 @@ function snippet(text: string, max = 120): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
+/** The thread grant for an ask-every-time tool: its own key, so older plain grants never cover it. */
+function alwaysAskGrant(key: string): string {
+  return `ask:${key}`;
+}
+
 export class Runtime {
   private readonly running = new Map<string, RunningTurn>();
   /** Background title runs, by thread. */
@@ -1256,6 +1261,8 @@ export class Runtime {
     let outcome: TurnOutcome;
     let usage: Usage | undefined;
     let timer: NodeJS.Timeout | undefined;
+    // Drops a draft the app still shows when the turn ends without its message (set once the engine runs).
+    let endTurnDraft = () => {};
     try {
       const crew = await loadCrew();
       const agent = crew.agents[session.role];
@@ -1284,14 +1291,54 @@ export class Runtime {
       syncAttachments(session.threadId, session.workdir);
 
       const adapter = engines[session.engine];
+      // The message being written, for the app: the whole text so far, at most every 50 ms.
+      // The first piece goes out at once, so the answer starts showing as soon as it can.
+      let draft = '';
+      let draftSent = '';
+      let draftTimer: NodeJS.Timeout | null = null;
+      const sendDraft = (text: string) => this.broadcast({ kind: 'draft', threadId: session.threadId, sessionId, text });
+      const flushDraft = () => {
+        draftTimer = null;
+        if (draft === draftSent) return;
+        draftSent = draft;
+        sendDraft(draft);
+      };
+      /** The draft is done with. Tells the app to drop it when `drop`: no message replaces it. */
+      const endDraft = (drop: boolean) => {
+        if (draftTimer) clearTimeout(draftTimer);
+        if (drop && draftSent) sendDraft('');
+        draftTimer = null;
+        draft = draftSent = '';
+      };
+      endTurnDraft = () => endDraft(true);
       const onEvent = (e: EngineEvent) => {
         switch (e.kind) {
+          case 'text_delta':
+            if (e.restart && draft) {
+              // Start over; the app replaces its draft with the next piece, or drops it now if none comes.
+              draft = '';
+              if (draftTimer) clearTimeout(draftTimer);
+              draftTimer = null;
+              if (draftSent) sendDraft('');
+              draftSent = '';
+            }
+            draft += e.text;
+            // Nothing to show yet, or it may still become the quiet answer.
+            if (!draft.trim() || QUIET.startsWith(draft.trim())) break;
+            if (!draftSent) flushDraft();
+            else draftTimer ??= setTimeout(flushDraft, 50);
+            break;
           case 'session':
             session = this.setSession(sessionId, { engineSessionId: e.engineSessionId, engineSessionStarted: true });
             break;
           case 'text':
             // People talking to each other: the agent chose to stay quiet.
-            if (e.text.trim() === QUIET) break;
+            if (e.text.trim() === QUIET) {
+              endDraft(true);
+              break;
+            }
+            // The message event replaces the draft in the app.
+            endDraft(false);
             this.emit(session, turnId, { type: 'message', role: 'assistant', text: e.text, from: session.role });
             break;
           case 'thinking':
@@ -1361,6 +1408,7 @@ export class Runtime {
       outcome = { turnId, status: 'error', text: '', error: (err as Error).message };
     } finally {
       clearTimeout(timer);
+      endTurnDraft();
       opts.signal?.removeEventListener('abort', onCallerGone);
     }
 
@@ -1584,11 +1632,13 @@ export class Runtime {
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
     // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.
+    // A tool that asks every time is only covered by a grant made for that tool itself, saved
+    // under its own key: a plain grant (from before it asked every time) never covers it.
     const key = `${agent.name}:${toolName}`;
     if (signal.aborted) throw new Error('The call was cancelled.');
     const alwaysAsk = tool?.alwaysAsk === true;
     const allowed = this.store.allowedTools(session.threadId);
-    if (!alwaysAsk && (allowed.includes(key) || allowed.includes('*'))) return;
+    if (alwaysAsk ? allowed.includes(alwaysAskGrant(key)) : allowed.includes(key) || allowed.includes('*')) return;
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
@@ -1637,7 +1687,8 @@ export class Runtime {
   /**
    * The owner's decision on an approval item. `always`: 'tool' also allows this
    * agent's tool for the rest of the thread, 'all' allows every tool in it; both
-   * approve the matching calls already waiting.
+   * approve the matching calls already waiting. A tool that asks every time can
+   * only be allowed on its own ('tool'): 'all' never covers it.
    */
   decideApproval(inboxId: string, approved: boolean, always?: 'tool' | 'all'): InboxItem {
     const item = this.store.inboxItem(inboxId);
@@ -1647,13 +1698,16 @@ export class Runtime {
       if (item.status === 'open') this.resolveInbox(inboxId);
       throw new Error('This approval is no longer waiting: the turn that asked for it has ended.');
     }
+    if (approved && always === 'all' && waiter.alwaysAsk) {
+      throw new Error('This tool asks every time: allow it on its own, not with approve all.');
+    }
     // Save the grant first: if that fails, nothing has been released yet.
-    if (approved && always) this.store.allowTool(waiter.threadId, always === 'all' ? '*' : waiter.key);
+    if (approved && always) this.store.allowTool(waiter.threadId, always === 'all' ? '*' : waiter.alwaysAsk ? alwaysAskGrant(waiter.key) : waiter.key);
     waiter.settle(approved);
     const resolved = this.resolveInbox(inboxId) ?? item;
     if (approved && always) {
       for (const [id, other] of [...this.approvals]) {
-        if (other.threadId !== waiter.threadId || other.alwaysAsk || (always === 'tool' && other.key !== waiter.key)) continue;
+        if (other.threadId !== waiter.threadId || (always === 'tool' ? other.key !== waiter.key : other.alwaysAsk)) continue;
         if (!this.approvals.has(id)) continue; // settled meanwhile
         other.settle(true);
         this.resolveInbox(id);

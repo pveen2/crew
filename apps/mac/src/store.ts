@@ -66,6 +66,11 @@ declare global {
       startConductor?: () => Promise<void>;
       conductorInfo: () => Promise<{ url: string; token: string } | null>;
       /**
+       * The server turned the Access login away (it ran out): forget it and sign in
+       * again in the browser. The conductor's address and token, or null when that failed.
+       */
+      reauth?: () => Promise<{ url: string; token: string; email: string | null } | null>;
+      /**
        * A waiting update, or null: new commits on main (running from a checkout)
        * or a new release on GitHub (installed from the DMG).
        */
@@ -174,6 +179,10 @@ export interface AppState {
   online: string[];
   /** Team server: who has each thread open right now, and who is typing in it. */
   presence: Record<string, { viewing: string[]; typing: string[] }>;
+  /** The agent message being written right now, by session: the text so far, and a key for it on screen. Gone once the message is in. */
+  drafts: Record<string, { key: string; text: string }>;
+  /** Finished messages that were streamed: event id → the draft's key, so the message takes the draft's place on screen. */
+  streamKeys: Record<number, string>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -209,15 +218,6 @@ export interface AppState {
   inboxRead: Record<string, true>;
   /** Threads that could not be loaded (missing or failed), with the reason. */
   loadErrors: Record<string, string>;
-  /** What the New thread screen opens with once ("Run again" from a thread). */
-  newDraft: NewThreadDraft | null;
-}
-
-export interface NewThreadDraft {
-  text: string;
-  role?: string;
-  /** Specialists switched off. */
-  benched: string[];
 }
 
 function viewFromHash(): View {
@@ -434,6 +434,8 @@ let state: AppState = {
   dmSeen: loadDmSeen(),
   online: [],
   presence: {},
+  drafts: {},
+  streamKeys: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -455,7 +457,6 @@ let state: AppState = {
   docsSeen: loadDocsSeen(),
   inboxRead: loadRead(),
   loadErrors: {},
-  newDraft: null,
 };
 
 const listeners = new Set<() => void>();
@@ -494,17 +495,56 @@ async function resolveConductor(): Promise<{ url: string; token: string } | null
   return { url: q.get('conductor') ?? 'http://127.0.0.1:4317', token };
 }
 
-async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+const SIGNED_OUT = webApp
+  ? 'Your sign-in to the server ran out. Reload the page to sign in again.'
+  : 'Your sign-in to the server ran out. Sign in again in the browser, then try again.';
+
+/** One sign-in at a time, however many calls ran into the expired login. */
+let reauthing: Promise<{ url: string; token: string } | null> | null = null;
+function reauth(): Promise<{ url: string; token: string } | null> {
+  const host = window.crewHost;
+  if (!host?.reauth) return Promise.resolve(null);
+  reauthing ??= (async () => {
+    const next = await host.reauth!().catch(() => null);
+    if (!next) return null;
+    // Signed in as someone else: what is on screen is the other person's. Start over
+    // instead of sending anything on their behalf.
+    if (state.me && next.email !== state.me.toLowerCase()) {
+      location.reload();
+      return null;
+    }
+    if (conn?.url === next.url) conn = { url: next.url, token: next.token };
+    return { url: next.url, token: next.token };
+  })().finally(() => (reauthing = null));
+  return reauthing;
+}
+
+async function api<T>(method: string, path: string, body?: unknown, retried = false): Promise<T> {
   if (!conn) throw new Error('Not connected to the conductor');
-  const res = await fetch(conn.url + path, {
+  const target = conn;
+  const res = await fetch(target.url + path, {
     method,
-    headers: { ...(conn.token && { authorization: `Bearer ${conn.token}` }), 'content-type': 'application/json' },
+    headers: { ...(target.token && { authorization: `Bearer ${target.token}` }), 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    // Behind Cloudflare Access (https) an expired login is answered with a redirect
+    // to its sign-in page: stop there instead of reading that page as data.
+    redirect: target.url.startsWith('https:') ? 'manual' : 'follow',
   });
+  if (res.type === 'opaqueredirect' || (res.status === 403 && !isJson(res))) {
+    // The Mac app signs in again in the browser and sends the request once more,
+    // to the same server only. (The web app does not reload by itself: that would
+    // lose what was being typed.)
+    const next = retried ? null : await reauth();
+    if (next && next.url === target.url && conn?.url === target.url) return api<T>(method, path, body, true);
+    throw new Error(SIGNED_OUT);
+  }
+  if (!isJson(res)) throw new Error(`The server did not answer (HTTP ${res.status}). Try again in a moment.`);
   const json = (await res.json()) as T & { error?: string };
   if (!res.ok || (json && typeof json === 'object' && 'error' in json && json.error)) throw new Error(json.error ?? `HTTP ${res.status}`);
   return json;
 }
+
+const isJson = (res: Response) => /\bjson\b/i.test(res.headers.get('content-type') ?? '');
 
 let refreshTimer: number | undefined;
 function scheduleStateRefresh(): void {
@@ -575,6 +615,14 @@ function onMessage(msg: ServerMessage): void {
       break;
     case 'turn':
       break;
+    case 'draft':
+      set((s) => {
+        const drafts = { ...s.drafts };
+        if (msg.text) drafts[msg.sessionId] = { key: drafts[msg.sessionId]?.key ?? `draft:${msg.sessionId}:${++draftCount}`, text: msg.text };
+        else delete drafts[msg.sessionId];
+        return { drafts };
+      });
+      break;
     case 'presence':
       set((s) => ({ presence: { ...s.presence, [msg.threadId]: { viewing: msg.viewing, typing: msg.typing } } }));
       break;
@@ -601,8 +649,17 @@ function onMessage(msg: ServerMessage): void {
       const e = msg.event;
       set((s) => {
         const d = s.details[e.threadId];
-        if (!d || d.events.some((x) => x.id === e.id)) return {};
-        const patch: Partial<AppState> = { details: { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } } };
+        const patch: Partial<AppState> = {};
+        // The finished message (or the end of the turn) replaces the draft, in the same render.
+        const draft = s.drafts[e.sessionId];
+        if (draft && ((e.type === 'message' && e.role === 'assistant') || e.type === 'turn_done')) {
+          const drafts = { ...s.drafts };
+          delete drafts[e.sessionId];
+          patch.drafts = drafts;
+          if (e.type === 'message') patch.streamKeys = { ...s.streamKeys, [e.id]: draft.key };
+        }
+        if (!d || d.events.some((x) => x.id === e.id)) return patch;
+        patch.details = { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } };
         // A new preview becomes the selected one, and opens the pane.
         if (e.type === 'preview') {
           patch.preview = { ...s.preview, [e.threadId]: e.previewId };
@@ -623,6 +680,8 @@ function onMessage(msg: ServerMessage): void {
 }
 
 let ws: WebSocket | null = null;
+/** Numbers draft keys: each streamed message gets its own. */
+let draftCount = 0;
 /** Socket messages that arrived before the snapshot they must be applied on top of. */
 let pending: ServerMessage[] | null = null;
 
@@ -699,7 +758,8 @@ export async function connect(): Promise<void> {
     const current = state.view.name === 'thread' ? state.view.threadId : undefined;
     const currentDm = state.view.name === 'dm' ? state.view.dmId : undefined;
     // DM messages reload when opened again: what came while offline is not lost.
-    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {} }));
+    // Drafts too: a turn may have ended while offline. One still being written comes back with its next piece.
+    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {}, drafts: {} }));
     await refreshState();
     // Docs: the sidebar counts new drafts.
     void loadDocs().catch(() => undefined);
@@ -1227,27 +1287,6 @@ export async function editQueuedMessage(messageId: number, text: string): Promis
 /** Take back a queued message before the agent has it. */
 export async function removeQueuedMessage(messageId: number): Promise<void> {
   await api('POST', `/api/messages/${messageId}/remove`);
-}
-
-/**
- * Open New thread with this thread's first question and team, to try it again
- * with other specialists switched off. Attached images are not carried over.
- */
-export function runAgain(threadId: string): void {
-  const thread = state.threads[threadId] ?? state.done[threadId];
-  const detail = state.details[threadId];
-  if (!thread || !detail) return;
-  const root = detail.sessions[thread.rootSessionId];
-  const first = detail.events.find((e) => e.type === 'message' && e.role === 'user' && e.sessionId === thread.rootSessionId);
-  set({ newDraft: { text: first?.type === 'message' ? first.text : thread.title, role: root?.role, benched: thread.benched ?? [] } });
-  navigate({ name: 'new', role: root?.role });
-}
-
-/** The New thread screen takes its draft once. */
-export function takeNewDraft(): NewThreadDraft | null {
-  const d = state.newDraft;
-  if (d) set({ newDraft: null });
-  return d;
 }
 
 export async function resumeThread(threadId: string): Promise<void> {

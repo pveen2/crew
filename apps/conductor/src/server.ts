@@ -56,6 +56,7 @@ function threadOf(msg: ServerMessage): string | null {
     case 'doc':
       return msg.doc.threadId;
     case 'presence':
+    case 'draft':
       return msg.threadId;
     case 'dm':
       return msg.dm.id;
