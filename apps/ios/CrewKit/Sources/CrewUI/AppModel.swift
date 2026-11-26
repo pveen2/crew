@@ -31,6 +31,7 @@ public final class AppModel {
   private var client: ConductorClient?
   private var socket: ConductorSocket?
   private var connection: Task<Void, Never>?
+  private var expiry: Task<Void, Never>?
 
   /// The first snapshot from the server is in.
   var loaded = false
@@ -56,6 +57,8 @@ public final class AppModel {
   @ObservationIgnored var revealed: [String: (text: String, shown: Int, at: Date)] = [:]
   var loadErrors: [String: String] = [:]
   var dmMessages: [String: [DmMessage]] = [:]
+  /// Socket messages for a DM that was not loaded yet, merged in when it is.
+  @ObservationIgnored private var dmEarly: [String: [DmMessage]] = [:]
   /// When I last read each DM (its updatedAt then).
   var dmSeen: [String: Double] = (UserDefaults.standard.dictionary(forKey: "crew.dm.seen") as? [String: Double]) ?? [:]
 
@@ -72,14 +75,14 @@ public final class AppModel {
     if let server = env["CREW_SERVER"].flatMap(Endpoint.parse) {
       let endpoint = Endpoint(url: server, appToken: env["CREW_TOKEN"] ?? "")
       self.endpoint = endpoint
-      client = ConductorClient(endpoint: endpoint)
+      client = makeClient(endpoint)
       phase = .connecting
       return
     }
     #endif
     if let saved = CredentialStore.load() {
       endpoint = saved
-      client = ConductorClient(endpoint: saved)
+      client = makeClient(saved)
       phase = .connecting
     }
   }
@@ -88,10 +91,23 @@ public final class AppModel {
 
   // MARK: - Sign-in
 
+  /// A client for this server. A request that finds the sign-in ran out (an action
+  /// while the socket is still open, say) sends the app back to the sign-in screen.
+  private func makeClient(_ endpoint: Endpoint) -> ConductorClient {
+    ConductorClient(endpoint: endpoint) { [weak self] in
+      Task { @MainActor in
+        guard let self, self.endpoint == endpoint else { return }
+        self.signInRanOut()
+      }
+    }
+  }
+
   public func signIn(_ endpoint: Endpoint) async throws {
-    let client = ConductorClient(endpoint: endpoint)
+    let client = makeClient(endpoint)
     // Check it works before keeping it.
     _ = try await client.get("/api/state", as: StateResponse.self)
+    // Nothing from an earlier sign-in (another server or person) may show.
+    reset()
     CredentialStore.save(endpoint)
     lastServer = endpoint.url.absoluteString
     UserDefaults.standard.set(lastServer, forKey: "crew.lastServer")
@@ -108,9 +124,7 @@ public final class AppModel {
     endpoint = nil
     client = nil
     phase = .signedOut
-    loaded = false
-    threads = [:]; done = [:]; inbox = [:]; details = [:]; dms = [:]; dmMessages = [:]
-    me = nil; people = []; roles = []; activity = []
+    reset()
   }
 
   private func signInRanOut() {
@@ -120,20 +134,43 @@ public final class AppModel {
     endpoint = nil
     signInMessage = "Your sign-in ran out. Sign in again to continue."
     phase = .signedOut
+    // The next sign-in may be someone else: their DMs and threads only.
+    reset()
+  }
+
+  /// Forgets everything the server sent.
+  private func reset() {
+    loaded = false
+    teamName = "Crew"; suggestions = []; roles = []; activity = []; sharing = false
+    threads = [:]; done = [:]; inbox = [:]; details = [:]; loadErrors = [:]
+    me = nil; people = []; online = []; presence = [:]
+    dms = [:]; dmMessages = [:]; dmEarly = [:]
+    drafts = [:]; revealed = [:]; images = [:]
   }
 
   // MARK: - Connection
 
   /// Connects and stays connected (retrying) until `stop()`. Call when the app comes to the front.
   public func start() {
-    guard client != nil, connection == nil else { return }
+    guard let client, connection == nil else { return }
     connection = Task { await run() }
+    // The Access login runs out at a known time: sign in again then, even while the
+    // socket stays open and nothing else would notice.
+    expiry?.cancel()
+    if let exp = client.endpoint.accessExpiresAt {
+      expiry = Task {
+        try? await Task.sleep(for: .seconds(max(0, exp.timeIntervalSinceNow - 60)))
+        if !Task.isCancelled, self.client === client { signInRanOut() }
+      }
+    }
   }
 
   /// Disconnects: the app went to the background. iOS would cut the socket anyway.
   public func stop() {
     connection?.cancel()
     connection = nil
+    expiry?.cancel()
+    expiry = nil
     socket?.close()
     socket = nil
     if phase == .online { phase = .connecting }
@@ -152,12 +189,17 @@ public final class AppModel {
         // The socket first, then the snapshot. Messages that arrive meanwhile wait
         // in the socket and are applied on top of it, so nothing falls in between.
         _ = try await socket.receive()
+        // Drafts from before: their messages came (or not) while we were away.
+        drafts = [:]
         try await refreshState()
-        let open = Array(details.keys)
+        // Keep only what is on screen, and load it again, also when it never loaded
+        // (opened while offline).
         details = details.filter { $0.key == openId }
-        for id in open where id == openId { await loadThread(id) }
         dmMessages = [:]
-        if let openId, dms[openId] != nil { await loadDm(openId) }
+        dmEarly = [:]
+        if let openId {
+          if dms[openId] != nil { await loadDm(openId) } else { await loadThread(openId) }
+        }
         phase = .online
         delay = 1
         sendPresence()
@@ -241,7 +283,12 @@ public final class AppModel {
     case .online(let people):
       online = people
     case .dmMessage(let m):
-      guard var list = dmMessages[m.dmId] else { break }
+      guard var list = dmMessages[m.dmId] else {
+        // Not loaded yet (or loading): kept for when it is, so none falls in between.
+        dmEarly[m.dmId, default: []].append(m)
+        if dmEarly[m.dmId]!.count > 200 { dmEarly[m.dmId]!.removeFirst() }
+        break
+      }
       if !list.contains(where: { $0.id == m.id }) {
         list.append(m)
         list.sort { $0.id < $1.id }
@@ -400,29 +447,34 @@ public final class AppModel {
   func loadDm(_ id: String) async {
     guard let client else { return }
     if let list = try? await client.get("/api/dms/\(id)/messages", as: [DmMessage].self) {
-      let early = dmMessages[id] ?? []
-      dmMessages[id] = (list + early.filter { m in !list.contains { $0.id == m.id } }).sorted { $0.id < $1.id }
+      let early = (dmMessages[id] ?? []) + (dmEarly.removeValue(forKey: id) ?? [])
+      var merged = list
+      for m in early where !merged.contains(where: { $0.id == m.id }) { merged.append(m) }
+      dmMessages[id] = merged.sorted { $0.id < $1.id }
     }
   }
 
-  func sendDm(_ id: String, text: String, attachments: [AttachmentUpload]) async throws {
+  /// `clientId`: made once per message, so sending it again after a lost answer does not post it twice.
+  func sendDm(_ id: String, text: String, attachments: [AttachmentUpload], clientId: String) async throws {
     guard let client else { return }
-    let sent = try await client.post("/api/dms/\(id)/messages", SendDmRequest(text: text, attachments: attachments.isEmpty ? nil : attachments, clientId: UUID().uuidString), as: SentDm.self)
+    let sent = try await client.post("/api/dms/\(id)/messages", SendDmRequest(text: text, attachments: attachments.isEmpty ? nil : attachments, clientId: clientId), as: SentDm.self)
     gotDm(sent)
   }
 
-  func sendDm(to emails: [String], text: String) async throws -> Dm {
+  func sendDm(to emails: [String], text: String, clientId: String) async throws -> Dm {
     guard let client else { throw ConductorError.offline("Not connected.") }
-    let sent = try await client.post("/api/dms", SendDmRequest(with: emails, text: text, clientId: UUID().uuidString), as: SentDm.self)
+    let sent = try await client.post("/api/dms", SendDmRequest(with: emails, text: text, clientId: clientId), as: SentDm.self)
     gotDm(sent)
     return sent.dm
   }
 
   private func gotDm(_ sent: SentDm) {
     dms[sent.dm.id] = newer(dms[sent.dm.id], sent.dm)
-    var list = dmMessages[sent.dm.id] ?? []
-    if !list.contains(where: { $0.id == sent.message.id }) { list.append(sent.message) }
-    dmMessages[sent.dm.id] = list.sorted { $0.id < $1.id }
+    // Only into a loaded DM: a DM that never loaded must still fetch its history.
+    if var list = dmMessages[sent.dm.id] {
+      if !list.contains(where: { $0.id == sent.message.id }) { list.append(sent.message) }
+      dmMessages[sent.dm.id] = list.sorted { $0.id < $1.id }
+    }
     markDmSeen(sent.dm.id)
   }
 

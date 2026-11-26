@@ -26,6 +26,7 @@ struct ComposerDock: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       TypingLine(threadId: threadId)
+      if session.depth == 0 { HeldLine(threadId: threadId, data: data, session: session) }
       ForEach(otherApprovals) { ApprovalCard(item: $0) }
       ForEach(ThreadLogic.waitingMessages(events: data.events, session: session), id: \.event.id) { w in
         WaitingChip(event: w.event, info: w.info, label: model.label(session.role))
@@ -314,5 +315,49 @@ private struct WaitingChip: View {
     case .queued: "Queued · \(label) gets this when the current turn ends"
     default: "Waiting · \(label) gets this on Resume"
     }
+  }
+}
+
+/// People tagged each other, so the agent waits for them: who it waits for, and Go ahead.
+/// Ported from HeldLine in apps/mac ThreadView.tsx.
+private struct HeldLine: View {
+  @Environment(AppModel.self) private var model
+  var threadId: String
+  var data: ThreadData
+  var session: Session
+  @State private var action = Action()
+
+  var body: some View {
+    let waiting = waitingFor
+    if !waiting.isEmpty {
+      HStack(spacing: 8) {
+        Image(systemName: "clock").foregroundStyle(.secondary)
+        Text("\(model.label(session.role)) is waiting for \(waiting.map(model.personName).joined(separator: ", "))")
+          .font(.footnote)
+          .foregroundStyle(.secondary)
+        Spacer(minLength: 8)
+        Button("Go ahead", systemImage: "play.fill") { action.run { try await model.releaseThread(threadId) } }
+          .buttonStyle(.glass)
+          .controlSize(.small)
+          .disabled(action.busy || model.phase != .online)
+      }
+      .padding(.horizontal, 6)
+      .errorAlert(action)
+    }
+  }
+
+  /// Everyone tagged in held messages that were not released or taken back since
+  /// (unless put back on hold).
+  private var waitingFor: [String] {
+    var last: [Int: CrewEvent.DeliveryState] = [:]
+    for e in data.events where e.sessionId == session.id {
+      if case .messageDelivery(let id, let state, _, _) = e.body { last[id] = state }
+    }
+    var out: [String] = []
+    for e in data.events where e.sessionId == session.id {
+      guard let m = e.message, m.delivery == .held, last[e.id] == nil || last[e.id] == .rehold else { continue }
+      for p in m.mentions ?? [] where !out.contains(p) { out.append(p) }
+    }
+    return out
   }
 }

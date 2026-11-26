@@ -69,6 +69,8 @@ struct ThreadView: View {
     .dismissesKeyboardOnScroll()
     .safeAreaBar(edge: .bottom) {
       ComposerDock(threadId: threadId, data: data, session: session, rootId: thread.rootSessionId, sessionId: $sessionId)
+        // One composer per agent: a draft never follows you to another agent.
+        .id(session.id)
     }
     .navigationTitle(session.depth > 0 ? model.label(session.role) : thread.title)
     .navigationSubtitle(subtitle(thread: thread, session: session))

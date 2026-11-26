@@ -76,9 +76,12 @@ public enum ConductorError: LocalizedError, Equatable {
 public final class ConductorClient: Sendable {
   public let endpoint: Endpoint
   private let session: URLSession
+  /// Called when a request finds the sign-in ran out (Access turned it away).
+  private let onSignInRequired: (@Sendable () -> Void)?
 
-  public init(endpoint: Endpoint) {
+  public init(endpoint: Endpoint, onSignInRequired: (@Sendable () -> Void)? = nil) {
     self.endpoint = endpoint
+    self.onSignInRequired = onSignInRequired
     let config = URLSessionConfiguration.default
     config.httpCookieStorage = nil
     config.httpShouldSetCookies = false
@@ -147,6 +150,7 @@ public final class ConductorClient: Sendable {
     guard let http = response as? HTTPURLResponse else { throw ConductorError.offline("No answer from the server.") }
     // Access answers a missing or expired login with a redirect to its sign-in page, or 401/403.
     if (300..<400).contains(http.statusCode) || http.statusCode == 401 || (http.statusCode == 403 && endpoint.isTeamServer) {
+      onSignInRequired?()
       throw ConductorError.signInRequired
     }
     guard (200..<300).contains(http.statusCode) else {

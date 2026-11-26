@@ -72,6 +72,8 @@ private struct NewDmSheet: View {
   var opened: (Dm) -> Void
   @State private var picked: Set<String> = []
   @State private var text = ""
+  /// Made once for this message: sending it again after a lost answer does not post it twice.
+  @State private var clientId = UUID().uuidString
   @State private var action = Action()
 
   var body: some View {
@@ -106,13 +108,13 @@ private struct NewDmSheet: View {
             let others = Array(picked)
             if let existing = model.sortedDms.first(where: { Set($0.people.filter { $0 != model.me }) == picked }) {
               action.run {
-                try await model.sendDm(existing.id, text: text, attachments: [])
+                try await model.sendDm(existing.id, text: text, attachments: [], clientId: clientId)
                 dismiss()
                 opened(existing)
               }
             } else {
               action.run {
-                let dm = try await model.sendDm(to: others, text: text)
+                let dm = try await model.sendDm(to: others, text: text, clientId: clientId)
                 dismiss()
                 opened(dm)
               }
@@ -144,6 +146,8 @@ struct DmView: View {
   var dmId: String
   @State private var text = ""
   @State private var images = PickedImages()
+  /// Made once per message: sending it again after a lost answer does not post it twice.
+  @State private var clientId = UUID().uuidString
   @State private var action = Action()
 
   private var canSend: Bool {
@@ -187,10 +191,12 @@ struct DmView: View {
               let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
               let uploads = images.uploads
               dismissKeyboard()
+              let id = clientId
               action.run {
-                try await model.sendDm(dmId, text: body, attachments: uploads)
+                try await model.sendDm(dmId, text: body, attachments: uploads, clientId: id)
                 text = ""
                 images.clear()
+                clientId = UUID().uuidString
               }
             } label: {
               Image(systemName: "arrow.up").font(.body.weight(.bold)).frame(width: 44, height: 44)
