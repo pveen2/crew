@@ -187,8 +187,9 @@ evals/**/<name>.eval.ts        defineEval, plus evals.config.ts
   call, or `'deny'`. The call waits for the owner in the Inbox (app, or
   `pnpm crew approve|deny <id>`). A tool's `approvalTitle(input)` sets the
   card's title (what changes, what it costs); `alwaysAsk: true` makes every
-  call wait again, even after "allow for this thread" (Studio generations and
-  Meta ad changes). A tool runs in the agent's bridge process and gets
+  call wait again, even after "approve all in this thread"; only "always allow
+  this tool", chosen on that tool's own card, lets it through (Studio
+  generations, Meta ad changes, Shopify changes). A tool runs in the agent's bridge process and gets
   nothing from the conductor's environment except the variables it names in
   `env` (for example `['STUDIO_MCP_TOKEN']`), on every engine. The lead requires approval to forget a
   memory. External MCP connections cannot be paused mid-call; they are limited

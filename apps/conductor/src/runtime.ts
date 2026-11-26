@@ -1584,11 +1584,12 @@ export class Runtime {
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
     // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.
+    // A tool that asks every time is only covered by a grant made for that tool itself.
     const key = `${agent.name}:${toolName}`;
     if (signal.aborted) throw new Error('The call was cancelled.');
     const alwaysAsk = tool?.alwaysAsk === true;
     const allowed = this.store.allowedTools(session.threadId);
-    if (!alwaysAsk && (allowed.includes(key) || allowed.includes('*'))) return;
+    if (allowed.includes(key) || (!alwaysAsk && allowed.includes('*'))) return;
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
@@ -1637,7 +1638,8 @@ export class Runtime {
   /**
    * The owner's decision on an approval item. `always`: 'tool' also allows this
    * agent's tool for the rest of the thread, 'all' allows every tool in it; both
-   * approve the matching calls already waiting.
+   * approve the matching calls already waiting. A tool that asks every time can
+   * only be allowed on its own ('tool'): 'all' never covers it.
    */
   decideApproval(inboxId: string, approved: boolean, always?: 'tool' | 'all'): InboxItem {
     const item = this.store.inboxItem(inboxId);
@@ -1647,13 +1649,16 @@ export class Runtime {
       if (item.status === 'open') this.resolveInbox(inboxId);
       throw new Error('This approval is no longer waiting: the turn that asked for it has ended.');
     }
+    if (approved && always === 'all' && waiter.alwaysAsk) {
+      throw new Error('This tool asks every time: allow it on its own, not with approve all.');
+    }
     // Save the grant first: if that fails, nothing has been released yet.
     if (approved && always) this.store.allowTool(waiter.threadId, always === 'all' ? '*' : waiter.key);
     waiter.settle(approved);
     const resolved = this.resolveInbox(inboxId) ?? item;
     if (approved && always) {
       for (const [id, other] of [...this.approvals]) {
-        if (other.threadId !== waiter.threadId || other.alwaysAsk || (always === 'tool' && other.key !== waiter.key)) continue;
+        if (other.threadId !== waiter.threadId || (always === 'tool' ? other.key !== waiter.key : other.alwaysAsk)) continue;
         if (!this.approvals.has(id)) continue; // settled meanwhile
         other.settle(true);
         this.resolveInbox(id);

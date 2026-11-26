@@ -4,7 +4,7 @@ import { BlockStack, Button, Card, Disclosure, InlineStack, Text } from '@crew/u
 import { decideApproval } from '../store';
 import { Markdown, RoleFace, useRoleLabel } from './common';
 
-/** Deny, the "always" choices (not for ask-every-time tools), and Approve. Shared by the Inbox and the thread. */
+/** Deny, the "always" choices (only "this tool" for ask-every-time tools), and Approve. Shared by the Inbox and the thread. */
 export function ApprovalActions({ item }: { item: InboxItem }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -29,15 +29,13 @@ export function ApprovalActions({ item }: { item: InboxItem }) {
       <Button disabled={busy} onClick={() => void decide(false)}>
         Deny
       </Button>
+      <Button disabled={busy} onClick={() => void decide(true, 'tool')}>
+        Always allow this tool
+      </Button>
       {item.askEveryTime ? null : (
-        <>
-          <Button disabled={busy} onClick={() => void decide(true, 'tool')}>
-            Always allow this tool
-          </Button>
-          <Button disabled={busy} onClick={() => void decide(true, 'all')}>
-            Approve all in this thread
-          </Button>
-        </>
+        <Button disabled={busy} onClick={() => void decide(true, 'all')}>
+          Approve all in this thread
+        </Button>
       )}
       <Button variant="primary" disabled={busy} onClick={() => void decide(true)}>
         Approve
