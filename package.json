@@ -10,6 +10,7 @@
     "dev": "turbo run dev",
     "build": "turbo run build",
     "typecheck": "tsc -p . && turbo run typecheck",
+    "test": "turbo run test",
     "conductor": "node --env-file-if-exists=.env.local apps/conductor/src/main.ts",
     "app": "pnpm --filter @crew/mac dev",
     "crew": "node --env-file-if-exists=.env.local scripts/crew.ts",

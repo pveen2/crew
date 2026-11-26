@@ -17,7 +17,7 @@ apps/conductor   local server: sessions, subagent calls, approvals, events, SQLi
 apps/mac         Electron + React app (display only, no agent logic)
 crew/            an example team, eve-style: crew.config.ts, agent/ (lead), agent/subagents/, lib/, evals/
 packages/sdk     @crew/sdk: defineAgent, defineTool, defineCrew, evals and the team loader
-packages/kit     @crew/kit: ready-made Shopify, headless browser, X search, Studio, Meta ads and DataForSEO connections
+packages/kit     @crew/kit: ready-made Shopify, headless browser, X search, Studio, Meta ads, DataForSEO and Search Console connections
 packages/protocol shared types for events and the API
 packages/ui      the Crew design system (tokens + React components)
 scripts/crew.ts  the `pnpm crew` command
@@ -168,7 +168,7 @@ evals/**/<name>.eval.ts        defineEval, plus evals.config.ts
 - `model` is `<engine>/<model>[@reasoning]`: the one difference from eve,
   because Crew runs on the official CLIs with the owner's subscriptions.
 - **Subagents inherit nothing** from the lead. Shared pieces are factories
-  (`@crew/kit`: Shopify, the headless browser, X search, Studio, Meta ads, DataForSEO) used from a one-line
+  (`@crew/kit`: Shopify, the headless browser, X search, Studio, Meta ads, DataForSEO, Search Console) used from a one-line
   file, so a connection's allow-list cannot drift.
   `lib/rules.md` (Crew's own rules) and `lib/brand/` go to every agent.
 - **One level of delegation.** The lead gets one tool per subagent
@@ -335,6 +335,17 @@ Close thread also drop queued turns, and say so in the thread.
   `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`. Every call costs cents, so one
   agent session may spend at most `maxCostPerSession` (USD, default 2, kept
   across the session's turns); a call that would go over it is refused.
+- Google Search Console (`@crew/kit/search-console`):
+  `searchConsoleConnection({ site: 'sc-domain:example.com' })` (or a URL-prefix
+  property, `https://example.com/`). A local MCP server with three reading
+  tools for that one property: `gsc_search_analytics` (clicks, impressions,
+  CTR and position by query, page, country, device, date or search
+  appearance), `gsc_inspect_url` (index status and canonicals of a page of
+  the property) and `gsc_sitemaps`. Signed in as a Google Cloud service
+  account with `GOOGLE_SEARCH_CONSOLE_KEY` (its JSON key, or base64 of it; the
+  setup steps are in `.env.example`), scope `webmasters.readonly`, the access
+  token kept in memory only. The service account must be a user of the
+  property in Search Console; it sees nothing else.
 - Meta ads (`@crew/kit/meta`): the connection is a local MCP server that
   forwards to Meta's hosted Ads MCP server (`https://mcp.facebook.com/ads`)
   with `META_ACCESS_TOKEN`, and offers only the reading tools in
