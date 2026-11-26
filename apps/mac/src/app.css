@@ -885,7 +885,7 @@ body,
   padding-top: var(--cr-space-100);
 }
 /* A text button first in the row (Step in): its label lines up with the card's text. */
-.inbox-card-actions > .cr-button--tertiary:first-child {
+.thread-approvals .inbox-card-actions > .cr-button--tertiary:first-child {
   margin-left: calc(-1 * var(--cr-space-250));
 }
 .inbox-card-error {

@@ -248,6 +248,11 @@ function snippet(text: string, max = 120): string {
   return s.length > max ? s.slice(0, max - 1) + '…' : s;
 }
 
+/** The thread grant for an ask-every-time tool: its own key, so older plain grants never cover it. */
+function alwaysAskGrant(key: string): string {
+  return `ask:${key}`;
+}
+
 export class Runtime {
   private readonly running = new Map<string, RunningTurn>();
   /** Background title runs, by thread. */
@@ -1584,12 +1589,13 @@ export class Runtime {
     if (!decision) return;
     if (decision === 'deny') throw new Error(`${toolName} is not allowed for the ${agent.label}.`);
     // The owner allowed this agent's tool, or everything ('*'), earlier in the thread.
-    // A tool that asks every time is only covered by a grant made for that tool itself.
+    // A tool that asks every time is only covered by a grant made for that tool itself, saved
+    // under its own key: a plain grant (from before it asked every time) never covers it.
     const key = `${agent.name}:${toolName}`;
     if (signal.aborted) throw new Error('The call was cancelled.');
     const alwaysAsk = tool?.alwaysAsk === true;
     const allowed = this.store.allowedTools(session.threadId);
-    if (allowed.includes(key) || (!alwaysAsk && allowed.includes('*'))) return;
+    if (alwaysAsk ? allowed.includes(alwaysAskGrant(key)) : allowed.includes(key) || allowed.includes('*')) return;
 
     const turnId = this.running.get(session.id)?.turnId ?? null;
     let shown = JSON.stringify(input, null, 2);
@@ -1653,7 +1659,7 @@ export class Runtime {
       throw new Error('This tool asks every time: allow it on its own, not with approve all.');
     }
     // Save the grant first: if that fails, nothing has been released yet.
-    if (approved && always) this.store.allowTool(waiter.threadId, always === 'all' ? '*' : waiter.key);
+    if (approved && always) this.store.allowTool(waiter.threadId, always === 'all' ? '*' : waiter.alwaysAsk ? alwaysAskGrant(waiter.key) : waiter.key);
     waiter.settle(approved);
     const resolved = this.resolveInbox(inboxId) ?? item;
     if (approved && always) {
