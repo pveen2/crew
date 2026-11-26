@@ -971,7 +971,7 @@ function SessionStatus({ session }: { session: Session }) {
 // ---------------------------------------------------------------------------
 
 export function ThreadView({ threadId, sessionId }: { threadId: string; sessionId?: string }) {
-  const thread = useApp((s) => s.threads[threadId] ?? s.details[threadId]?.thread);
+  const thread = useApp((s) => s.threads[threadId] ?? s.done[threadId] ?? s.details[threadId]?.thread);
   const loadError = useApp((s) => s.loadErrors[threadId]);
   const data = useApp((s) => s.details[threadId]);
   const previewOpen = useApp((s) => s.previewOpen);
@@ -1120,9 +1120,14 @@ function ThreadTitle({ threadId, title }: { threadId: string; title: string }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
   const [error, setError] = useState('');
+  // Each edit gets a number: a save that finishes after Escape, or after a new edit began, leaves it alone.
+  const edit = useRef(0);
   const done = useRef(false);
+  const original = useRef(title);
 
   const start = () => {
+    edit.current += 1;
+    original.current = title;
     setDraft(title);
     setError('');
     done.current = false;
@@ -1131,12 +1136,15 @@ function ThreadTitle({ threadId, title }: { threadId: string; title: string }) {
   const save = async () => {
     if (done.current) return;
     done.current = true;
+    const mine = edit.current;
     const next = draft.trim();
-    if (!next || next === title) return setEditing(false);
+    // Untouched: nothing to save, even if the title changed meanwhile (the auto-title arrived).
+    if (!next || next === original.current.trim()) return setEditing(false);
     try {
       await renameThread(threadId, next);
-      setEditing(false);
+      if (edit.current === mine) setEditing(false);
     } catch (err) {
+      if (edit.current !== mine) return;
       done.current = false;
       setError((err as Error).message || 'Could not rename the thread.');
     }
@@ -1165,6 +1173,7 @@ function ThreadTitle({ threadId, title }: { threadId: string; title: string }) {
             if (e.key === 'Escape') {
               e.preventDefault();
               done.current = true;
+              edit.current += 1;
               setEditing(false);
             }
           }}

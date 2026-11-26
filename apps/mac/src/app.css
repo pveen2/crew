@@ -414,7 +414,8 @@ body,
   background: var(--cr-color-bg-fill-hover);
 }
 .thread-title__form {
-  min-width: 16rem;
+  width: 16rem;
+  max-width: 100%;
 }
 .thread-title__input--error {
   outline: 1px solid var(--cr-color-text-critical);

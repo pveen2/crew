@@ -750,13 +750,18 @@ export class Runtime {
     stopTree(sessionId);
   }
 
+  threadExists(threadId: string): boolean {
+    return !!this.store.thread(threadId);
+  }
+
   /** The owner renames a thread from its header. Their words are kept as typed: one line, at most 64 characters. */
   retitleThread(threadId: string, raw: string): void {
     const thread = this.store.thread(threadId);
     if (!thread) throw new Error(`No thread ${threadId}`);
     const line = raw.replace(/\s+/g, ' ').trim();
     if (!line) throw new Error('Give the thread a title.');
-    const title = line.length > 64 ? line.slice(0, 63).trimEnd() + '…' : line;
+    const chars = Array.from(line); // by code point, so an emoji is never cut in half
+    const title = chars.length > 64 ? chars.slice(0, 63).join('').trimEnd() + '…' : line;
     this.cancelAutoTitle(threadId);
     if (title !== thread.title) this.setTitle(threadId, title);
   }
