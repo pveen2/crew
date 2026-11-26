@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Face, FaceStack, type FaceSize } from '@crew/ui';
@@ -43,8 +43,12 @@ function wrapTables(html: string): string {
   return tpl.innerHTML;
 }
 
+function markdownHtml(text: string): string {
+  return wrapTables(DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY));
+}
+
 export function Markdown({ text, className }: { text: string; className?: string }) {
-  const html = useMemo(() => wrapTables(DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY)), [text]);
+  const html = useMemo(() => markdownHtml(text), [text]);
   return <div className={`md ${className ?? ''}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
@@ -133,7 +137,7 @@ export function StreamingMarkdown({ sessionId, text }: { sessionId: string; text
   const shown = useReveal(text, start, (n) => revealed.set(sessionId, { text, shown: n }));
   // Remember the latest text too, even before it is shown.
   revealed.set(sessionId, { text, shown });
-  return <Markdown text={closeOpenMarkdown(text.slice(0, shown))} className="md--streaming" />;
+  return <BlockMarkdown text={closeOpenMarkdown(text.slice(0, shown))} seen={start} />;
 }
 
 /**
@@ -148,8 +152,67 @@ export function AgentMarkdown({ sessionId, text, ts }: { sessionId: string; text
     return text.startsWith(r.text.slice(0, r.shown)) ? r.shown : text.length;
   });
   const shown = useReveal(text, start);
-  const writing = shown < text.length;
-  return <Markdown text={writing ? closeOpenMarkdown(text.slice(0, shown)) : text} className={writing ? 'md--streaming' : undefined} />;
+  if (shown >= text.length) return <Markdown text={text} />;
+  return <BlockMarkdown text={closeOpenMarkdown(text.slice(0, shown))} seen={start} />;
+}
+
+// Lines that tie blocks together across blank lines (link definitions, footnotes, raw HTML).
+const DOCUMENT_WIDE = /^ {0,3}(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+// After a blank line these still belong to the block before: indented content or another list item.
+const CONTINUATION = /^(?:[ \t]|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
+
+/**
+ * Cuts Markdown at blank lines that end a block, so each piece renders as it
+ * would inside the whole text. Whole when the text uses syntax that spans blocks.
+ */
+export function splitMarkdownBlocks(text: string): string[] {
+  if (DOCUMENT_WIDE.test(text)) return [text];
+  const blocks: string[] = [];
+  let current: string[] = [];
+  let fence: string | null = null;
+  let afterBlank = false;
+  for (const line of text.split('\n')) {
+    const f = FENCE.exec(line);
+    if (fence) {
+      current.push(line);
+      if (f && f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) fence = null;
+      continue;
+    }
+    if (afterBlank && line.trim() && !CONTINUATION.test(line) && current.some((l) => l.trim())) {
+      blocks.push(current.join('\n'));
+      current = [];
+    }
+    if (f) fence = f[1]!;
+    afterBlank = !line.trim();
+    current.push(line);
+  }
+  blocks.push(current.join('\n'));
+  return blocks;
+}
+
+/** One block of a message being written. Unchanged blocks are not parsed again. */
+const MarkdownBlock = memo(function MarkdownBlock({ text, fresh }: { text: string; fresh: boolean }) {
+  const html = useMemo(() => markdownHtml(text), [text]);
+  return <div className={fresh ? 'md-block md-block--new' : 'md-block'} dangerouslySetInnerHTML={{ __html: html }} />;
+});
+
+/**
+ * A message being written, block by block: only the last block is parsed again
+ * as it grows, and each new block fades in once (as in T3 Code). Blocks already
+ * on screen before this mounted (`seen` characters) do not fade again.
+ */
+function BlockMarkdown({ text, seen }: { text: string; seen: number }) {
+  const blocks = splitMarkdownBlocks(text);
+  const [seenBlocks] = useState(() => (seen > 0 ? splitMarkdownBlocks(text.slice(0, seen)).length : 0));
+  return (
+    <div className="md md--streaming">
+      {blocks.map((block, i) => (
+        // Blocks only change at the end.
+        <MarkdownBlock key={i} text={block} fresh={i >= seenBlocks} />
+      ))}
+    </div>
+  );
 }
 
 export function useRoleLabel(role: string): string {
