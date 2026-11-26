@@ -56,19 +56,10 @@ export function Markdown({ text, className }: { text: string; className?: string
 // Streaming: an agent message shows while it is being written, at an even pace.
 
 /**
- * How far each session's streamed message is shown, so the finished message
- * goes on from there instead of jumping to its full text.
+ * How far each streamed message is shown, by its key, so it goes on from there
+ * when it is shown again (another thread and back) instead of starting over.
  */
-const revealed = new Map<string, { text: string; shown: number; at: number }>();
-/** A hand-off older than this is not used: that message finished long ago, or was stopped. */
-const HANDOFF_MS = 15_000;
-
-/** Where a message with this text may start showing: from a fresh, matching hand-off, or null. */
-function handoff(sessionId: string, text: string): number | null {
-  const r = revealed.get(sessionId);
-  if (!r || Date.now() - r.at > HANDOFF_MS || !text.startsWith(r.text.slice(0, r.shown))) return null;
-  return r.shown;
-}
+const revealed = new Map<string, number>();
 
 /** Characters a second at the least; a backlog is shown within about this many ms. */
 const MIN_RATE = 90;
@@ -146,7 +137,7 @@ export function closeOpenMarkdown(text: string): string {
   if (fence) return text + (text.endsWith('\n') ? '' : '\n') + fence;
   const lastLine = text.slice(text.lastIndexOf('\n') + 1);
   // A rule (*** or ___) is finished as it is.
-  if (/^ {0,3}([*_-])(?:[ \t]*\1){2,}[ \t]*$/.test(lastLine)) return text;
+  if (/^ {0,3}(?:>[ \t]*)*([*_-])(?:[ \t]*\1){2,}[ \t]*$/.test(lastLine)) return text;
   let t = text.replace(/[*_`~]+$/, '');
   const line = t.slice(t.lastIndexOf('\n') + 1);
   // Inline code: an open run of backticks is closed with a run as long.
@@ -162,37 +153,27 @@ export function closeOpenMarkdown(text: string): string {
   return t;
 }
 
-/** The message being written right now: shown at an even pace, with a caret at its end. Key it by session. */
-export function StreamingMarkdown({ sessionId, text }: { sessionId: string; text: string }) {
-  // Shown again (another thread and back): go on from where it was.
-  const [start] = useState(() => handoff(sessionId, text) ?? 0);
-  const shown = useReveal(text, start, (n) => revealed.set(sessionId, { text, shown: n, at: Date.now() }));
-  // Remember the latest text too, even before it is shown.
-  revealed.set(sessionId, { text, shown, at: Date.now() });
-  return <BlockMarkdown text={closeOpenMarkdown(text.slice(0, shown))} seen={start} writing />;
-}
-
 /**
- * A finished agent message. Just after it was streamed, it goes on from where
- * the stream had got to; otherwise it shows at once.
+ * An agent message. Streamed (`streamKey`): written out at an even pace, block
+ * by block, with a caret while `streaming`; the finished message takes the
+ * draft's key, so it is the same element on screen and nothing jumps or
+ * remounts. Otherwise it shows at once.
  */
-export function AgentMarkdown({ sessionId, text, ts }: { sessionId: string; text: string; ts: number }) {
-  const [start] = useState(() => {
-    // Only the message the draft became: just written, and starting with what was shown.
-    const from = Date.now() - ts <= HANDOFF_MS ? handoff(sessionId, text) : null;
-    if (from === null) return text.length;
-    revealed.delete(sessionId);
-    return from;
-  });
-  const shown = useReveal(text, start);
-  // Not streamed: plain. Streamed: kept as blocks, so its DOM (and any sideways scroll) stays.
-  if (start >= text.length) return <Markdown text={text} />;
-  const writing = shown < text.length;
+export function AgentMarkdown({ text, streamKey, streaming = false }: { text: string; streamKey?: string; streaming?: boolean }) {
+  const [start] = useState(() => (streamKey === undefined ? text.length : Math.min(revealed.get(streamKey) ?? (streaming ? 0 : text.length), text.length)));
+  const shown = useReveal(text, start, streamKey === undefined ? undefined : (n) => revealed.set(streamKey, n));
+  const writing = streaming || shown < text.length;
+  useEffect(() => {
+    if (streamKey !== undefined && !writing) revealed.delete(streamKey);
+  }, [streamKey, writing]);
+  // Never streamed here: plain. Streamed: kept as blocks, so its DOM (and any sideways scroll) stays.
+  if (streamKey === undefined || (start >= text.length && !streaming)) return <Markdown text={text} />;
   return <BlockMarkdown text={writing ? closeOpenMarkdown(text.slice(0, shown)) : text} seen={start} writing={writing} />;
 }
 
 // Lines that tie blocks together across blank lines (link definitions, footnotes, raw HTML).
-const DOCUMENT_WIDE = /^ {0,3}(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
+// Also inside a quote or a list item.
+const DOCUMENT_WIDE = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 

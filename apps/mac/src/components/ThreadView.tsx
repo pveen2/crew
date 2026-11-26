@@ -55,7 +55,6 @@ import {
   Elapsed,
   Markdown,
   AgentMarkdown,
-  StreamingMarkdown,
   PersonFace,
   markMentions,
   RoleFace,
@@ -690,7 +689,7 @@ function EventRow({ threadId, event, session, answer }: { threadId: string; even
   switch (event.type) {
     case 'message':
       if (event.role === 'user') return <OwnerMessage threadId={threadId} event={event} session={session} />;
-      return <AgentMarkdown sessionId={event.sessionId} text={event.text} ts={event.ts} />;
+      return <AgentMarkdown text={event.text} />;
     case 'needs_you':
       return <NeedsYouCard threadId={threadId} event={event} role={session.role} answer={answer} />;
     case 'approval':
@@ -1059,30 +1058,33 @@ function HeldLine({ threadId, data, session, label }: { threadId: string; data: 
 }
 
 /** "Thinking · 12s" under the last message while the agent works. */
-/** The agent message being written right now. */
-function DraftMessage({ sessionId, events }: { sessionId: string; events: CrewEvent[] }) {
-  const text = useApp((s) => s.drafts[sessionId]);
-  // Just asked a question in this turn: its text after the card only restates it and is
-  // left out once finished (buildItems), so it is not shown while written either.
+/**
+ * The agent message being written right now in this session, if it shows. Not
+ * when it restates a question just asked: buildItems leaves that out once
+ * finished, so it is not shown while written either.
+ */
+function useVisibleDraft(session: Session | undefined, events: CrewEvent[] | undefined): { key: string; text: string } | null {
+  const draft = useApp((s) => (session ? s.drafts[session.id] : undefined));
   const restates = useMemo(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      const e = events[i]!;
-      if (e.sessionId !== sessionId) continue;
-      // Not in a turn the owner wrote into: then the text may answer them (as in buildItems).
+    if (!events || !session) return false;
+    // The same events and rule as buildItems: the last of these decides.
+    const chat = chatEvents(events, session);
+    const currentTurn = [...events].reverse().find((e) => e.sessionId === session.id && e.type === 'turn_started')?.turnId;
+    for (let i = chat.length - 1; i >= 0; i--) {
+      const e = chat[i]!;
+      // Only a question from the turn being written, and not in a turn the owner wrote into (the text may answer them).
       if (e.type === 'needs_you')
-        return !events.some((x) => x.type === 'message' && x.role === 'user' && x.delivery === 'steer' && x.turnId === e.turnId);
-      if (e.type === 'tool_call' || e.type === 'turn_started' || (e.type === 'message' && e.role === 'user')) return false;
+        return e.turnId === currentTurn && !events.some((x) => x.type === 'message' && x.role === 'user' && x.delivery === 'steer' && x.turnId === e.turnId);
+      if (e.type === 'tool_call' || (e.type === 'message' && e.role === 'user')) return false;
     }
     return false;
-  }, [events, sessionId]);
-  // Keyed by session: stepping into another agent never carries this one's reveal over.
-  return text && !restates ? <StreamingMarkdown key={sessionId} sessionId={sessionId} text={text} /> : null;
+  }, [events, session]);
+  return draft && !restates ? draft : null;
 }
 
-function WorkingLine({ session, data }: { session: Session; data: ThreadData }) {
+function WorkingLine({ session, data, writing }: { session: Session; data: ThreadData; writing: boolean }) {
   const label = useRoleLabel(session.role);
-  // While the answer is being written, the caret at its end says the agent is busy.
-  const writing = useApp((s) => Boolean(s.drafts[session.id]));
+  // writing: the answer shows as it is written; the caret at its end says the agent is busy.
   const startedAt = useMemo(() => {
     const t = [...data.events].reverse().find((e) => e.sessionId === session.id && e.type === 'turn_started');
     return t?.ts ?? session.updatedAt;
@@ -1135,6 +1137,8 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
   const rootId = thread?.rootSessionId ?? '';
   const session = data?.sessions[sessionId ?? rootId];
   const items = useMemo(() => (data && session ? buildItems(data.events, session, labels) : []), [data, session, labels]);
+  const streamKeys = useApp((s) => s.streamKeys);
+  const draft = useVisibleDraft(session, data?.events);
   const parent = session?.parentSessionId ? data?.sessions[session.parentSessionId] : undefined;
 
   useEffect(() => {
@@ -1250,21 +1254,31 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
           }}
         >
           <div className="chat">
-            {items.length === 0 ? (
+            {items.length === 0 && !draft ? (
               <Text tone="secondary">{session.depth > 0 ? `Nothing from ${label} yet.` : 'Nothing here yet.'}</Text>
             ) : (
-              items.map((item, i) =>
-                item.kind === 'work' ? (
-                  <WorkGroup key={item.id} events={item.events} data={data} sessionRunning={sessionRunning} isLast={i === lastIndex} />
-                ) : item.kind === 'subagents' ? (
-                  <SubagentGroup key={item.id} threadId={threadId} starts={item.starts} data={data} />
-                ) : (
-                  <EventRow key={item.event.id} threadId={threadId} event={item.event} session={session} answer={item.answer} />
+              [
+                ...items.map((item, i) =>
+                  item.kind === 'event' && item.event.type === 'message' && item.event.role === 'assistant' ? (
+                    // A streamed message keeps its draft's key: the same element, so nothing jumps.
+                    <AgentMarkdown
+                      key={streamKeys[item.event.id] ?? item.event.id}
+                      text={item.event.text}
+                      streamKey={streamKeys[item.event.id]}
+                    />
+                  ) : item.kind === 'work' ? (
+                    <WorkGroup key={item.id} events={item.events} data={data} sessionRunning={sessionRunning} isLast={i === lastIndex} />
+                  ) : item.kind === 'subagents' ? (
+                    <SubagentGroup key={item.id} threadId={threadId} starts={item.starts} data={data} />
+                  ) : (
+                    <EventRow key={item.event.id} threadId={threadId} event={item.event} session={session} answer={item.answer} />
+                  ),
                 ),
-              )
+                // The message being written, in the same list, so the finished one takes its place.
+                draft ? <AgentMarkdown key={draft.key} text={draft.text} streamKey={draft.key} streaming /> : null,
+              ]
             )}
-            <DraftMessage sessionId={session.id} events={data.events} />
-            <WorkingLine session={session} data={data} />
+            <WorkingLine session={session} data={data} writing={Boolean(draft)} />
           </div>
         </div>
 

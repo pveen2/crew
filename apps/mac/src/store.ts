@@ -179,8 +179,10 @@ export interface AppState {
   online: string[];
   /** Team server: who has each thread open right now, and who is typing in it. */
   presence: Record<string, { viewing: string[]; typing: string[] }>;
-  /** The agent message being written right now, by session: the text so far. Gone once the message is in. */
-  drafts: Record<string, string>;
+  /** The agent message being written right now, by session: the text so far, and a key for it on screen. Gone once the message is in. */
+  drafts: Record<string, { key: string; text: string }>;
+  /** Finished messages that were streamed: event id → the draft's key, so the message takes the draft's place on screen. */
+  streamKeys: Record<number, string>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -433,6 +435,7 @@ let state: AppState = {
   online: [],
   presence: {},
   drafts: {},
+  streamKeys: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -615,7 +618,7 @@ function onMessage(msg: ServerMessage): void {
     case 'draft':
       set((s) => {
         const drafts = { ...s.drafts };
-        if (msg.text) drafts[msg.sessionId] = msg.text;
+        if (msg.text) drafts[msg.sessionId] = { key: drafts[msg.sessionId]?.key ?? `draft:${msg.sessionId}:${++draftCount}`, text: msg.text };
         else delete drafts[msg.sessionId];
         return { drafts };
       });
@@ -648,10 +651,12 @@ function onMessage(msg: ServerMessage): void {
         const d = s.details[e.threadId];
         const patch: Partial<AppState> = {};
         // The finished message (or the end of the turn) replaces the draft, in the same render.
-        if (s.drafts[e.sessionId] !== undefined && ((e.type === 'message' && e.role === 'assistant') || e.type === 'turn_done')) {
+        const draft = s.drafts[e.sessionId];
+        if (draft && ((e.type === 'message' && e.role === 'assistant') || e.type === 'turn_done')) {
           const drafts = { ...s.drafts };
           delete drafts[e.sessionId];
           patch.drafts = drafts;
+          if (e.type === 'message') patch.streamKeys = { ...s.streamKeys, [e.id]: draft.key };
         }
         if (!d || d.events.some((x) => x.id === e.id)) return patch;
         patch.details = { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } };
@@ -675,6 +680,8 @@ function onMessage(msg: ServerMessage): void {
 }
 
 let ws: WebSocket | null = null;
+/** Numbers draft keys: each streamed message gets its own. */
+let draftCount = 0;
 /** Socket messages that arrived before the snapshot they must be applied on top of. */
 let pending: ServerMessage[] | null = null;
 
