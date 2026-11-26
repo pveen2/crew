@@ -24,6 +24,8 @@ export interface McpServerSpec {
 export type EngineEvent =
   | { kind: 'session'; engineSessionId: string }
   | { kind: 'text'; text: string }
+  /** A piece of the agent message being written (engines that stream). The finished text still comes as 'text'. */
+  | { kind: 'text_delta'; text: string; /** A new message begins: what came before is dropped (a retry). */ restart?: boolean }
   | { kind: 'thinking'; text: string }
   | { kind: 'tool_call'; callId: string; name: string; input: unknown }
   | { kind: 'tool_result'; callId: string; output: string; isError: boolean };

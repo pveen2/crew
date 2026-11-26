@@ -1011,10 +1011,12 @@ body,
   font-size: var(--cr-font-size-375);
   line-height: var(--cr-line-height-reading);
 }
-.md > :first-child {
+.md > :first-child,
+.md > .md-block:first-child > :first-child {
   margin-top: 0;
 }
-.md > :last-child {
+.md > :last-child,
+.md > .md-block:last-child > :last-child {
   margin-bottom: 0;
 }
 .md p,
@@ -2188,4 +2190,40 @@ body,
 .typing-line {
   margin: 0;
   padding: 0 var(--cr-space-200);
+}
+
+/* An agent message being written: a soft, pulsing caret at the end of its last line. */
+.md--streaming > .md-block:last-child > :last-child:not(ul, ol)::after,
+.md--streaming > .md-block:last-child > :is(ul, ol) > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-left: 0.25em;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.55;
+  animation: md-caret 1s ease-in-out infinite;
+}
+@keyframes md-caret {
+  50% {
+    opacity: 0.15;
+  }
+}
+/* Each new block of a message being written fades in once, opacity only (as in T3 Code). */
+@media (prefers-reduced-motion: no-preference) {
+  .md-block--new {
+    transition: opacity 600ms ease-out;
+  }
+  @starting-style {
+    .md-block--new {
+      opacity: 0;
+    }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md--streaming *::after {
+    animation: none;
+  }
 }

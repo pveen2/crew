@@ -179,6 +179,10 @@ export interface AppState {
   online: string[];
   /** Team server: who has each thread open right now, and who is typing in it. */
   presence: Record<string, { viewing: string[]; typing: string[] }>;
+  /** The agent message being written right now, by session: the text so far, and a key for it on screen. Gone once the message is in. */
+  drafts: Record<string, { key: string; text: string }>;
+  /** Finished messages that were streamed: event id → the draft's key, so the message takes the draft's place on screen. */
+  streamKeys: Record<number, string>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -430,6 +434,8 @@ let state: AppState = {
   dmSeen: loadDmSeen(),
   online: [],
   presence: {},
+  drafts: {},
+  streamKeys: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -609,6 +615,14 @@ function onMessage(msg: ServerMessage): void {
       break;
     case 'turn':
       break;
+    case 'draft':
+      set((s) => {
+        const drafts = { ...s.drafts };
+        if (msg.text) drafts[msg.sessionId] = { key: drafts[msg.sessionId]?.key ?? `draft:${msg.sessionId}:${++draftCount}`, text: msg.text };
+        else delete drafts[msg.sessionId];
+        return { drafts };
+      });
+      break;
     case 'presence':
       set((s) => ({ presence: { ...s.presence, [msg.threadId]: { viewing: msg.viewing, typing: msg.typing } } }));
       break;
@@ -635,8 +649,17 @@ function onMessage(msg: ServerMessage): void {
       const e = msg.event;
       set((s) => {
         const d = s.details[e.threadId];
-        if (!d || d.events.some((x) => x.id === e.id)) return {};
-        const patch: Partial<AppState> = { details: { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } } };
+        const patch: Partial<AppState> = {};
+        // The finished message (or the end of the turn) replaces the draft, in the same render.
+        const draft = s.drafts[e.sessionId];
+        if (draft && ((e.type === 'message' && e.role === 'assistant') || e.type === 'turn_done')) {
+          const drafts = { ...s.drafts };
+          delete drafts[e.sessionId];
+          patch.drafts = drafts;
+          if (e.type === 'message') patch.streamKeys = { ...s.streamKeys, [e.id]: draft.key };
+        }
+        if (!d || d.events.some((x) => x.id === e.id)) return patch;
+        patch.details = { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } };
         // A new preview becomes the selected one, and opens the pane.
         if (e.type === 'preview') {
           patch.preview = { ...s.preview, [e.threadId]: e.previewId };
@@ -657,6 +680,8 @@ function onMessage(msg: ServerMessage): void {
 }
 
 let ws: WebSocket | null = null;
+/** Numbers draft keys: each streamed message gets its own. */
+let draftCount = 0;
 /** Socket messages that arrived before the snapshot they must be applied on top of. */
 let pending: ServerMessage[] | null = null;
 
@@ -733,7 +758,8 @@ export async function connect(): Promise<void> {
     const current = state.view.name === 'thread' ? state.view.threadId : undefined;
     const currentDm = state.view.name === 'dm' ? state.view.dmId : undefined;
     // DM messages reload when opened again: what came while offline is not lost.
-    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {} }));
+    // Drafts too: a turn may have ended while offline. One still being written comes back with its next piece.
+    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {}, drafts: {} }));
     await refreshState();
     // Docs: the sidebar counts new drafts.
     void loadDocs().catch(() => undefined);
