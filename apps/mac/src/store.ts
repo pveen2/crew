@@ -20,9 +20,13 @@ import type {
   StateResponse,
   Thread,
   ThreadDetailResponse,
+  ThreadShare,
+  ClientMessage,
+  Person,
   Turn,
   ServerLogin,
 } from '@crew/protocol';
+import { namePeople } from '@crew/protocol';
 
 /** An update the sidebar offers. */
 export interface UpdateInfo {
@@ -140,6 +144,20 @@ export interface AppState {
   /** Example questions on the New thread screen, from the team. */
   suggestions: string[];
   activity: AgentActivity[];
+  /** Threads can get a read-only share link (a team server). */
+  sharing: boolean;
+  /** Each loaded thread's share link; null when it is not shared. */
+  shares: Record<string, ThreadShare | null>;
+  /** Team server: who is signed in (null on a Mac: one person, no Mine/All). */
+  me: string | null;
+  /** Team server: everyone who has signed in. */
+  people: Person[];
+  /** Threads and Inbox: only mine, or the whole team's. */
+  scope: Scope;
+  /** DMs: when each was last looked at on this device. */
+  dmSeen: Record<string, number>;
+  /** Team server: who has each thread open right now, and who is typing in it. */
+  presence: Record<string, { viewing: string[]; typing: string[] }>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -261,6 +279,53 @@ function loadRead(): Record<string, true> {
   }
 }
 
+const DM_SEEN_KEY = 'crew.dm.seen';
+function loadDmSeen(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(DM_SEEN_KEY) ?? '{}') as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+export type Scope = 'mine' | 'all';
+const SCOPE_KEY = 'crew.scope';
+function loadScope(): Scope {
+  try {
+    return localStorage.getItem(SCOPE_KEY) === 'all' ? 'all' : 'mine';
+  } catch {
+    return 'mine';
+  }
+}
+
+/** Threads and Inbox: show only mine, or the whole team's. Remembered on this device. */
+export function setScope(scope: Scope): void {
+  set({ scope });
+  try {
+    localStorage.setItem(SCOPE_KEY, scope);
+  } catch {
+    /* storage unavailable: the choice lasts for this session */
+  }
+}
+
+/** Mine: I started it, wrote in it or was tagged. Without people (a Mac) everything is mine. */
+export function isMine(thread: Thread | undefined, me: string | null): boolean {
+  if (!me || !thread) return true;
+  return thread.createdBy === me || Boolean(thread.people?.includes(me));
+}
+
+/** Whether a thread shows under the current scope. */
+export function inScope(thread: Thread | undefined, s: Pick<AppState, 'me' | 'scope'>): boolean {
+  return s.scope === 'all' || isMine(thread, s.me);
+}
+
+/** "juliette@…" → "Juliette" ("Paul Veen" when there are two Pauls), as the conductor names people. */
+export function personName(email: string, people: Person[] = state.people): string {
+  const known = people.find((p) => p.email === email);
+  if (known) return known.name;
+  return namePeople([...people.map((p) => p.email), email]).get(email.toLowerCase()) ?? email;
+}
+
 const SIDEBAR_KEY = 'crew.sidebar.collapsed';
 const SHOW_SPEND_KEY = 'crew.settings.showSpend';
 const SIDEBAR_THEME_KEY = 'crew.settings.sidebarTheme';
@@ -338,6 +403,13 @@ let state: AppState = {
   teamFonts: [],
   suggestions: [],
   activity: [],
+  sharing: false,
+  shares: {},
+  me: null,
+  people: [],
+  scope: loadScope(),
+  dmSeen: loadDmSeen(),
+  presence: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -427,6 +499,9 @@ async function refreshState(): Promise<void> {
     teamFonts: s.team.fonts ?? [],
     suggestions: s.team.suggestions,
     activity: s.activity,
+    sharing: Boolean(s.sharing),
+    me: s.me ?? null,
+    people: s.people ?? [],
   });
 }
 
@@ -469,6 +544,9 @@ function onMessage(msg: ServerMessage): void {
       scheduleStateRefresh();
       break;
     case 'turn':
+      break;
+    case 'presence':
+      set((s) => ({ presence: { ...s.presence, [msg.threadId]: { viewing: msg.viewing, typing: msg.typing } } }));
       break;
     case 'doc':
       // While a Docs snapshot is loading, keep updates to replay on top of it.
@@ -618,6 +696,7 @@ export async function loadThread(threadId: string): Promise<void> {
     const { [threadId]: _gone, ...loadErrors } = s.loadErrors;
     return {
       loadErrors,
+      ...(d.share !== undefined ? { shares: { ...s.shares, [threadId]: d.share } } : {}),
       details: {
         ...details,
         [threadId]: {
@@ -641,6 +720,7 @@ window.addEventListener('hashchange', () => {
 
 export function navigate(view: View): void {
   set({ view, navOpen: false });
+  sendPresence();
   if (location.hash !== hashOf(view)) history.replaceState(null, '', hashOf(view));
   if (view.name === 'thread') {
     if (!state.details[view.threadId]) void loadThread(view.threadId);
@@ -907,8 +987,101 @@ export async function createThread(text: string, role?: string, files?: File[], 
 }
 
 /** `replyTo`: the Inbox question this answers; only that question is resolved. */
-export async function sendMessage(threadId: string, text: string, sessionId?: string, replyTo?: string, files?: File[]): Promise<void> {
-  await api('POST', `/api/threads/${threadId}/messages`, { text, sessionId, replyTo, attachments: await toUploads(files) });
+export async function sendMessage(
+  threadId: string,
+  text: string,
+  sessionId?: string,
+  replyTo?: string,
+  files?: File[],
+  people: { mentions?: string[]; toAgent?: boolean } = {},
+): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/messages`, { text, sessionId, replyTo, attachments: await toUploads(files), ...people });
+}
+
+/** Starts (or reopens) a direct message with these people, and opens it. */
+export async function createDm(withEmails: string[], text?: string): Promise<void> {
+  const thread = await api<Thread>('POST', '/api/dms', { with: withEmails, text });
+  set((s) => ({ threads: { ...s.threads, [thread.id]: thread } }));
+  navigate({ name: 'thread', threadId: thread.id });
+}
+
+/** A DM's name for whoever looks at it: the other people in it. */
+export function dmTitle(thread: Thread, me: string | null = state.me, people: Person[] = state.people): string {
+  const others = (thread.people ?? []).filter((p) => p !== me);
+  return others.length ? others.map((e) => personName(e, people)).join(', ') : thread.title;
+}
+
+/** A DM was looked at: its unread dot goes. */
+export function markDmSeen(threadId: string): void {
+  const at = Math.max(Date.now(), state.threads[threadId]?.updatedAt ?? 0);
+  if ((state.dmSeen[threadId] ?? 0) >= at) return;
+  const dmSeen = { ...state.dmSeen, [threadId]: at };
+  set({ dmSeen });
+  try {
+    localStorage.setItem(DM_SEEN_KEY, JSON.stringify(dmSeen));
+  } catch {
+    /* storage unavailable: unread lasts for this session */
+  }
+}
+
+/** Tells the conductor which thread I have open (none while the app is in the background). Team server only. */
+function sendPresence(typing = false): void {
+  if (!state.me || !ws || ws.readyState !== WebSocket.OPEN) return;
+  const threadId = state.view.name === 'thread' && document.visibilityState === 'visible' ? state.view.threadId : null;
+  ws.send(JSON.stringify({ kind: 'presence', threadId, ...(typing ? { typing: true } : {}) } satisfies ClientMessage));
+}
+if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => sendPresence());
+
+let lastTyping = 0;
+/** I am typing in the open thread: said at most every 2 seconds; it stops on its own. */
+export function sendTyping(): void {
+  if (Date.now() - lastTyping < 2000) return;
+  lastTyping = Date.now();
+  sendPresence(true);
+}
+
+/** Go ahead: the agent stops waiting for the people it held off for. */
+export async function releaseThread(threadId: string): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/release`);
+}
+
+/**
+ * The people (by email) a message tags: "@Juliette" for each colleague, not yourself.
+ * Longest names first, and each "@…" counts once: "@Paul Veen" is Paul Veen, never
+ * also a "Paul". A name that two people share tags nobody.
+ */
+export function mentionedPeople(text: string, people: Person[] = state.people, me: string | null = state.me): string[] {
+  const out: string[] = [];
+  const byName = new Map<string, Person[]>();
+  for (const p of people) {
+    if (p.email === me) continue;
+    const key = p.name.toLowerCase();
+    byName.set(key, [...(byName.get(key) ?? []), p]);
+  }
+  let rest = text;
+  for (const name of [...byName.keys()].sort((a, b) => b.length - a.length)) {
+    const re = new RegExp(`(^|[^\\w@])@${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'gi');
+    if (!re.test(rest)) continue;
+    const who = byName.get(name)!;
+    if (who.length === 1) out.push(who[0]!.email);
+    // Used up, so a shorter name cannot match inside it.
+    rest = rest.replace(re, '$1');
+  }
+  return out;
+}
+
+/** The colleague a message starts with ("@Paul Veen, …"), if any. */
+export function leadingPerson(text: string, people: Person[] = state.people, me: string | null = state.me): Person | undefined {
+  const lower = text.toLowerCase();
+  return people
+    .filter((p) => p.email !== me)
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((p) => lower.startsWith('@' + p.name.toLowerCase()) && !/[\w]/.test(lower.charAt(p.name.length + 1)));
+}
+
+/** Whether an Inbox item is for whoever is signed in: tags are only for the person tagged. */
+export function forMe(item: InboxItem, me: string | null = state.me): boolean {
+  return item.kind !== 'mention' || !me || item.for === me;
 }
 
 /** Change a queued message before the agent has it. */
@@ -952,6 +1125,19 @@ export async function resumeSession(sessionId: string): Promise<void> {
 
 export async function stopSession(sessionId: string): Promise<void> {
   await api('POST', `/api/sessions/${sessionId}/stop`);
+}
+
+/** Shares the thread read-only, or updates the link's snapshot to the thread as it is now. */
+export async function shareThread(threadId: string): Promise<ThreadShare> {
+  const { share } = await api<{ share: ThreadShare }>('POST', `/api/threads/${threadId}/share`);
+  set((s) => ({ shares: { ...s.shares, [threadId]: share } }));
+  return share;
+}
+
+/** Stops sharing: the link stops working. */
+export async function unshareThread(threadId: string): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/unshare`);
+  set((s) => ({ shares: { ...s.shares, [threadId]: null } }));
 }
 
 /** Rename a thread; the new title arrives with the thread update. */

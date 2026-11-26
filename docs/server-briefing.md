@@ -85,6 +85,19 @@ something here can't be done, stop and ask instead of loosening it.
 - Policies: *Allow* on the email list/domain **and** *Require* an identity
   provider with MFA (Google Workspace or the org's IdP, with 2-step verification
   enforced). Don't use one-time PIN alone. Optionally *Require* country.
+- Share links: make a **separate Access application** for exactly
+  `<app hostname>/s/*`, with one policy: action **Bypass**, include Everyone.
+  Do **not** add a Bypass policy to the main app: a policy applies to its whole
+  application, so that would switch off the login for the entire hostname.
+  `/s/*` is where a thread's read-only share link lives (`/s/<token>`, the
+  page's code under `/s/assets/`); the conductor serves only the shared snapshot
+  there, and only for a token someone created. Without this application share
+  links still work, but only for people who can sign in.
+- Bypass skips Cloudflare's HTTPS handling, and the token is in the link: turn
+  on **Always Use HTTPS** and **HSTS** for the zone (SSL/TLS → Edge
+  Certificates), and set `CREW_PUBLIC_URL=https://<app hostname>` in
+  `.env.local`: links are only built on that address, and without it the app
+  offers no Share button.
 - Session duration: app 24h, SSH 8h. Turn on "Binding cookie" for the app.
 - If the team uses WARP: add a device-posture requirement (WARP connected,
   disk encryption on) to both apps.

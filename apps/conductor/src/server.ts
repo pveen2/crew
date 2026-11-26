@@ -5,7 +5,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
+import type { ClientMessage, CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
 import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 import { accessEmail, accessEnabled } from './access.ts';
@@ -40,6 +40,52 @@ function send(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** The thread a socket message is about, if any. */
+function threadOf(msg: ServerMessage): string | null {
+  switch (msg.kind) {
+    case 'event':
+      return msg.event.threadId;
+    case 'thread':
+      return msg.thread.id;
+    case 'session':
+      return msg.session.threadId;
+    case 'turn':
+      return msg.turn.threadId;
+    case 'inbox':
+      return msg.item.threadId;
+    case 'doc':
+      return msg.doc.threadId;
+    case 'presence':
+      return msg.threadId;
+    default:
+      return null;
+  }
+}
+
+/** A share token: 32 random bytes, base64url. */
+const SHARE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * CREW_PUBLIC_URL: the server's public address (https://crew.example.com), for share
+ * links. Only https; a path or anything after the host is dropped.
+ */
+const PUBLIC_ORIGIN = (() => {
+  const raw = process.env.CREW_PUBLIC_URL?.trim();
+  if (!raw) return null;
+  const url = new URL(raw);
+  if (url.protocol !== 'https:') throw new Error('CREW_PUBLIC_URL must start with https://');
+  return url.origin;
+})();
+
+/**
+ * The public link for a share token, always on CREW_PUBLIC_URL: never on a Host or
+ * X-Forwarded-Host header, which the caller controls. Without it, no share links.
+ */
+function shareUrl(token: string): string {
+  if (!PUBLIC_ORIGIN) throw new Error('Share links need CREW_PUBLIC_URL (the app’s https address) in the server’s .env.local.');
+  return `${PUBLIC_ORIGIN}/s/${token}`;
+}
+
 function corsHeaders(res: ServerResponse): void {
   // The app renderer may be served from the Vite dev server in development.
   res.setHeader('access-control-allow-origin', '*');
@@ -48,6 +94,13 @@ function corsHeaders(res: ServerResponse): void {
 }
 
 export function startServer(runtime: Runtime, opts: { port: number; token: string }) {
+  // Threads from before people were recorded were the first admin's: Crew had one person then.
+  const firstAdmin = [...admins][0];
+  if (accessEnabled && firstAdmin) {
+    const claimed = runtime.claimUnownedThreads(firstAdmin);
+    if (claimed) console.log(`[people] ${claimed} earlier thread(s) now belong to ${firstAdmin}`);
+  }
+
   const server = createServer(async (req, res) => {
     corsHeaders(res);
     if (req.method === 'OPTIONS') {
@@ -101,6 +154,43 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         return send(res, 404, { error: 'Not found' });
       }
 
+      // Share links (/s/<token>) are public: anyone with the link sees a read-only
+      // snapshot of one thread, without signing in. Cloudflare Access bypasses /s/*.
+      // /s/assets/* is the app's code (the share page is the same app); no data.
+      if (accessEnabled && req.method === 'GET' && parts[0] === 's') {
+        res.setHeader('x-robots-tag', 'noindex, nofollow');
+        res.setHeader('referrer-policy', 'no-referrer');
+        if (parts[1] === 'assets' && parts.length === 3) {
+          if (await serveWeb(`/assets/${parts[2]}`, res, { fallback: false })) return;
+          return send(res, 404, { error: 'Not found' });
+        }
+        const token = parts[1] ?? '';
+        if (!SHARE_TOKEN.test(token)) return send(res, 404, { error: 'Not found' });
+        // /s/<token>/ would load the page's code from /s/<token>/assets: send it to /s/<token>.
+        if (parts.length === 2 && url.pathname.endsWith('/')) {
+          res.writeHead(301, { location: `/s/${token}`, 'cache-control': 'no-store' });
+          res.end();
+          return;
+        }
+        if (parts.length === 2) {
+          if (await serveWeb('/index.html', res, { fallback: false })) return;
+          return send(res, 404, { error: 'Not found' });
+        }
+        if (parts.length === 3 && parts[2] === 'data') {
+          const shared = runtime.sharedSnapshot(token);
+          res.setHeader('cache-control', 'no-store');
+          return shared ? send(res, 200, shared) : send(res, 404, { error: 'This link does not work any more.' });
+        }
+        if (parts.length === 4 && parts[2] === 'files') {
+          const file = runtime.sharedFile(token, parts[3]!);
+          if (!file) return send(res, 404, { error: 'Not found' });
+          res.writeHead(200, { 'content-type': file.mime, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+          res.end(file.data);
+          return;
+        }
+        return send(res, 404, { error: 'Not found' });
+      }
+
       // HTTP takes the token only as a header; the ?token= form is for the WebSocket alone.
       // Behind Cloudflare Access the person's Access login is what counts; the app
       // token is only needed without it (a conductor on a Mac).
@@ -108,6 +198,8 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       if (accessEnabled) {
         email = await accessEmail(req);
         if (!email) return send(res, 401, { error: 'Sign in through Cloudflare Access' });
+        email = email.toLowerCase();
+        runtime.touchPerson(email);
       } else {
         const auth = String(req.headers.authorization ?? '').replace(/^Bearer /, '');
         if (!sameToken(auth, opts.token)) return send(res, 401, { error: 'Unauthorized' });
@@ -120,7 +212,7 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       }
       const [, a, id, action] = parts;
 
-      if (req.method === 'GET' && a === 'state') return send(res, 200, await runtime.state());
+      if (req.method === 'GET' && a === 'state') return send(res, 200, { ...(await runtime.stateFor(email)), sharing: accessEnabled && Boolean(PUBLIC_ORIGIN), me: email, people: accessEnabled ? runtime.people() : [] });
       if (req.method === 'GET' && (a === 'agents' || a === 'roles')) return send(res, 200, await runtime.roles());
       if (req.method === 'GET' && a === 'spend') {
         const days = Math.min(366, Math.max(1, Math.round(Number(url.searchParams.get('days') ?? 30)) || 30));
@@ -157,20 +249,62 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         }
       }
 
+      // A direct message (team server): POST /api/dms { with: [emails], text? }
+      if (a === 'dms' && !id && req.method === 'POST') {
+        if (!accessEnabled || !email) return send(res, 404, { error: 'Direct messages need a team server.' });
+        const body = await readJson<{ with?: unknown; text?: unknown }>(req);
+        const others = Array.isArray(body.with) ? body.with.map(String) : [];
+        return send(res, 200, await runtime.createDm(email, others, typeof body.text === 'string' ? body.text : undefined));
+      }
+
+      // A DM is only for the people in it: to anyone else it, and everything in it, does not exist.
+      if (id && email) {
+        const kinds = { messages: 'message', sessions: 'session', inbox: 'inbox', docs: 'doc' } as const;
+        const kind = kinds[a as keyof typeof kinds];
+        const threadId = a === 'threads' || a === 'attachments' ? id : kind ? runtime.threadOf(kind, id) : undefined;
+        if (threadId && !runtime.canSee(threadId, email)) return send(res, 404, { error: 'Not found' });
+      }
+
       if (a === 'threads') {
         if (req.method === 'POST' && !id) {
           const body = await readJson<CreateThreadRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : []));
+          return send(res, 200, await runtime.createThread(body.text, body.role, body.attachments, Array.isArray(body.benched) ? body.benched.map(String) : [], email));
         }
         if (req.method === 'GET' && id && !action) {
           const detail = runtime.threadDetail(id);
-          return detail ? send(res, 200, detail) : send(res, 404, { error: 'No such thread' });
+          if (!detail) return send(res, 404, { error: 'No such thread' });
+          const share = accessEnabled ? runtime.shareOf(id) : undefined;
+          return send(res, 200, { ...detail, share: share && PUBLIC_ORIGIN ? { url: shareUrl(share.token), sharedAt: share.sharedAt } : null });
+        }
+        // Share links, on a team server only: share (or update the snapshot), and stop sharing.
+        if (req.method === 'POST' && id && (action === 'share' || action === 'unshare')) {
+          if (!accessEnabled) return send(res, 404, { error: 'Share links need a team server.' });
+          if (runtime.threadDetail(id)?.thread.dm) return send(res, 400, { error: 'Direct messages cannot be shared.' });
+          if (!runtime.threadDetail(id)) return send(res, 404, { error: 'No such thread' });
+          if (action === 'unshare') {
+            runtime.unshareThread(id);
+            return send(res, 200, { share: null });
+          }
+          if (!PUBLIC_ORIGIN) return send(res, 400, { error: 'Share links need CREW_PUBLIC_URL (the app’s https address) in the server’s .env.local.' });
+          const share = await runtime.shareThread(id, email);
+          return send(res, 200, { share: { url: shareUrl(share.token), sharedAt: share.sharedAt } });
         }
         if (req.method === 'POST' && id && action === 'messages') {
           const body = await readJson<SendMessageRequest>(req);
           if (!body.text?.trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
-          return send(res, 200, runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments));
+          return send(
+            res,
+            200,
+            runtime.sendMessage(id, body.text, body.sessionId, body.replyTo, body.attachments, email, {
+              mentions: accessEnabled && Array.isArray(body.mentions) ? body.mentions.map(String) : [],
+              toAgent: body.toAgent === true,
+            }),
+          );
+        }
+        // Go ahead: the agent stops waiting for the people it held off for.
+        if (req.method === 'POST' && id && action === 'release') {
+          return send(res, 200, runtime.releaseHeld(id, email));
         }
         if (req.method === 'POST' && id && action === 'resume') {
           runtime.resumeThread(id);
@@ -201,10 +335,10 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
 
       // Docs (the Docs tab): GET /api/docs, GET /api/docs/<id>, POST /api/docs/<id>/status, POST /api/docs/<id>/archive
       if (a === 'docs') {
-        if (req.method === 'GET' && !id) return send(res, 200, runtime.docs());
+        if (req.method === 'GET' && !id) return send(res, 200, runtime.docs().filter((d) => runtime.canSee(d.threadId, email)));
         if (req.method === 'GET' && id && !action) {
           const doc = runtime.doc(id);
-          return doc ? send(res, 200, doc) : send(res, 404, { error: 'No such doc' });
+          return doc && runtime.canSee(doc.threadId, email) ? send(res, 200, doc) : send(res, 404, { error: 'No such doc' });
         }
         if (req.method === 'POST' && id && action === 'status') {
           const body = await readJson<unknown>(req);
@@ -280,30 +414,87 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
   server.keepAliveTimeout = 5_000;
 
   const wss = new WebSocketServer({ noServer: true });
-  const clients = new Set<WebSocket>();
+  /** Each connection and who it is (null without Access: one person). */
+  const clients = new Map<WebSocket, string | null>();
 
   server.on('upgrade', async (req, socket, head) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
-    if (
-      url.pathname !== '/ws' ||
-      (accessEnabled ? !(await accessEmail(req)) : !sameToken(url.searchParams.get('token') ?? '', opts.token))
-    ) {
+    const who = accessEnabled ? ((await accessEmail(req))?.toLowerCase() ?? null) : null;
+    if (url.pathname !== '/ws' || (accessEnabled ? !who : !sameToken(url.searchParams.get('token') ?? '', opts.token))) {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      clients.add(ws);
+      clients.set(ws, who);
+      ws.on('message', (data) => {
+        if (!who) return;
+        let msg: ClientMessage;
+        try {
+          msg = JSON.parse(String(data)) as ClientMessage;
+        } catch {
+          return;
+        }
+        if (msg?.kind !== 'presence') return;
+        const threadId = typeof msg.threadId === 'string' && runtime.canSee(msg.threadId, who) ? msg.threadId : null;
+        const before = presence.get(ws)?.threadId ?? null;
+        presence.set(ws, { threadId, typingUntil: threadId && msg.typing ? Date.now() + TYPING_MS : 0 });
+        if (before && before !== threadId) sendPresence(before);
+        if (threadId) sendPresence(threadId);
+      });
       ws.send(JSON.stringify({ kind: 'hello', version: 1 } satisfies ServerMessage));
-      ws.on('close', () => clients.delete(ws));
-      ws.on('error', () => clients.delete(ws));
+      const gone = () => {
+        clients.delete(ws);
+        const was = presence.get(ws)?.threadId;
+        presence.delete(ws);
+        if (was) sendPresence(was);
+      };
+      ws.on('close', gone);
+      ws.on('error', gone);
     });
   });
 
-  runtime.subscribe((msg) => {
+  // Presence (team server): which thread each connection has open, and whether its person is typing.
+  const TYPING_MS = 5000;
+  const presence = new Map<WebSocket, { threadId: string | null; typingUntil: number }>();
+  const sendPresence = (threadId: string) => {
+    const now = Date.now();
+    const viewing = new Set<string>();
+    const typing = new Set<string>();
+    for (const [ws, p] of presence) {
+      const who = clients.get(ws);
+      if (!who || p.threadId !== threadId) continue;
+      viewing.add(who);
+      if (p.typingUntil > now) typing.add(who);
+    }
+    broadcast({ kind: 'presence', threadId, viewing: [...viewing], typing: [...typing] });
+  };
+  // Typing stops on its own when the app stops saying so.
+  const typingTimer = setInterval(() => {
+    const now = Date.now();
+    const ended = new Set<string>();
+    for (const p of presence.values()) {
+      if (p.typingUntil && p.typingUntil <= now) {
+        p.typingUntil = 0;
+        if (p.threadId) ended.add(p.threadId);
+      }
+    }
+    for (const t of ended) sendPresence(t);
+  }, 1000);
+  typingTimer.unref();
+
+  const broadcast = (msg: ServerMessage) => {
     const data = JSON.stringify(msg);
-    for (const ws of clients) if (ws.readyState === ws.OPEN) ws.send(data);
-  });
+    const threadId = threadOf(msg);
+    for (const [ws, who] of clients) {
+      if (ws.readyState !== ws.OPEN) continue;
+      // DMs go only to the people in them.
+      if (threadId && who && !runtime.canSee(threadId, who)) continue;
+      ws.send(data);
+    }
+  };
+
+  runtime.subscribe(broadcast);
 
   return new Promise<typeof server>((resolve, reject) => {
     server.once('error', reject);

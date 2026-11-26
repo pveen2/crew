@@ -30,6 +30,24 @@ export interface Thread {
   benched: string[];
   /** What every turn in the thread used so far, all agents together. */
   usage: Usage;
+  /** Team server: who started the thread (their sign-in email). Null on a Mac, and for threads from before. */
+  createdBy?: string | null;
+  /** Team server: everyone in the thread (started it, wrote in it, or was tagged), by email. */
+  people?: string[];
+  /**
+   * A direct message between people: only they see it. No agent reads it until
+   * someone calls one with @; from then on it is a thread with that agent.
+   */
+  dm?: boolean;
+  /** DMs: the last message, as "Juliette: see you at 3". */
+  lastMessage?: string;
+}
+
+/** Someone on the team server, known from their sign-in. */
+export interface Person {
+  email: string;
+  /** From the email: "juliette@…" is Juliette. */
+  name: string;
 }
 
 /**
@@ -118,13 +136,17 @@ export type CrewEventBody =
       role: 'user' | 'assistant';
       text: string;
       from?: string;
+      /** Team server: who sent it (their sign-in email). */
+      by?: string;
+      /** Team server: the people it tags (@Juliette), by email. */
+      mentions?: string[];
       attachments?: Attachment[];
       /**
        * An owner message sent while the agent was working. 'steer': written into
        * the running turn (event turnId), read at the agent's next step. 'queue':
        * waits for the turn with this event's turnId to start.
        */
-      delivery?: 'steer' | 'queue';
+      delivery?: 'steer' | 'queue' | 'held';
       /** Owner message: the Inbox question (needs_you inboxId) it answers. */
       replyTo?: string;
     }
@@ -133,7 +155,7 @@ export type CrewEventBody =
    * and read), requeued (missed the turn, waits for nextTurnId), edited (new
    * text, before the agent had it) or removed (taken back by the owner).
    */
-  | { type: 'message_delivery'; messageId: number; state: 'read' | 'requeued' | 'edited' | 'removed'; nextTurnId?: string; text?: string }
+  | { type: 'message_delivery'; messageId: number; state: 'read' | 'requeued' | 'edited' | 'removed' | 'released' | 'rehold'; nextTurnId?: string; text?: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_call'; callId: string; name: string; input: unknown }
   | { type: 'tool_result'; callId: string; output: string; isError: boolean }
@@ -178,7 +200,7 @@ export type CrewEventType = CrewEventBody['type'];
 // ---------------------------------------------------------------------------
 // Inbox: things that need the owner.
 
-export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft' | 'pull_request';
+export type InboxKind = 'needs_you' | 'approval' | 'interrupted' | 'error' | 'draft' | 'pull_request' | 'mention';
 
 /** A clickable answer to an ask_owner question. */
 export interface QuestionOption {
@@ -210,6 +232,10 @@ export interface InboxItem {
   askEveryTime?: boolean;
   status: 'open' | 'resolved';
   createdAt: number;
+  /** mention: the person it is for (their email). Only they see it. */
+  for?: string;
+  /** mention: who tagged them. */
+  by?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -249,6 +275,12 @@ export interface StateResponse {
   inbox: InboxItem[];
   roles: RoleSummary[];
   activity: AgentActivity[];
+  /** Threads can get a read-only share link (a team server behind Cloudflare Access). */
+  sharing?: boolean;
+  /** Team server: who is signed in. Null or missing on a Mac (one person). */
+  me?: string | null;
+  /** Team server: everyone who has signed in, for names and faces. */
+  people?: Person[];
 }
 
 /** One day of work, in the owner's time zone. Cost is at API prices (see Usage). */
@@ -289,6 +321,43 @@ export interface ThreadDetailResponse {
   sessions: Session[];
   turns: Turn[];
   events: CrewEvent[];
+  /** The thread's read-only share link, when it has one (team server only). */
+  share?: ThreadShare | null;
+}
+
+// ---------------------------------------------------------------------------
+// Share links: a read-only snapshot of a thread that anyone with the link can
+// open, without signing in. Only on a team server (behind Cloudflare Access).
+
+export interface ThreadShare {
+  /** The public link, e.g. https://crew.example.com/s/<token>. */
+  url: string;
+  /** When the snapshot was taken (shared or last updated). */
+  sharedAt: number;
+}
+
+export type SharedItem =
+  | {
+      kind: 'message';
+      from: 'person' | 'agent';
+      /** Agent messages: which agent wrote it. */
+      agent?: string;
+      /** A person's message on a team server: their first name (not their email). */
+      name?: string;
+      text: string;
+      attachments?: Attachment[];
+      ts: number;
+    }
+  /** A Markdown draft the agent showed. HTML and concept boards carry no content. */
+  | { kind: 'doc'; agent: string; title: string; format: DocFormat; content?: string; ts: number };
+
+/** What a share link shows: the conversation with the lead, without tool calls or internals. */
+export interface SharedThread {
+  team: string;
+  title: string;
+  createdAt: number;
+  sharedAt: number;
+  items: SharedItem[];
 }
 
 export interface CreateThreadRequest {
@@ -308,6 +377,10 @@ export interface SendMessageRequest {
   sessionId?: string;
   /** The Inbox question this message answers. Only that item is resolved. */
   replyTo?: string;
+  /** Team server: the people the message tags (@Juliette), by email. */
+  mentions?: string[];
+  /** The person also called on an agent (@GM): the agent answers even though people are tagged. */
+  toAgent?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +393,14 @@ export type ServerMessage =
   | { kind: 'session'; session: Session }
   | { kind: 'turn'; turn: Turn }
   | { kind: 'inbox'; item: InboxItem }
-  | { kind: 'doc'; doc: DocSummary };
+  | { kind: 'doc'; doc: DocSummary }
+  /** Team server: who has a thread open right now, and who is typing in it (emails). */
+  | { kind: 'presence'; threadId: string; viewing: string[]; typing: string[] };
+
+/** From the app to the conductor over the socket (team server). */
+export type ClientMessage =
+  /** The thread I have open (null: none, or the app is in the background); typing: I am typing in it. */
+  { kind: 'presence'; threadId: string | null; typing?: boolean };
 
 // ---------------------------------------------------------------------------
 // Where the conductor advertises itself on this machine.
@@ -523,4 +603,35 @@ export function parseConceptBoard(json: string): ConceptBoard {
     };
   });
   return { intro: str(b.intro, 'intro'), aspect: aspect as ConceptBoard['aspect'], concepts };
+}
+
+// ---------------------------------------------------------------------------
+// People's names, from their sign-in emails.
+
+function capital(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/**
+ * Names for everyone on a team server. "juliette@…" is Juliette. When two people
+ * share a first name both get their last name too ("paul.veen@…" is Paul Veen);
+ * when that is not enough (or there is none), their email's domain.
+ */
+export function namePeople(emails: Iterable<string>): Map<string, string> {
+  const list = [...new Set([...emails].map((e) => e.toLowerCase()))];
+  const parts = (email: string) => (email.split('@')[0] ?? email).split(/[._+-]+/).filter(Boolean);
+  const first = (email: string) => capital(parts(email)[0] ?? email);
+  const full = (email: string) => parts(email).map(capital).join(' ') || email;
+  const count = (names: string[], n: string) => names.filter((x) => x === n).length;
+  const firsts = list.map(first);
+  const out = new Map<string, string>();
+  list.forEach((email, i) => {
+    out.set(email, count(firsts, firsts[i]!) > 1 ? full(email) : firsts[i]!);
+  });
+  // Still the same (paul@a.com and paul@b.com): add the domain.
+  const names = list.map((e) => out.get(e)!);
+  list.forEach((email, i) => {
+    if (count(names, names[i]!) > 1) out.set(email, `${names[i]} (${email.split('@')[1] ?? email})`);
+  });
+  return out;
 }

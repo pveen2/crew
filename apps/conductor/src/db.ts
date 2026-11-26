@@ -125,6 +125,29 @@ CREATE TABLE IF NOT EXISTS verdicts (
   note TEXT,
   ts INTEGER NOT NULL
 );
+
+-- Team server: who is in which thread (started it, wrote in it, was tagged),
+-- and everyone who has signed in.
+CREATE TABLE IF NOT EXISTS thread_people (
+  thread_id TEXT NOT NULL REFERENCES threads(id),
+  email TEXT NOT NULL,
+  PRIMARY KEY (thread_id, email)
+);
+CREATE TABLE IF NOT EXISTS people (
+  email TEXT PRIMARY KEY,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL
+);
+
+-- Read-only share links (team server): one per thread, a snapshot taken when
+-- shared or updated. Stopping sharing deletes the row, so the link stops working.
+CREATE TABLE IF NOT EXISTS shares (
+  token TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL UNIQUE REFERENCES threads(id),
+  snapshot TEXT NOT NULL,
+  shared_at INTEGER NOT NULL,
+  shared_by TEXT
+);
 `;
 
 type Row = Record<string, SQLInputValue>;
@@ -139,6 +162,8 @@ function toThread(r: Row): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     updatedAt: Number(r.updated_at),
     archived: Boolean(r.archived),
     benched: parseList(r.benched),
+    createdBy: (r.created_by as string | null) ?? null,
+    ...(r.dm ? { dm: true } : {}),
   };
 }
 
@@ -222,6 +247,8 @@ function toInbox(r: Row): InboxItem {
     body: r.body as string,
     status: r.status as InboxItem['status'],
     createdAt: Number(r.created_at),
+    ...(r.for_email ? { for: r.for_email as string } : {}),
+    ...(r.by_email ? { by: r.by_email as string } : {}),
   };
 }
 
@@ -271,6 +298,10 @@ export class Store {
     "ALTER TABLE artifacts ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
     'ALTER TABLE artifacts ADD COLUMN approved_at INTEGER',
     'ALTER TABLE artifacts ADD COLUMN archived_at INTEGER',
+    'ALTER TABLE threads ADD COLUMN created_by TEXT',
+    'ALTER TABLE inbox ADD COLUMN for_email TEXT',
+    'ALTER TABLE threads ADD COLUMN dm INTEGER NOT NULL DEFAULT 0',
+    'ALTER TABLE inbox ADD COLUMN by_email TEXT',
     ]) {
       try {
         this.db.exec(sql);
@@ -393,13 +424,108 @@ export class Store {
     this.db.prepare(sql).run(...params);
   }
 
+  // Share links --------------------------------------------------------------
+
+  shareOfThread(threadId: string): { token: string; sharedAt: number } | undefined {
+    const r = this.get('SELECT token, shared_at FROM shares WHERE thread_id = ?', threadId);
+    return r && { token: r.token as string, sharedAt: Number(r.shared_at) };
+  }
+  /** The snapshot behind a link, or undefined when there is no such link (any more). */
+  shareByToken(token: string): { threadId: string; snapshot: string } | undefined {
+    const r = this.get('SELECT thread_id, snapshot FROM shares WHERE token = ?', token);
+    return r && { threadId: r.thread_id as string, snapshot: r.snapshot as string };
+  }
+  /** Creates the thread's link, or takes a new snapshot for the link it has (same token). */
+  saveShare(threadId: string, newToken: string, snapshot: string, sharedAt: number, sharedBy: string | null): string {
+    const token = this.shareOfThread(threadId)?.token ?? newToken;
+    this.run(
+      'INSERT INTO shares (token, thread_id, snapshot, shared_at, shared_by) VALUES (?,?,?,?,?) ON CONFLICT(thread_id) DO UPDATE SET snapshot = excluded.snapshot, shared_at = excluded.shared_at, shared_by = excluded.shared_by',
+      token, threadId, snapshot, sharedAt, sharedBy,
+    );
+    return token;
+  }
+  deleteShare(threadId: string): void {
+    this.run('DELETE FROM shares WHERE thread_id = ?', threadId);
+  }
+
+  // People (team server) -----------------------------------------------------
+
+  addThreadPerson(threadId: string, email: string): void {
+    this.run('INSERT OR IGNORE INTO thread_people (thread_id, email) VALUES (?, ?)', threadId, email.toLowerCase());
+  }
+  /** A DM's members; null for a thread everyone sees. */
+  dmMembers(threadId: string): string[] | null {
+    const r = this.get('SELECT dm FROM threads WHERE id = ?', threadId);
+    return r?.dm ? this.peopleOfThread(threadId) : null;
+  }
+  /** The DM between exactly these people, if there is one (closed ones too). */
+  dmBetween(emails: string[]): string | undefined {
+    const want = [...new Set(emails.map((e) => e.toLowerCase()))].sort().join(',');
+    const rows = this.all('SELECT id FROM threads WHERE dm = 1 ORDER BY archived, updated_at DESC');
+    return rows.map((r) => r.id as string).find((id) => [...this.peopleOfThread(id)].sort().join(',') === want);
+  }
+  /** The last message as people see it: edits applied, taken-back messages skipped. */
+  lastMessageOfThread(threadId: string): CrewEvent | undefined {
+    // Messages and their edits or removals are looked up apart: a big batch of
+    // other delivery events (Go ahead on many held messages) cannot crowd them out.
+    let before = Number.MAX_SAFE_INTEGER;
+    for (;;) {
+      const messages = this.all("SELECT * FROM events WHERE thread_id = ? AND type = 'message' AND id < ? ORDER BY id DESC LIMIT 50", threadId, before).map(toEvent);
+      if (!messages.length) return undefined;
+      const ids = messages.map((m) => m.id);
+      const changes = this.all(
+        `SELECT * FROM events WHERE thread_id = ? AND type = 'message_delivery'
+           AND json_extract(body, '$.messageId') IN (${ids.map(() => '?').join(',')})
+           AND json_extract(body, '$.state') IN ('removed', 'edited') ORDER BY id`,
+        threadId, ...ids,
+      ).map(toEvent);
+      const removed = new Set<number>();
+      const edited = new Map<number, string>();
+      for (const c of changes) {
+        if (c.type !== 'message_delivery') continue;
+        if (c.state === 'removed') removed.add(c.messageId);
+        if (c.state === 'edited' && c.text !== undefined) edited.set(c.messageId, c.text); // oldest first: the last wins
+      }
+      const hit = messages.find((m) => !removed.has(m.id));
+      if (hit) return edited.has(hit.id) ? ({ ...hit, text: edited.get(hit.id)! } as CrewEvent) : hit;
+      before = ids.at(-1)!;
+    }
+  }
+  peopleOfThread(threadId: string): string[] {
+    return this.all('SELECT email FROM thread_people WHERE thread_id = ? ORDER BY rowid', threadId).map((r) => r.email as string);
+  }
+  touchPerson(email: string, now = Date.now()): void {
+    this.run(
+      'INSERT INTO people (email, first_seen, last_seen) VALUES (?, ?, ?) ON CONFLICT(email) DO UPDATE SET last_seen = excluded.last_seen',
+      email.toLowerCase(), now, now,
+    );
+  }
+  /** Everyone who has signed in, most recently seen first. */
+  people(): string[] {
+    return this.all('SELECT email FROM people ORDER BY last_seen DESC').map((r) => r.email as string);
+  }
+  /**
+   * Threads from before people were recorded belong to whoever ran Crew then:
+   * the first admin. Returns how many were claimed.
+   */
+  claimUnownedThreads(email: string): number {
+    const ids = this.all('SELECT id FROM threads WHERE created_by IS NULL').map((r) => r.id as string);
+    if (!ids.length) return 0;
+    this.transaction(() => {
+      this.run('UPDATE threads SET created_by = ? WHERE created_by IS NULL', email.toLowerCase());
+      for (const id of ids) this.addThreadPerson(id, email);
+    });
+    return ids.length;
+  }
+
   // Threads ------------------------------------------------------------------
 
   insertThread(t: Omit<Thread, 'roles' | 'statusText' | 'usage'>): void {
     this.run(
-      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched) VALUES (?,?,?,?,?,?,?,?)',
-      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched),
+      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, created_by, dm) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.createdBy ?? null, t.dm ? 1 : 0,
     );
+    if (t.createdBy) this.addThreadPerson(t.id, t.createdBy);
   }
   thread(id: string): Omit<Thread, 'roles' | 'statusText' | 'usage'> | undefined {
     const r = this.get('SELECT * FROM threads WHERE id = ?', id);
@@ -598,15 +724,45 @@ export class Store {
 
   insertInbox(i: InboxItem): void {
     this.run(
-      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, url, choices, title, body, status, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO inbox (id, thread_id, session_id, kind, role, preview_id, url, choices, title, body, status, created_at, for_email, by_email) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
       i.id, i.threadId, i.sessionId, i.kind, i.role, i.previewId ?? null, i.url ?? null,
       i.options?.length
         ? JSON.stringify({ options: i.options, recommended: i.recommended, multiSelect: i.multiSelect })
         : i.askEveryTime
           ? JSON.stringify({ askEveryTime: true })
           : null,
-      i.title, i.body, i.status, i.createdAt,
+      i.title, i.body, i.status, i.createdAt, i.for ?? null, i.by ?? null,
     );
+  }
+  /** Open mentions of one person in one thread. */
+  openMentions(threadId: string, email: string): InboxItem[] {
+    return this.all("SELECT * FROM inbox WHERE thread_id = ? AND kind = 'mention' AND for_email = ? AND status = 'open'", threadId, email).map(toInbox);
+  }
+  /**
+   * Messages held for a session: people tagged each other, so the agent waits.
+   * Not yet released (by a reply, a message to the agent, or Go ahead) or taken back.
+   */
+  heldMessages(threadId: string, sessionId: string): CrewEvent[] {
+    const held = this.all(
+      `SELECT * FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message' AND json_extract(body, '$.delivery') = 'held' ORDER BY id`,
+      threadId, sessionId,
+    ).map(toEvent);
+    if (!held.length) return [];
+    // A held message is released (or taken back) by a later delivery event; 'rehold'
+    // puts it back when the message that carried it to the agent was taken back.
+    const last = new Map<number, string>();
+    for (const e of this.all("SELECT * FROM events WHERE thread_id = ? AND session_id = ? AND type = 'message_delivery' ORDER BY id", threadId, sessionId).map(toEvent)) {
+      if (e.type === 'message_delivery') last.set(e.messageId, e.state);
+    }
+    return held.filter((e) => {
+      const state = last.get(e.id);
+      return state === undefined || state === 'rehold';
+    });
+  }
+  /** The event a queued message is, to find its thread. */
+  event(id: number): CrewEvent | undefined {
+    const r = this.get('SELECT * FROM events WHERE id = ?', id);
+    return r && toEvent(r);
   }
   inboxItem(id: string): InboxItem | undefined {
     const r = this.get('SELECT * FROM inbox WHERE id = ?', id);
@@ -677,8 +833,14 @@ export class Store {
 
   // Memory -------------------------------------------------------------------
 
+  /** An agent's memory entries. Never ones saved in a DM: memory is shared with the whole team. */
   memories(agent: string, memory: string): MemoryRow[] {
-    return this.all('SELECT * FROM memories WHERE agent = ? AND memory = ? ORDER BY created_at', agent, memory).map((r) => ({
+    return this.all(
+      `SELECT * FROM memories WHERE agent = ? AND memory = ?
+         AND (thread_id IS NULL OR thread_id NOT IN (SELECT id FROM threads WHERE dm = 1))
+       ORDER BY created_at`,
+      agent, memory,
+    ).map((r) => ({
       id: r.id as string,
       agent: r.agent as string,
       memory: r.memory as string,

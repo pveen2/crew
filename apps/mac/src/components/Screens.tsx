@@ -16,10 +16,10 @@ import {
   Text,
   type MentionOption,
 } from '@crew/ui';
-import { createThread, navigate, takeNewDraft, useApp } from '../store';
+import { createThread, dmTitle, inScope, navigate, takeNewDraft, useApp } from '../store';
 import { AttachmentTray, useAttachments } from './attachments';
 import { isPhoneTouch } from '../swipe';
-import { RoleFace, RoleFaces, age, useNow } from './common';
+import { PersonFace, RoleFace, RoleFaces, ScopeToggle, age, useNow, usePersonName } from './common';
 
 export function NewThreadView({ initialRole }: { initialRole?: string }) {
   const roles = useApp((s) => s.roles);
@@ -169,36 +169,65 @@ export function NewThreadView({ initialRole }: { initialRole?: string }) {
 /** Open threads, or with `done` the closed ones. */
 export function ThreadsView({ done = false }: { done?: boolean }) {
   const threads = useApp((s) => (done ? s.done : s.threads));
+  const me = useApp((s) => s.me);
+  const scope = useApp((s) => s.scope);
+  const people = useApp((s) => s.people);
   const now = useNow(30_000);
-  const list = useMemo(() => Object.values(threads).sort((a, b) => b.updatedAt - a.updatedAt), [threads]);
+  const list = useMemo(
+    // Open DMs are under Messages; closed ones are here in Done, so they stay findable.
+    () => Object.values(threads).filter((t) => (done || !t.dm) && inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
+    [threads, me, scope],
+  );
+  const hidden = Object.values(threads).filter((t) => done || !t.dm).length - list.length;
   return (
     <Panel as="main" className="pane-main">
       <PanelHeader>
         <Text as="h1" variant="headingSm" className="list-title">
           {done ? 'Done' : 'Threads'}
         </Text>
+        <span className="cr-spacer" />
+        <ScopeToggle />
       </PanelHeader>
       <div className="pane-scroll">
         <BlockStack gap="025" className="threads-list">
           {list.length === 0 && (
             <Text tone="secondary" className="list-empty">
-              {done ? 'No closed threads yet.' : 'No threads yet. Start one with New thread.'}
+              {hidden > 0
+                ? `None of yours. ${hidden} from the team under All.`
+                : done
+                  ? 'No closed threads yet.'
+                  : 'No threads yet. Start one with New thread.'}
             </Text>
           )}
           {list.map((t) => (
             <ListItem
               key={t.id}
-              title={t.title}
+              title={t.dm ? `Message · ${dmTitle(t, me, people)}` : t.title}
               tooltip={t.title}
               unread={!done && (t.status === 'needs_you' || t.status === 'interrupted' || t.status === 'error')}
               onClick={() => navigate({ name: 'thread', threadId: t.id })}
               meta={age(t.updatedAt, now)}
-              subtitle={t.statusText}
-              trailing={<RoleFaces roles={t.roles} size="sm" />}
+              subtitle={<ThreadSubtitle text={t.statusText} createdBy={me && t.createdBy !== me ? t.createdBy : null} />}
+              trailing={
+                me && t.createdBy && t.createdBy !== me ? (
+                  <span className="list-trailing">
+                    <PersonFace email={t.createdBy} size={18} />
+                    <RoleFaces roles={t.roles} size="sm" />
+                  </span>
+                ) : (
+                  <RoleFaces roles={t.roles} size="sm" />
+                )
+              }
             />
           ))}
         </BlockStack>
       </div>
     </Panel>
   );
+}
+
+/** A thread's status, and whose thread it is when it is someone else's. */
+function ThreadSubtitle({ text, createdBy }: { text: string; createdBy?: string | null }) {
+  const name = usePersonName(createdBy);
+  return <>{name ? `${name} · ${text}` : text}</>;
 }

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { InboxItem } from '@crew/protocol';
 import { BlockStack, Button, Card, Disclosure, Icon, InlineStack, Panel, PanelHeader, Text, cx, type IconName } from '@crew/ui';
-import { ensureThreads, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
-import { Markdown, RoleFace, age, useNow, useRoleLabel } from './common';
+import { ensureThreads, forMe, inScope, markRead, mergePullRequest, navigate, openExternal, resolveInbox, resumeThread, useApp } from '../store';
+import { Markdown, PersonFace, RoleFace, ScopeToggle, age, useNow, usePersonName, useRoleLabel } from './common';
 import { ApprovalActions } from './ApprovalCard';
 import { QuestionAnswer } from './QuestionAnswer';
 
@@ -18,16 +18,26 @@ const KIND: Record<InboxItem['kind'], { label: string; icon: IconName; order: nu
   interrupted: { label: 'Interrupted', icon: 'alert', order: 1 },
   error: { label: 'Failed', icon: 'alert', order: 2 },
   pull_request: { label: 'Pull request', icon: 'checkCircle', order: 1 },
+  mention: { label: 'Tagged you', icon: 'chats', order: 0 },
   // From builds before Docs; cleared on the conductor's next start.
   draft: { label: 'Draft', icon: 'document', order: 3 },
 };
 
 export function InboxView({ itemId }: { itemId?: string }) {
   const inbox = useApp((s) => s.inbox);
+  const threads = useApp((s) => s.threads);
+  const me = useApp((s) => s.me);
+  const scope = useApp((s) => s.scope);
   const now = useNow(30_000);
+  const all = Object.values(inbox).filter((i) => forMe(i, me)).length;
   const items = useMemo(
-    () => Object.values(inbox).sort((a, b) => (KIND[a.kind]?.order ?? 9) - (KIND[b.kind]?.order ?? 9) || b.createdAt - a.createdAt),
-    [inbox],
+    () =>
+      Object.values(inbox)
+        // Mine: items from my threads. One whose thread is not loaded (a closed one) shows.
+        // Tags only for the person tagged, under Mine and All.
+        .filter((i) => forMe(i, me) && (!threads[i.threadId] || inScope(threads[i.threadId], { me, scope })))
+        .sort((a, b) => (KIND[a.kind]?.order ?? 9) - (KIND[b.kind]?.order ?? 9) || b.createdAt - a.createdAt),
+    [inbox, threads, me, scope],
   );
 
   // Know which agent raised each item.
@@ -47,9 +57,10 @@ export function InboxView({ itemId }: { itemId?: string }) {
           Inbox
         </Text>
         <span className="cr-spacer" />
-        <Text as="span" tone="secondary">
-          {items.length ? `${items.length} waiting on you` : ''}
+        <Text as="span" tone="secondary" className="phone-hide">
+          {items.length ? `${items.length} waiting${scope === 'all' && me ? '' : ' on you'}` : ''}
         </Text>
+        <ScopeToggle />
       </PanelHeader>
       <div className="pane-scroll">
         {items.length === 0 ? (
@@ -57,6 +68,11 @@ export function InboxView({ itemId }: { itemId?: string }) {
             <BlockStack gap="200" inlineAlign="center">
               <Icon name="checkCircle" size={16} />
               <Text tone="secondary">Nothing is waiting on you.</Text>
+              {all > 0 && (
+                <Text variant="bodySm" tone="tertiary">
+                  {all} waiting in the team’s threads, under All.
+                </Text>
+              )}
               <Text variant="bodySm" tone="tertiary">
                 Drafts to review are in Docs.
               </Text>
@@ -81,6 +97,9 @@ function useItemRole(item: InboxItem): string {
 
 function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: number; focused: boolean; autoFocus: boolean }) {
   const thread = useApp((s) => s.threads[item.threadId]);
+  const me = useApp((s) => s.me);
+  const owner = me && thread?.createdBy && thread.createdBy !== me ? thread.createdBy : null;
+  const ownerName = usePersonName(owner);
   const role = useItemRole(item);
   const roleLabel = useRoleLabel(role);
   // A newer conductor may send kinds this build does not know yet.
@@ -102,12 +121,13 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
             {kind.label}
           </Text>
           <Text as="span" variant="bodySm" tone="secondary" truncate className="grow">
-            {[roleLabel, thread?.title].filter(Boolean).join(' · ')}
+            {item.kind === 'mention' ? thread?.title : [roleLabel, thread?.title, ownerName && `${ownerName}’s thread`].filter(Boolean).join(' · ')}
           </Text>
+          {owner && item.kind !== 'mention' ? <PersonFace email={owner} size={16} /> : null}
           <Text as="span" variant="bodySm" tone="tertiary">
             {age(item.createdAt, now)}
           </Text>
-          {role ? <RoleFace role={role} size="xs" /> : null}
+          {item.kind === 'mention' && item.by ? <PersonFace email={item.by} size={18} /> : role ? <RoleFace role={role} size="xs" /> : null}
         </InlineStack>
 
         <Text as="h2" variant="headingSm">
@@ -147,6 +167,19 @@ function InboxCard({ item, now, focused, autoFocus }: { item: InboxItem; now: nu
               <ApprovalActions item={item} />
             ) : item.kind === 'pull_request' ? (
               <PullRequestActions item={item} />
+            ) : item.kind === 'mention' ? (
+              <>
+                <Button onClick={() => void resolveInbox(item.id)}>Dismiss</Button>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    void resolveInbox(item.id);
+                    openThread();
+                  }}
+                >
+                  Reply
+                </Button>
+              </>
             ) : item.kind === 'interrupted' ? (
               <>
                 <Button onClick={() => void resolveInbox(item.id)}>Dismiss</Button>
