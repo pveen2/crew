@@ -279,7 +279,7 @@ if (CAN_CODE) {
     {
       description:
         'A reviewer model from another vendor reads your changes against the base branch (uncommitted ones included) and the repo, and reports real problems with file:line. ' +
-        'Run it before open_pull_request, fix what it finds, and run it again after large fixes. Takes a few minutes.',
+        'Required: open_pull_request only accepts changes this review saw, so run it again after every fix. Its answer is posted on the pull request word for word. Takes a few minutes.',
       inputSchema: { focus: z.string().max(1000).optional().describe('Anything the reviewer should look at closely: a risky part, an edge case.') },
     },
     forward('code_review'),
@@ -289,7 +289,7 @@ if (CAN_CODE) {
     {
       description:
         'Commit all your changes in repo/, push your branch and open a pull request into the base branch, or update the one already open for this branch. ' +
-        "A new pull request also goes into the owner's Inbox. The owner reviews and merges; you cannot merge. Returns the link.",
+        "Refused unless code_review saw exactly these changes; the review is then posted on the pull request. A new pull request also goes into the owner's Inbox. The owner reviews and merges; you cannot merge. Returns the link.",
       inputSchema: {
         title: z.string().min(5).max(120).describe('What the change does, in plain words. Example: "Show free-shipping threshold per market".'),
         body: z

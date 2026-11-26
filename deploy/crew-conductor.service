@@ -18,7 +18,9 @@ TimeoutStopSec=30
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
-ProtectKernelTunables=yes
+# No ProtectKernelTunables: its read-only /proc/sys overmount makes the kernel
+# refuse the fresh /proc that Claude Code's bubblewrap sandbox mounts
+# ("bwrap: Can't mount proc"), so code agents lose their shell.
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes

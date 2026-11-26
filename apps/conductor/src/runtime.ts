@@ -43,7 +43,7 @@ import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from
 import { isEmail, type ArtifactRow, type SessionRow, type Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
-import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, mergePullRequest, openPullRequest, snapshot, themePreview } from './code.ts';
+import { REVIEW_PROMPT, branchDiff, codeSettings, diffHash, ensureCheckout, mergePullRequest, openPullRequest, postReviews, snapshot, themePreview, type ReviewRound } from './code.ts';
 
 type AbortReason = 'stop' | 'timeout' | 'shutdown';
 
@@ -257,6 +257,8 @@ export class Runtime {
   private readonly running = new Map<string, RunningTurn>();
   /** Background title runs, by thread. */
   private readonly titleJobs = new Map<string, AbortController>();
+  /** Code reviews per developer session, and how many are already on its pull request. In memory: after a restart the developer reviews again. */
+  private readonly reviews = new Map<string, { rounds: ReviewRound[]; posted: number }>();
   /** Owner messages still waiting for their turn, by message event id. */
   private readonly queuedMessages = new Map<number, QueuedMessage>();
   private readonly queues = new Map<string, Promise<unknown>>();
@@ -1543,7 +1545,11 @@ export class Runtime {
           onEvent: () => {},
         });
         if (!result.ok) throw new Error(`The review failed: ${result.error ?? 'no answer'}`);
-        return `Review by ${model}:\n\n${result.finalText.trim()}`;
+        const text = result.finalText.trim();
+        const log = this.reviews.get(session.id) ?? { rounds: [], posted: 0 };
+        log.rounds.push({ model, hash: diffHash(diff), text, at: Date.now() });
+        this.reviews.set(session.id, log);
+        return `Review by ${model} (round ${log.rounds.length}; it goes on the pull request word for word):\n\n${text}`;
       } finally {
         rmSync(dir, { recursive: true, force: true });
         rmSync(runDir, { recursive: true, force: true });
@@ -1553,6 +1559,12 @@ export class Runtime {
     const title = String(args.title ?? '').trim();
     const body = String(args.body ?? '').trim();
     if (!title || !body) throw new Error('open_pull_request needs a title and a body.');
+    // No pull request without a review of exactly these changes.
+    const { diff } = await branchDiff(settings, session.workdir, session.id, signal);
+    const log = this.reviews.get(session.id);
+    const last = log?.rounds[log.rounds.length - 1];
+    if (!last) throw new Error('Run code_review first: a pull request needs a review of exactly these changes.');
+    if (last.hash !== diffHash(diff)) throw new Error('Your changes differ from what code_review last saw. Run code_review again, then open the pull request.');
     const pr = await openPullRequest(
       settings,
       session.workdir,
@@ -1564,12 +1576,22 @@ export class Runtime {
       },
       signal,
     );
+    let posted = '';
+    if (log!.posted < log!.rounds.length) {
+      try {
+        await postReviews(settings, pr.number, log!.rounds.slice(log!.posted), log!.rounds.length);
+        log!.posted = log!.rounds.length;
+        posted = '\n\nThe code review is posted on the pull request.';
+      } catch (err) {
+        posted = `\n\nCould not post the code review on the pull request: ${(err as Error).message}. Say so in your report.`;
+      }
+    }
     if (pr.created) {
       // The owner merges: the pull request waits for them in the Inbox.
       this.addInbox(session, 'pull_request', `Pull request #${pr.number}: ${title}`, `${body.split('\n\n')[0]!.slice(0, 600)}\n\n\`${pr.branch}\` · ${pr.stat.split('\n').pop()?.trim() ?? ''}`, { url: pr.url });
     }
     this.emit(session, turnId, { type: 'status', text: `${pr.created ? 'Opened' : 'Updated'} pull request #${pr.number}: ${pr.url}` });
-    return `${pr.created ? 'Opened' : 'Updated'} pull request #${pr.number} from ${pr.branch}: ${pr.url}\n\n${pr.stat}`;
+    return `${pr.created ? 'Opened' : 'Updated'} pull request #${pr.number} from ${pr.branch}: ${pr.url}\n\n${pr.stat}${posted}`;
   }
 
   /**

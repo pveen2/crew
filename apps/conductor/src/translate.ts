@@ -66,7 +66,7 @@ export function crewTools(crew: LoadedCrew, agent: LoadedAgent, canDelegate: boo
   tools.push({ name: 'list_docs', description: "List this thread's docs shown to the owner, with ids and which are approved." });
   if (agent.permissions === 'code') {
     if (crew.config.code?.theme) tools.push({ name: 'theme_preview', description: "Push your checkout's theme to the store's development theme and get the preview and editor links." });
-    tools.push({ name: 'code_review', description: 'Have a reviewer from another vendor check your changes before you open a pull request.' });
+    tools.push({ name: 'code_review', description: 'Have a reviewer from another vendor check your changes. Required before every open_pull_request, on exactly the changes you open it with.' });
     tools.push({ name: 'open_pull_request', description: 'Commit your changes, push your branch and open (or update) its pull request. The owner reviews and merges it.' });
   }
   for (const m of agent.memories) {
@@ -121,6 +121,7 @@ export function instructionsMarkdown(opts: TranslateOptions): string {
       '- You do not commit, push or merge yourself. `open_pull_request` commits your work, pushes the branch and opens or updates the pull request; ' +
         'the owner reviews and merges it. Never try to change the live theme or the base branch another way.',
       '- Before `open_pull_request`: run the repo\'s checks, look at your change with `theme_preview` when it shows on the store, and run `code_review`; fix what it finds or say why not. ' +
+        '`open_pull_request` refuses changes `code_review` has not seen, so review again after every change, and the review goes on the pull request word for word. ' +
         'Put the preview link, what you checked and what the owner should test in the pull request body.',
     );
   }

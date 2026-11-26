@@ -126,10 +126,11 @@ something here can't be done, stop and ask instead of loosening it.
 - `auditd` with basic rules (sshd config, sudoers, `/etc/cloudflared`), and
   journald persistent storage.
 - systemd sandboxing for `crew-conductor.service`: `NoNewPrivileges=yes`,
-  `PrivateTmp=yes`, `ProtectSystem=full`, `ProtectKernelTunables=yes`,
+  `PrivateTmp=yes`, `ProtectSystem=full`,
   `ProtectKernelModules=yes`, `ProtectControlGroups=yes`,
   `RestrictSUIDSGID=yes`, `LockPersonality=yes`. Don't set `ProtectHome`
-  (the CLIs live in and write to `crew`'s home). Test that agents and the
+  (the CLIs live in and write to `crew`'s home) or `ProtectKernelTunables`
+  (it breaks the bubblewrap sandbox of code agents: `bwrap: Can't mount proc`). Test that agents and the
   headless browser still work after adding each option.
 - Conductor stays on `127.0.0.1` (it already does). Verify nothing else listens
   publicly: `ss -tulpn` shows only loopback addresses.
@@ -290,7 +291,6 @@ TimeoutStopSec=30
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=full
-ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
