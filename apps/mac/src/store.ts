@@ -179,6 +179,8 @@ export interface AppState {
   online: string[];
   /** Team server: who has each thread open right now, and who is typing in it. */
   presence: Record<string, { viewing: string[]; typing: string[] }>;
+  /** The agent message being written right now, by session: the text so far. Gone once the message is in. */
+  drafts: Record<string, string>;
   details: Record<string, ThreadData>;
   view: View;
   /** Preview selected per thread. */
@@ -430,6 +432,7 @@ let state: AppState = {
   dmSeen: loadDmSeen(),
   online: [],
   presence: {},
+  drafts: {},
   details: {},
   view: viewFromHash(),
   preview: {},
@@ -609,6 +612,14 @@ function onMessage(msg: ServerMessage): void {
       break;
     case 'turn':
       break;
+    case 'draft':
+      set((s) => {
+        const drafts = { ...s.drafts };
+        if (msg.text) drafts[msg.sessionId] = msg.text;
+        else delete drafts[msg.sessionId];
+        return { drafts };
+      });
+      break;
     case 'presence':
       set((s) => ({ presence: { ...s.presence, [msg.threadId]: { viewing: msg.viewing, typing: msg.typing } } }));
       break;
@@ -635,8 +646,15 @@ function onMessage(msg: ServerMessage): void {
       const e = msg.event;
       set((s) => {
         const d = s.details[e.threadId];
-        if (!d || d.events.some((x) => x.id === e.id)) return {};
-        const patch: Partial<AppState> = { details: { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } } };
+        const patch: Partial<AppState> = {};
+        // The finished message (or the end of the turn) replaces the draft, in the same render.
+        if (s.drafts[e.sessionId] !== undefined && ((e.type === 'message' && e.role === 'assistant') || e.type === 'turn_done')) {
+          const drafts = { ...s.drafts };
+          delete drafts[e.sessionId];
+          patch.drafts = drafts;
+        }
+        if (!d || d.events.some((x) => x.id === e.id)) return patch;
+        patch.details = { ...s.details, [e.threadId]: { ...d, events: [...d.events, e] } };
         // A new preview becomes the selected one, and opens the pane.
         if (e.type === 'preview') {
           patch.preview = { ...s.preview, [e.threadId]: e.previewId };

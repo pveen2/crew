@@ -121,6 +121,7 @@ export const claudeCode: EngineAdapter = {
       '--input-format', 'stream-json',
       '--output-format', 'stream-json',
       '--replay-user-messages',
+      '--include-partial-messages',
       '--verbose',
       '--model', opts.model,
       '--permission-mode', 'dontAsk',
@@ -200,6 +201,13 @@ export const claudeCode: EngineAdapter = {
         // Events from Claude Code's own subagents (Task tool) stay inside the card.
         if (msg.parent_tool_use_id) return;
 
+        if (type === 'stream_event') {
+          const ev = msg.event as { type?: string; delta?: { type?: string; text?: unknown } } | undefined;
+          if (ev?.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && typeof ev.delta.text === 'string') {
+            emit({ kind: 'text_delta', text: ev.delta.text });
+          }
+          return;
+        }
         if (type === 'assistant') {
           const m = msg.message as { id?: string; usage?: unknown } | undefined;
           const u = readUsage(m?.usage);

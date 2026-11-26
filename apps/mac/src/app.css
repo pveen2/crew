@@ -2189,3 +2189,29 @@ body,
   margin: 0;
   padding: 0 var(--cr-space-200);
 }
+
+/* An agent message being written: a soft, pulsing caret at the end of its last line. */
+.md--streaming > :last-child:not(ul, ol, pre, table, .md-table)::after,
+.md--streaming > :is(ul, ol) > li:last-child::after {
+  content: '';
+  display: inline-block;
+  width: 0.55em;
+  height: 0.55em;
+  margin-left: 0.25em;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.55;
+  animation: md-caret 1s ease-in-out infinite;
+}
+@keyframes md-caret {
+  50% {
+    opacity: 0.15;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .md--streaming > *::after,
+  .md--streaming li::after {
+    animation: none;
+  }
+}

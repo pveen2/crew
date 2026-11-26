@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Face, FaceStack, type FaceSize } from '@crew/ui';
@@ -46,6 +46,110 @@ function wrapTables(html: string): string {
 export function Markdown({ text, className }: { text: string; className?: string }) {
   const html = useMemo(() => wrapTables(DOMPurify.sanitize(marked.parse(text, { async: false }) as string, MARKDOWN_POLICY)), [text]);
   return <div className={`md ${className ?? ''}`} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// ---------------------------------------------------------------------------
+// Streaming: an agent message shows while it is being written, at an even pace.
+
+/**
+ * How far each session's streamed message is shown, so the finished message
+ * goes on from there instead of jumping to its full text.
+ */
+const revealed = new Map<string, { text: string; shown: number }>();
+
+/** Characters a second at the least; a backlog is shown within about this many ms. */
+const MIN_RATE = 90;
+const CATCH_UP_MS = 300;
+/** Re-render at most this often while revealing (Markdown is parsed on each one). */
+const FRAME_MS = 32;
+
+/**
+ * The part of `target` to show now. Text comes in bursts; this lets it out at a
+ * steady pace that speeds up when there is more waiting, so it never lags far behind.
+ */
+function useReveal(target: string, start: number, onProgress?: (shown: number) => void): number {
+  const pos = useRef(Math.min(start, target.length));
+  const [shown, setShown] = useState(pos.current);
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  const progress = useRef(onProgress);
+  progress.current = onProgress;
+  const raf = useRef(0);
+
+  useEffect(() => {
+    if (pos.current > target.length) {
+      pos.current = target.length;
+      setShown(pos.current);
+    }
+    if (raf.current || pos.current >= target.length) return;
+    let last = performance.now();
+    let painted = 0;
+    let exact = pos.current;
+    const tick = (now: number) => {
+      const t = targetRef.current;
+      const dt = Math.min(now - last, 100);
+      last = now;
+      const backlog = t.length - exact;
+      exact = Math.min(t.length, exact + Math.max((backlog * dt) / CATCH_UP_MS, (MIN_RATE * dt) / 1000));
+      pos.current = Math.floor(exact);
+      const done = pos.current >= t.length;
+      if (done || now - painted >= FRAME_MS) {
+        painted = now;
+        setShown(pos.current);
+        progress.current?.(pos.current);
+      }
+      raf.current = done ? 0 : requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+  }, [target]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  return shown;
+}
+
+/**
+ * Markdown cut off mid-way, made to render as it will once finished: an open
+ * code fence, bold, or inline code is closed for now, and a lone marker at the
+ * very end is left out, so the formatting does not flicker as the text grows.
+ */
+export function closeOpenMarkdown(text: string): string {
+  const fences = text.match(/^\s*(```|~~~)/gm)?.length ?? 0;
+  if (fences % 2 === 1) return text + (text.endsWith('\n') ? '' : '\n') + '```';
+  let t = text.replace(/[*_`~]+$/, '');
+  const line = t.slice(t.lastIndexOf('\n') + 1);
+  const codeTicks = line.match(/`/g)?.length ?? 0;
+  if (codeTicks % 2 === 1) return t + '`';
+  if ((line.match(/\*\*/g)?.length ?? 0) % 2 === 1) t += '**';
+  if ((line.match(/~~/g)?.length ?? 0) % 2 === 1) t += '~~';
+  return t;
+}
+
+/** The message being written right now: shown at an even pace, with a caret at its end. */
+export function StreamingMarkdown({ sessionId, text }: { sessionId: string; text: string }) {
+  // Shown again (another thread and back): go on from where it was.
+  const [start] = useState(() => {
+    const r = revealed.get(sessionId);
+    return r && text.startsWith(r.text.slice(0, r.shown)) ? r.shown : 0;
+  });
+  const shown = useReveal(text, start, (n) => revealed.set(sessionId, { text, shown: n }));
+  // Remember the latest text too, even before it is shown.
+  revealed.set(sessionId, { text, shown });
+  return <Markdown text={closeOpenMarkdown(text.slice(0, shown))} className="md--streaming" />;
+}
+
+/**
+ * A finished agent message. Just after it was streamed, it goes on from where
+ * the stream had got to; otherwise it shows at once.
+ */
+export function AgentMarkdown({ sessionId, text, ts }: { sessionId: string; text: string; ts: number }) {
+  const [start] = useState(() => {
+    const r = revealed.get(sessionId);
+    revealed.delete(sessionId);
+    if (!r || Date.now() - ts > 15_000) return text.length;
+    return text.startsWith(r.text.slice(0, r.shown)) ? r.shown : text.length;
+  });
+  const shown = useReveal(text, start);
+  const writing = shown < text.length;
+  return <Markdown text={writing ? closeOpenMarkdown(text.slice(0, shown)) : text} className={writing ? 'md--streaming' : undefined} />;
 }
 
 export function useRoleLabel(role: string): string {

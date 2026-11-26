@@ -1261,6 +1261,8 @@ export class Runtime {
     let outcome: TurnOutcome;
     let usage: Usage | undefined;
     let timer: NodeJS.Timeout | undefined;
+    // Drops a draft the app still shows when the turn ends without its message (set once the engine runs).
+    let endTurnDraft = () => {};
     try {
       const crew = await loadCrew();
       const agent = crew.agents[session.role];
@@ -1289,14 +1291,46 @@ export class Runtime {
       syncAttachments(session.threadId, session.workdir);
 
       const adapter = engines[session.engine];
+      // The message being written, for the app: the whole text so far, at most every 50 ms.
+      // The first piece goes out at once, so the answer starts showing as soon as it can.
+      let draft = '';
+      let draftSent = '';
+      let draftTimer: NodeJS.Timeout | null = null;
+      const sendDraft = (text: string) => this.broadcast({ kind: 'draft', threadId: session.threadId, sessionId, text });
+      const flushDraft = () => {
+        draftTimer = null;
+        if (draft === draftSent) return;
+        draftSent = draft;
+        sendDraft(draft);
+      };
+      /** The draft is done with. Tells the app to drop it when `drop`: no message replaces it. */
+      const endDraft = (drop: boolean) => {
+        if (draftTimer) clearTimeout(draftTimer);
+        if (drop && draftSent) sendDraft('');
+        draftTimer = null;
+        draft = draftSent = '';
+      };
+      endTurnDraft = () => endDraft(true);
       const onEvent = (e: EngineEvent) => {
         switch (e.kind) {
+          case 'text_delta':
+            draft += e.text;
+            // Nothing to show yet, or it may still become the quiet answer.
+            if (!draft.trim() || QUIET.startsWith(draft.trim())) break;
+            if (!draftSent) flushDraft();
+            else draftTimer ??= setTimeout(flushDraft, 50);
+            break;
           case 'session':
             session = this.setSession(sessionId, { engineSessionId: e.engineSessionId, engineSessionStarted: true });
             break;
           case 'text':
             // People talking to each other: the agent chose to stay quiet.
-            if (e.text.trim() === QUIET) break;
+            if (e.text.trim() === QUIET) {
+              endDraft(true);
+              break;
+            }
+            // The message event replaces the draft in the app.
+            endDraft(false);
             this.emit(session, turnId, { type: 'message', role: 'assistant', text: e.text, from: session.role });
             break;
           case 'thinking':
@@ -1366,6 +1400,7 @@ export class Runtime {
       outcome = { turnId, status: 'error', text: '', error: (err as Error).message };
     } finally {
       clearTimeout(timer);
+      endTurnDraft();
       opts.signal?.removeEventListener('abort', onCallerGone);
     }
 

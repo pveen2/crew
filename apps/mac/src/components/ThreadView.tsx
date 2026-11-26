@@ -54,6 +54,8 @@ import { PaneResizer } from './PaneResizer';
 import {
   Elapsed,
   Markdown,
+  AgentMarkdown,
+  StreamingMarkdown,
   PersonFace,
   markMentions,
   RoleFace,
@@ -688,7 +690,7 @@ function EventRow({ threadId, event, session, answer }: { threadId: string; even
   switch (event.type) {
     case 'message':
       if (event.role === 'user') return <OwnerMessage threadId={threadId} event={event} session={session} />;
-      return <Markdown text={event.text} />;
+      return <AgentMarkdown sessionId={event.sessionId} text={event.text} ts={event.ts} />;
     case 'needs_you':
       return <NeedsYouCard threadId={threadId} event={event} role={session.role} answer={answer} />;
     case 'approval':
@@ -1057,13 +1059,21 @@ function HeldLine({ threadId, data, session, label }: { threadId: string; data: 
 }
 
 /** "Thinking · 12s" under the last message while the agent works. */
+/** The agent message being written right now. */
+function DraftMessage({ sessionId }: { sessionId: string }) {
+  const text = useApp((s) => s.drafts[sessionId]);
+  return text ? <StreamingMarkdown sessionId={sessionId} text={text} /> : null;
+}
+
 function WorkingLine({ session, data }: { session: Session; data: ThreadData }) {
   const label = useRoleLabel(session.role);
+  // While the answer is being written, the caret at its end says the agent is busy.
+  const writing = useApp((s) => Boolean(s.drafts[session.id]));
   const startedAt = useMemo(() => {
     const t = [...data.events].reverse().find((e) => e.sessionId === session.id && e.type === 'turn_started');
     return t?.ts ?? session.updatedAt;
   }, [data.events, session.id, session.updatedAt]);
-  if (session.status !== 'running' && session.status !== 'queued') return null;
+  if (writing || (session.status !== 'running' && session.status !== 'queued')) return null;
   return (
     <InlineStack gap="150" className="working-line">
       <Shimmer>{session.status === 'queued' ? `${label} is queued` : 'Thinking'}</Shimmer>
@@ -1117,6 +1127,18 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
     const el = scroller.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [items.length, data?.events.length]);
+  // A message that grows while it is written: stay at the bottom, unless scrolled up.
+  const hasData = Boolean(data && session);
+  useEffect(() => {
+    const el = scroller.current;
+    const content = el?.firstElementChild;
+    if (!el || !content) return;
+    const ro = new ResizeObserver(() => {
+      if (stick.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [hasData]);
   useEffect(() => {
     stick.current = true;
   }, [sessionId]);
@@ -1227,6 +1249,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 ),
               )
             )}
+            <DraftMessage sessionId={session.id} />
             <WorkingLine session={session} data={data} />
           </div>
         </div>

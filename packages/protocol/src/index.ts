@@ -425,6 +425,12 @@ export type ServerMessage =
   | { kind: 'doc'; doc: DocSummary }
   /** Team server: who has a thread open right now, and who is typing in it (emails). */
   | { kind: 'presence'; threadId: string; viewing: string[]; typing: string[] }
+  /**
+   * The agent message being written right now, so far (the whole text, not a piece).
+   * Not stored: the finished text comes as a 'message' event, which replaces it.
+   * Empty text: the draft is gone (the turn ended without that message).
+   */
+  | { kind: 'draft'; threadId: string; sessionId: string; text: string }
   /** A DM changed (made, or a new message): only to its people. */
   | { kind: 'dm'; dm: Dm }
   | { kind: 'dm_message'; message: DmMessage }

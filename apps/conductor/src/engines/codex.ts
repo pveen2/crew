@@ -199,6 +199,8 @@ export const codex: EngineAdapter = {
         } else if (method === 'error') {
           // Also sent for retries; only fatal if the turn never completes.
           lastError = (p.error as { message?: string })?.message ?? 'Codex error';
+        } else if (method === 'item/agentMessage/delta') {
+          if (typeof p.delta === 'string') emit({ kind: 'text_delta', text: p.delta });
         } else if (method === 'item/started' || method === 'item/completed') {
           const item = p.item as Record<string, unknown>;
           const id = String(item.id);
