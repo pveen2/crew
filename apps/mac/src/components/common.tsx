@@ -172,8 +172,8 @@ export function AgentMarkdown({ text, streamKey, streaming = false }: { text: st
 }
 
 // Lines that tie blocks together across blank lines (link definitions, footnotes, raw HTML).
-// Also inside a quote or a list item.
-const DOCUMENT_WIDE = /^[ \t>]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+)?(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
+// Also inside quotes and list items, nested any way.
+const DOCUMENT_WIDE = /^(?:[ \t>]|(?:[-*+]|\d{1,9}[.)])[ \t])*(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 

@@ -2193,7 +2193,7 @@ body,
 }
 
 /* An agent message being written: a soft, pulsing caret at the end of its last line. */
-.md--streaming > .md-block:last-child > :last-child:not(ul, ol, pre, table, .md-table)::after,
+.md--streaming > .md-block:last-child > :last-child:not(ul, ol)::after,
 .md--streaming > .md-block:last-child > :is(ul, ol) > li:last-child::after {
   content: '';
   display: inline-block;
