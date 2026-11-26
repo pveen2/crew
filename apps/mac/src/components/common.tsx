@@ -189,6 +189,17 @@ export function PersonFace({ email, size = 16, title }: { email: string; size?: 
   );
 }
 
+/** A colleague's face with a green dot while they have Crew open. */
+export function OnlineFace({ email, size = 16 }: { email: string; size?: number }) {
+  const on = useApp((s) => s.online.includes(email));
+  const name = useApp((s) => personName(email, s.people));
+  return (
+    <span className={`live-face${on ? ' live-face--on' : ''}`}>
+      <PersonFace email={email} size={size} title={on ? `${name} · online` : `${name} · offline`} />
+    </span>
+  );
+}
+
 /** A colleague's name, from the people the conductor knows. */
 export function usePersonName(email: string | null | undefined): string {
   return useApp((s) => (email ? personName(email, s.people) : ''));

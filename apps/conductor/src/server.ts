@@ -5,7 +5,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { ClientMessage, CreateThreadRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
+import type { ClientMessage, CreateThreadRequest, SendDmRequest, SendMessageRequest, ServerMessage } from '@crew/protocol';
 import type { Runtime } from './runtime.ts';
 import { connections, signIn } from './connections.ts';
 import { accessEmail, accessEnabled } from './access.ts';
@@ -57,6 +57,10 @@ function threadOf(msg: ServerMessage): string | null {
       return msg.doc.threadId;
     case 'presence':
       return msg.threadId;
+    case 'dm':
+      return msg.dm.id;
+    case 'dm_message':
+      return msg.message.dmId;
     default:
       return null;
   }
@@ -249,16 +253,34 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         }
       }
 
-      // A direct message (team server): POST /api/dms { with: [emails], text? }
-      if (a === 'dms' && !id && req.method === 'POST') {
+      // Direct messages (team server): people chatting, no agent in it. Only its people see a DM.
+      //   POST /api/dms { with: [emails], text, attachments? }   send to these people (their DM is made on the first message)
+      //   GET  /api/dms/<id>/messages?before=<messageId>        the latest 200 messages, or the 200 before one
+      //   POST /api/dms/<id>/messages { text, attachments? }
+      if (a === 'dms') {
         if (!accessEnabled || !email) return send(res, 404, { error: 'Direct messages need a team server.' });
-        const body = await readJson<{ with?: unknown; text?: unknown }>(req);
-        const others = Array.isArray(body.with) ? body.with.map(String) : [];
-        return send(res, 200, await runtime.createDm(email, others, typeof body.text === 'string' ? body.text : undefined));
+        if (id && !runtime.inDm(id, email)) return send(res, 404, { error: 'Not found' });
+        if (req.method === 'POST' && !id) {
+          const body = await readJson<Partial<SendDmRequest>>(req);
+          const others = Array.isArray(body.with) ? body.with.map(String) : [];
+          if (!String(body.text ?? '').trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
+          return send(res, 200, runtime.sendDmTo(email, others, String(body.text ?? ''), body.attachments, body.clientId));
+        }
+        if (id && action === 'messages' && req.method === 'GET') {
+          const before = Number(url.searchParams.get('before'));
+          return send(res, 200, runtime.dmMessages(id, Number.isInteger(before) && before > 0 ? before : undefined));
+        }
+        if (id && action === 'messages' && req.method === 'POST') {
+          const body = await readJson<{ text?: unknown; attachments?: SendDmRequest['attachments']; clientId?: string }>(req);
+          if (!String(body.text ?? '').trim() && !body.attachments?.length) return send(res, 400, { error: 'text or an image is required' });
+          return send(res, 200, runtime.sendDm(id, email, String(body.text ?? ''), body.attachments, body.clientId));
+        }
+        return send(res, 404, { error: 'Not found' });
       }
 
       // A DM is only for the people in it: to anyone else it, and everything in it, does not exist.
-      if (id && email) {
+      // Old DM threads (from before DMs were plain chats) are gone for everyone.
+      if (id) {
         const kinds = { messages: 'message', sessions: 'session', inbox: 'inbox', docs: 'doc' } as const;
         const kind = kinds[a as keyof typeof kinds];
         const threadId = a === 'threads' || a === 'attachments' ? id : kind ? runtime.threadOf(kind, id) : undefined;
@@ -280,7 +302,6 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         // Share links, on a team server only: share (or update the snapshot), and stop sharing.
         if (req.method === 'POST' && id && (action === 'share' || action === 'unshare')) {
           if (!accessEnabled) return send(res, 404, { error: 'Share links need a team server.' });
-          if (runtime.threadDetail(id)?.thread.dm) return send(res, 400, { error: 'Direct messages cannot be shared.' });
           if (!runtime.threadDetail(id)) return send(res, 404, { error: 'No such thread' });
           if (action === 'unshare') {
             runtime.unshareThread(id);
@@ -327,8 +348,9 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       // An attached image, for the app: /api/attachments/<threadId>/<file>
       if (a === 'attachments' && id && action && req.method === 'GET') {
         const file = runtime.attachmentFile(id, action);
-        if (!file) return send(res, 404, { error: 'No such attachment' });
-        res.writeHead(200, { 'content-type': file.mime, 'cache-control': 'private, max-age=31536000, immutable' });
+        if (!file) return send(res, 404, { error: 'Not found' });
+        // A DM's images are never cached: whoever uses this browser next may not be in the DM.
+        res.writeHead(200, { 'content-type': file.mime, 'cache-control': runtime.isDm(id) ? 'private, no-store' : 'private, max-age=31536000, immutable' });
         res.end(file.data);
         return;
       }
@@ -443,8 +465,15 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
         if (threadId) sendPresence(threadId);
       });
       ws.send(JSON.stringify({ kind: 'hello', version: 1 } satisfies ServerMessage));
+      if (who) {
+        ws.send(JSON.stringify({ kind: 'online', people: online() } satisfies ServerMessage));
+        // Someone came online: everyone hears it (a second window of theirs changes nothing).
+        if ([...clients.values()].filter((w) => w === who).length === 1) broadcast({ kind: 'online', people: online() });
+      }
       const gone = () => {
+        if (!clients.has(ws)) return;
         clients.delete(ws);
+        if (who && ![...clients.values()].includes(who)) broadcast({ kind: 'online', people: online() });
         const was = presence.get(ws)?.threadId;
         presence.delete(ws);
         if (was) sendPresence(was);
@@ -453,6 +482,9 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
       ws.on('error', gone);
     });
   });
+
+  /** Who has Crew open: everyone with a connection (team server). */
+  const online = () => [...new Set([...clients.values()].filter((w): w is string => Boolean(w)))];
 
   // Presence (team server): which thread each connection has open, and whether its person is typing.
   const TYPING_MS = 5000;

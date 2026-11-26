@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('crewHost', {
   updateApply: () => ipcRenderer.invoke('crew:update-apply'),
   whereInfo: () => ipcRenderer.invoke('crew:where-info'),
   whereSet: (next) => ipcRenderer.invoke('crew:where-set', next),
+  signOut: () => ipcRenderer.invoke('crew:sign-out'),
   teamInfo: () => ipcRenderer.invoke('crew:team-info'),
   teamSet: (next) => ipcRenderer.invoke('crew:team-set', next),
   teamChooseFolder: () => ipcRenderer.invoke('crew:team-choose-folder'),

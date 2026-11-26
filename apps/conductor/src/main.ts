@@ -19,7 +19,7 @@ ensureDirs();
 // Fail early if the team definition is broken.
 const crew = await loadCrew();
 
-const store = new Store(paths.db);
+const store = new Store(paths.db, { attachments: paths.attachments });
 const runtime = new Runtime(store);
 const interrupted = runtime.recover();
 

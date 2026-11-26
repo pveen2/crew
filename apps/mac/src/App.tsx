@@ -12,6 +12,7 @@ import { AgentsView } from './components/AgentsView';
 import { TeamView } from './components/TeamView';
 import { SettingsView } from './components/SettingsView';
 import { NewThreadView, ThreadsView } from './components/Screens';
+import { DmView, NewMessageView } from './components/MessagesView';
 
 export function App() {
   const view = useApp((s) => s.view);
@@ -100,6 +101,8 @@ export function App() {
           {view.name === 'team' && <TeamView />}
           {view.name === 'settings' && <SettingsView />}
           {view.name === 'thread' && <ThreadView key={view.threadId} threadId={view.threadId} sessionId={view.sessionId} />}
+          {view.name === 'dm' && <DmView key={view.dmId} dmId={view.dmId} />}
+          {view.name === 'message' && <NewMessageView />}
           </PaneErrorBoundary>
         </div>
       </div>
