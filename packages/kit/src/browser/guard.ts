@@ -240,6 +240,8 @@ function saveKept(prefix: string, ext: string, data: Buffer): string {
   return name;
 }
 
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+
 /** Why a download URL is refused, or undefined when it may be fetched. */
 function refuseHost(url: URL): string | undefined {
   if (url.protocol !== 'https:') return 'Not kept: only https URLs.';
@@ -263,12 +265,14 @@ async function keepMedia(raw: unknown): Promise<string> {
     return 'Not kept: pass the full https URL of the image or video file.';
   }
   // Every hop is checked, redirects included: an allowed site must not bounce the download to another host or a local service.
+  // One deadline for all hops and the download together.
+  const signal = AbortSignal.timeout(60_000);
   let res: Response | undefined;
   for (let hop = 0; ; hop++) {
     const refused = refuseHost(url);
     if (refused) return refused;
-    res = await fetch(url, { redirect: 'manual', signal: AbortSignal.timeout(60_000) });
-    const next = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+    res = await fetch(url, { redirect: 'manual', signal });
+    const next = REDIRECTS.has(res.status) ? res.headers.get('location') : null;
     if (!next) break;
     await res.body?.cancel();
     if (hop >= 5) return 'Not kept: too many redirects.';
