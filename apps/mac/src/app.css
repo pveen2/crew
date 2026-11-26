@@ -398,6 +398,27 @@ body,
   min-width: 0;
   line-height: var(--cr-line-height-tight);
 }
+.thread-title__rename {
+  display: inline;
+  margin: 0 calc(-1 * var(--cr-space-100));
+  padding: 0 var(--cr-space-100);
+  border: 0;
+  border-radius: var(--cr-radius-100);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+}
+.thread-title__rename:hover {
+  background: var(--cr-color-bg-fill-hover);
+}
+.thread-title__form {
+  min-width: 16rem;
+}
+.thread-title__input--error {
+  outline: 1px solid var(--cr-color-text-critical);
+}
 .header-faces {
   display: inline-flex;
   margin-right: var(--cr-space-150);

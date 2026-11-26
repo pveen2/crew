@@ -954,6 +954,11 @@ export async function stopSession(sessionId: string): Promise<void> {
   await api('POST', `/api/sessions/${sessionId}/stop`);
 }
 
+/** Rename a thread; the new title arrives with the thread update. */
+export async function renameThread(threadId: string, title: string): Promise<void> {
+  await api('POST', `/api/threads/${threadId}/title`, { title });
+}
+
 export async function archiveThread(threadId: string): Promise<void> {
   await api('POST', `/api/threads/${threadId}/archive`);
   if (state.view.name === 'thread' && state.view.threadId === threadId) navigate({ name: 'threads' });

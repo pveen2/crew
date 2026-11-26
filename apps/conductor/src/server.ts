@@ -176,6 +176,12 @@ export function startServer(runtime: Runtime, opts: { port: number; token: strin
           runtime.resumeThread(id);
           return send(res, 200, { ok: true });
         }
+        if (req.method === 'POST' && id && action === 'title') {
+          const body = await readJson<{ title?: unknown }>(req);
+          if (typeof body.title !== 'string' || !body.title.trim()) return send(res, 400, { error: 'title is required' });
+          runtime.retitleThread(id, body.title);
+          return send(res, 200, { ok: true });
+        }
         if (req.method === 'POST' && id && action === 'archive') {
           runtime.archiveThread(id);
           return send(res, 200, { ok: true });

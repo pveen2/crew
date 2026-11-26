@@ -750,6 +750,17 @@ export class Runtime {
     stopTree(sessionId);
   }
 
+  /** The owner renames a thread from its header. Their words are kept as typed: one line, at most 64 characters. */
+  retitleThread(threadId: string, raw: string): void {
+    const thread = this.store.thread(threadId);
+    if (!thread) throw new Error(`No thread ${threadId}`);
+    const line = raw.replace(/\s+/g, ' ').trim();
+    if (!line) throw new Error('Give the thread a title.');
+    const title = line.length > 64 ? line.slice(0, 63).trimEnd() + '…' : line;
+    this.cancelAutoTitle(threadId);
+    if (title !== thread.title) this.setTitle(threadId, title);
+  }
+
   archiveThread(threadId: string): void {
     const thread = this.store.thread(threadId);
     if (!thread) return;

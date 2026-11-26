@@ -31,6 +31,7 @@ import {
   navigate,
   openAsPreview,
   removeQueuedMessage,
+  renameThread,
   resolveInbox,
   resumeSession,
   runAgain,
@@ -1045,9 +1046,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
             </InlineStack>
           ) : (
             <BlockStack className="thread-title thread-title__text">
-              <Text variant="headingMd" as="h1" leading="tight" truncate title={thread.title}>
-                {thread.title}
-              </Text>
+              <ThreadTitle threadId={threadId} title={thread.title} />
               <Text variant="caption" tone="secondary" leading="tight" truncate>
                 {thread.roles.map((r) => labels[r] ?? r).join(', ')}
                 {thread.benched?.length ? ` · without ${thread.benched.map((r) => labels[r] ?? r).join(', ')}` : ''} · started {ago(thread.createdAt, now)}
@@ -1113,5 +1112,71 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
       )}
       {showPreview && <PreviewPanel threadId={threadId} docs={docs} />}
     </>
+  );
+}
+
+/** The thread's title in its header. Click it to rename: Enter or clicking away saves, Escape cancels. */
+function ThreadTitle({ threadId, title }: { threadId: string; title: string }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const [error, setError] = useState('');
+  const done = useRef(false);
+
+  const start = () => {
+    setDraft(title);
+    setError('');
+    done.current = false;
+    setEditing(true);
+  };
+  const save = async () => {
+    if (done.current) return;
+    done.current = true;
+    const next = draft.trim();
+    if (!next || next === title) return setEditing(false);
+    try {
+      await renameThread(threadId, next);
+      setEditing(false);
+    } catch (err) {
+      done.current = false;
+      setError((err as Error).message || 'Could not rename the thread.');
+    }
+  };
+
+  if (editing) {
+    return (
+      <form
+        className="thread-title__form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <TextField
+          label="Thread title"
+          value={draft}
+          onChange={setDraft}
+          autoFocus
+          maxLength={64}
+          title={error || undefined}
+          className={error ? 'thread-title__input thread-title__input--error' : 'thread-title__input'}
+          onFocus={(e) => e.currentTarget.select()}
+          onBlur={() => void save()}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              done.current = true;
+              setEditing(false);
+            }
+          }}
+        />
+      </form>
+    );
+  }
+  return (
+    <Text variant="headingMd" as="h1" leading="tight" truncate>
+      <button type="button" className="thread-title__rename" title="Rename thread" onClick={start}>
+        {title}
+      </button>
+    </Text>
   );
 }
