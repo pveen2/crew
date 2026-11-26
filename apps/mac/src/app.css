@@ -544,6 +544,12 @@ body,
   margin-bottom: var(--cr-space-250);
   max-height: 45vh;
   overflow-y: auto;
+  /* The scroll box clips shadows: room for the card's 1px ring, and no soft drop shadow here. */
+  padding: 1px;
+  margin-inline: -1px;
+}
+.thread-approvals > .cr-card--elevated {
+  box-shadow: 0 0 0 1px var(--cr-color-border-elevated);
 }
 .thread-approvals > * {
   flex-shrink: 0;
@@ -877,6 +883,10 @@ body,
 }
 .inbox-card-actions {
   padding-top: var(--cr-space-100);
+}
+/* A text button first in the row (Step in): its label lines up with the card's text. */
+.thread-approvals .inbox-card-actions > .cr-button--tertiary:first-child {
+  margin-left: calc(-1 * var(--cr-space-250));
 }
 .inbox-card-error {
   flex-basis: 100%;
