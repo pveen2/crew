@@ -1314,6 +1314,14 @@ export class Runtime {
       const onEvent = (e: EngineEvent) => {
         switch (e.kind) {
           case 'text_delta':
+            if (e.restart && draft) {
+              // Start over; the app replaces its draft with the next piece, or drops it now if none comes.
+              draft = '';
+              if (draftTimer) clearTimeout(draftTimer);
+              draftTimer = null;
+              if (draftSent) sendDraft('');
+              draftSent = '';
+            }
             draft += e.text;
             // Nothing to show yet, or it may still become the quiet answer.
             if (!draft.trim() || QUIET.startsWith(draft.trim())) break;

@@ -1060,9 +1060,23 @@ function HeldLine({ threadId, data, session, label }: { threadId: string; data: 
 
 /** "Thinking · 12s" under the last message while the agent works. */
 /** The agent message being written right now. */
-function DraftMessage({ sessionId }: { sessionId: string }) {
+function DraftMessage({ sessionId, events }: { sessionId: string; events: CrewEvent[] }) {
   const text = useApp((s) => s.drafts[sessionId]);
-  return text ? <StreamingMarkdown sessionId={sessionId} text={text} /> : null;
+  // Just asked a question in this turn: its text after the card only restates it and is
+  // left out once finished (buildItems), so it is not shown while written either.
+  const restates = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      const e = events[i]!;
+      if (e.sessionId !== sessionId) continue;
+      // Not in a turn the owner wrote into: then the text may answer them (as in buildItems).
+      if (e.type === 'needs_you')
+        return !events.some((x) => x.type === 'message' && x.role === 'user' && x.delivery === 'steer' && x.turnId === e.turnId);
+      if (e.type === 'tool_call' || e.type === 'turn_started' || (e.type === 'message' && e.role === 'user')) return false;
+    }
+    return false;
+  }, [events, sessionId]);
+  // Keyed by session: stepping into another agent never carries this one's reveal over.
+  return text && !restates ? <StreamingMarkdown key={sessionId} sessionId={sessionId} text={text} /> : null;
 }
 
 function WorkingLine({ session, data }: { session: Session; data: ThreadData }) {
@@ -1249,7 +1263,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 ),
               )
             )}
-            <DraftMessage sessionId={session.id} />
+            <DraftMessage sessionId={session.id} events={data.events} />
             <WorkingLine session={session} data={data} />
           </div>
         </div>

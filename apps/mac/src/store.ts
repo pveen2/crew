@@ -751,7 +751,8 @@ export async function connect(): Promise<void> {
     const current = state.view.name === 'thread' ? state.view.threadId : undefined;
     const currentDm = state.view.name === 'dm' ? state.view.dmId : undefined;
     // DM messages reload when opened again: what came while offline is not lost.
-    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {} }));
+    // Drafts too: a turn may have ended while offline. One still being written comes back with its next piece.
+    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {}, drafts: {} }));
     await refreshState();
     // Docs: the sidebar counts new drafts.
     void loadDocs().catch(() => undefined);

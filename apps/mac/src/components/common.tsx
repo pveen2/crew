@@ -59,7 +59,16 @@ export function Markdown({ text, className }: { text: string; className?: string
  * How far each session's streamed message is shown, so the finished message
  * goes on from there instead of jumping to its full text.
  */
-const revealed = new Map<string, { text: string; shown: number }>();
+const revealed = new Map<string, { text: string; shown: number; at: number }>();
+/** A hand-off older than this is not used: that message finished long ago, or was stopped. */
+const HANDOFF_MS = 15_000;
+
+/** Where a message with this text may start showing: from a fresh, matching hand-off, or null. */
+function handoff(sessionId: string, text: string): number | null {
+  const r = revealed.get(sessionId);
+  if (!r || Date.now() - r.at > HANDOFF_MS || !text.startsWith(r.text.slice(0, r.shown))) return null;
+  return r.shown;
+}
 
 /** Characters a second at the least; a backlog is shown within about this many ms. */
 const MIN_RATE = 90;
@@ -75,16 +84,18 @@ function useReveal(target: string, start: number, onProgress?: (shown: number) =
   const pos = useRef(Math.min(start, target.length));
   const [shown, setShown] = useState(pos.current);
   const targetRef = useRef(target);
+  // What was being shown: when the text no longer starts with it (a retried message), start over.
+  const prevRef = useRef(target);
   targetRef.current = target;
   const progress = useRef(onProgress);
   progress.current = onProgress;
   const raf = useRef(0);
 
   useEffect(() => {
-    if (pos.current > target.length) {
-      pos.current = target.length;
-      setShown(pos.current);
-    }
+    if (!target.startsWith(prevRef.current.slice(0, pos.current))) pos.current = 0;
+    prevRef.current = target;
+    if (pos.current > target.length) pos.current = target.length;
+    if (pos.current !== shown) setShown(pos.current);
     if (raf.current || pos.current >= target.length) return;
     let last = performance.now();
     let painted = 0;
@@ -93,6 +104,7 @@ function useReveal(target: string, start: number, onProgress?: (shown: number) =
       const t = targetRef.current;
       const dt = Math.min(now - last, 100);
       last = now;
+      if (pos.current < Math.floor(exact)) exact = pos.current; // started over
       const backlog = t.length - exact;
       exact = Math.min(t.length, exact + Math.max((backlog * dt) / CATCH_UP_MS, (MIN_RATE * dt) / 1000));
       pos.current = Math.floor(exact);
@@ -105,8 +117,16 @@ function useReveal(target: string, start: number, onProgress?: (shown: number) =
       raf.current = done ? 0 : requestAnimationFrame(tick);
     };
     raf.current = requestAnimationFrame(tick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs on new text only
   }, [target]);
-  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(raf.current);
+      // Strict Mode mounts twice: the next mount must be able to start the loop again.
+      raf.current = 0;
+    },
+    [],
+  );
   return shown;
 }
 
@@ -116,28 +136,40 @@ function useReveal(target: string, start: number, onProgress?: (shown: number) =
  * very end is left out, so the formatting does not flicker as the text grows.
  */
 export function closeOpenMarkdown(text: string): string {
-  const fences = text.match(/^\s*(```|~~~)/gm)?.length ?? 0;
-  if (fences % 2 === 1) return text + (text.endsWith('\n') ? '' : '\n') + '```';
+  let fence: string | null = null;
+  for (const line of text.split('\n')) {
+    const f = FENCE.exec(line);
+    if (!f) continue;
+    if (!fence) fence = f[1]!;
+    else if (f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) fence = null;
+  }
+  if (fence) return text + (text.endsWith('\n') ? '' : '\n') + fence;
+  const lastLine = text.slice(text.lastIndexOf('\n') + 1);
+  // A rule (*** or ___) is finished as it is.
+  if (/^ {0,3}([*_-])(?:[ \t]*\1){2,}[ \t]*$/.test(lastLine)) return text;
   let t = text.replace(/[*_`~]+$/, '');
   const line = t.slice(t.lastIndexOf('\n') + 1);
-  const codeTicks = line.match(/`/g)?.length ?? 0;
-  if (codeTicks % 2 === 1) return t + '`';
+  // Inline code: an open run of backticks is closed with a run as long.
+  const runs = line.match(/`+/g) ?? [];
+  const open: string[] = [];
+  for (const r of runs) {
+    if (open.length && open[0] === r) open.pop();
+    else if (!open.length) open.push(r);
+  }
+  if (open.length) return t + open[0];
   if ((line.match(/\*\*/g)?.length ?? 0) % 2 === 1) t += '**';
   if ((line.match(/~~/g)?.length ?? 0) % 2 === 1) t += '~~';
   return t;
 }
 
-/** The message being written right now: shown at an even pace, with a caret at its end. */
+/** The message being written right now: shown at an even pace, with a caret at its end. Key it by session. */
 export function StreamingMarkdown({ sessionId, text }: { sessionId: string; text: string }) {
   // Shown again (another thread and back): go on from where it was.
-  const [start] = useState(() => {
-    const r = revealed.get(sessionId);
-    return r && text.startsWith(r.text.slice(0, r.shown)) ? r.shown : 0;
-  });
-  const shown = useReveal(text, start, (n) => revealed.set(sessionId, { text, shown: n }));
+  const [start] = useState(() => handoff(sessionId, text) ?? 0);
+  const shown = useReveal(text, start, (n) => revealed.set(sessionId, { text, shown: n, at: Date.now() }));
   // Remember the latest text too, even before it is shown.
-  revealed.set(sessionId, { text, shown });
-  return <BlockMarkdown text={closeOpenMarkdown(text.slice(0, shown))} seen={start} />;
+  revealed.set(sessionId, { text, shown, at: Date.now() });
+  return <BlockMarkdown text={closeOpenMarkdown(text.slice(0, shown))} seen={start} writing />;
 }
 
 /**
@@ -146,21 +178,23 @@ export function StreamingMarkdown({ sessionId, text }: { sessionId: string; text
  */
 export function AgentMarkdown({ sessionId, text, ts }: { sessionId: string; text: string; ts: number }) {
   const [start] = useState(() => {
-    const r = revealed.get(sessionId);
+    // Only the message the draft became: just written, and starting with what was shown.
+    const from = Date.now() - ts <= HANDOFF_MS ? handoff(sessionId, text) : null;
+    if (from === null) return text.length;
     revealed.delete(sessionId);
-    if (!r || Date.now() - ts > 15_000) return text.length;
-    return text.startsWith(r.text.slice(0, r.shown)) ? r.shown : text.length;
+    return from;
   });
   const shown = useReveal(text, start);
-  if (shown >= text.length) return <Markdown text={text} />;
-  return <BlockMarkdown text={closeOpenMarkdown(text.slice(0, shown))} seen={start} />;
+  // Not streamed: plain. Streamed: kept as blocks, so its DOM (and any sideways scroll) stays.
+  if (start >= text.length) return <Markdown text={text} />;
+  const writing = shown < text.length;
+  return <BlockMarkdown text={writing ? closeOpenMarkdown(text.slice(0, shown)) : text} seen={start} writing={writing} />;
 }
 
 // Lines that tie blocks together across blank lines (link definitions, footnotes, raw HTML).
 const DOCUMENT_WIDE = /^ {0,3}(?:\[[^\]\n]+\]:|<[A-Za-z!?/])|\[\^/m;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
-// After a blank line these still belong to the block before: indented content or another list item.
-const CONTINUATION = /^(?:[ \t]|(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$))/;
+const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)/;
 
 /**
  * Cuts Markdown at blank lines that end a block, so each piece renders as it
@@ -172,6 +206,7 @@ export function splitMarkdownBlocks(text: string): string[] {
   let current: string[] = [];
   let fence: string | null = null;
   let afterBlank = false;
+  let inList = false;
   for (const line of text.split('\n')) {
     const f = FENCE.exec(line);
     if (fence) {
@@ -179,11 +214,15 @@ export function splitMarkdownBlocks(text: string): string[] {
       if (f && f[1]![0] === fence[0] && f[1]!.length >= fence.length && line.trim() === f[1]) fence = null;
       continue;
     }
-    if (afterBlank && line.trim() && !CONTINUATION.test(line) && current.some((l) => l.trim())) {
+    // After a blank line, indented content and the next item of a list still belong to the block before.
+    const continues = /^[ \t]/.test(line) || (inList && LIST_ITEM.test(line));
+    if (afterBlank && line.trim() && !continues && current.some((l) => l.trim())) {
       blocks.push(current.join('\n'));
       current = [];
+      inList = false;
     }
     if (f) fence = f[1]!;
+    if (LIST_ITEM.test(line)) inList = true;
     afterBlank = !line.trim();
     current.push(line);
   }
@@ -202,11 +241,11 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, fresh }: { text: strin
  * as it grows, and each new block fades in once (as in T3 Code). Blocks already
  * on screen before this mounted (`seen` characters) do not fade again.
  */
-function BlockMarkdown({ text, seen }: { text: string; seen: number }) {
+function BlockMarkdown({ text, seen, writing }: { text: string; seen: number; writing: boolean }) {
   const blocks = splitMarkdownBlocks(text);
   const [seenBlocks] = useState(() => (seen > 0 ? splitMarkdownBlocks(text.slice(0, seen)).length : 0));
   return (
-    <div className="md md--streaming">
+    <div className={writing ? 'md md--streaming' : 'md'}>
       {blocks.map((block, i) => (
         // Blocks only change at the end.
         <MarkdownBlock key={i} text={block} fresh={i >= seenBlocks} />
