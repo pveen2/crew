@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { CrewEvent, Session, TurnStatus } from '@crew/protocol';
 import {
   Badge,
@@ -23,6 +23,7 @@ import {
   cx,
   type BadgeTone,
   type IconName,
+  type MentionOption,
 } from '@crew/ui';
 import {
   archiveThread,
@@ -778,7 +779,8 @@ type SessionOption = ReturnType<typeof sessionOptions>[number];
 /**
  * Exact match of a known agent name right after "@", ending at a space or the
  * end of the text. The longest name wins ("@store manager" over "@store").
- * Several sessions of one role: the one you are talking to, otherwise ask.
+ * Several sessions of one role: the one whose label it is ("@developer-2"),
+ * else the one you are talking to, otherwise ask.
  */
 export function resolveMention(
   body: string,
@@ -802,9 +804,51 @@ export function resolveMention(
   }
   const rest = body.slice(1 + best.key.length).trim();
   if (!rest) return { error: 'Write a message after the @ name.' };
-  const pick = best.matches.length === 1 ? best.matches[0] : best.matches.find((m) => m.value === currentSessionId);
+  const byLabel = best.matches.filter((m) => [m.label.toLowerCase(), m.label.toLowerCase().replace(/\s+/g, '-')].includes(best!.key));
+  const pick =
+    best.matches.length === 1 ? best.matches[0] : byLabel.length === 1 ? byLabel[0] : best.matches.find((m) => m.value === currentSessionId);
   if (!pick) return { error: `There are several ${best.matches[0]!.label} sessions here. Pick one with the Talk to menu.` };
   return { sessionId: pick.value, rest };
+}
+
+/**
+ * "@developer …" in a thread the lead owns: which agent it names. The message
+ * itself stays with the lead, who calls that specialist. Names (what the menu
+ * writes) first, labels only when no name fits; the longest wins.
+ */
+export function mentionedRole(body: string, roles: Array<{ name: string; label: string }>): { role: string; rest: string } | { error: string } {
+  const lower = body.toLowerCase();
+  let best: { key: string; role: string } | undefined;
+  for (const byName of [true, false]) {
+    for (const r of roles) {
+      const keys = byName ? [r.name.toLowerCase()] : [r.label.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')];
+      for (const key of keys) {
+        const end = 1 + key.length;
+        if (!lower.startsWith('@' + key) || (lower.length > end && !/\s/.test(lower[end]!))) continue;
+        if (!best || key.length > best.key.length) best = { key, role: r.name };
+      }
+    }
+    if (best) break;
+  }
+  if (!best) {
+    const name = /^@(\S+)/.exec(body)?.[1] ?? '';
+    return { error: `No agent called @${name} on this thread's team.` };
+  }
+  const rest = body.slice(1 + best.key.length).trim();
+  if (!rest) return { error: 'Write a message after the @ name.' };
+  return { role: best.role, rest };
+}
+
+/** An "@specialist" anywhere in the text (after a space), by name or dashed label. */
+/** "@<name>" as a word of its own, for any of these names (spaces allowed). */
+function mentionsAny(body: string, names: string[]): boolean {
+  return names.some((n) => n && new RegExp(`(^|[^\\w@])@${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'i').test(body));
+}
+
+function mentionsSpecialist(body: string, roles: Array<{ name: string; label: string; isLead: boolean }>): boolean {
+  const keys = new Set(roles.filter((r) => !r.isLead).flatMap((r) => [r.name.toLowerCase(), r.label.toLowerCase().replace(/\s+/g, '-')]));
+  // A word of its own: "@developer," counts, "@developer/tools" (a package) does not.
+  return [...body.toLowerCase().matchAll(/(?:^|\s)@([\w-]+)(?=$|[\s.,;:!?)])/g)].some((m) => keys.has(m[1]!));
 }
 
 function ThreadComposer({ threadId, session, data, rootId }: { threadId: string; session: Session; data: ThreadData; rootId: string }) {
@@ -818,6 +862,34 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   const working = session.status === 'running' || session.status === 'queued';
   const ref = useRef<HTMLTextAreaElement>(null);
   const options = useMemo(() => sessionOptions(data, rootId, labels), [data, rootId, labels]);
+  // In a thread the lead owns, @ lists the whole team: the question stays here
+  // and the lead starts that specialist. Otherwise @ talks to an agent in the thread.
+  const roles = useApp((s) => s.roles);
+  const benched = useApp((s) => (s.threads[threadId] ?? s.details[threadId]?.thread)?.benched);
+  const root = data.sessions[rootId];
+  const leadOwns = !!root && roles.some((r) => r.isLead && r.name === root.role);
+  const team = useMemo(
+    () => (leadOwns ? roles.filter((r) => r.isLead || !benched?.includes(r.name)).sort((a, b) => Number(b.isLead) - Number(a.isLead)) : []),
+    [leadOwns, roles, benched],
+  );
+  // Typed by hand, a switched-off specialist still goes to the lead, who says it is off.
+  const allNames = useMemo(() => (leadOwns ? roles : []), [leadOwns, roles]);
+  const me = useApp((s) => s.me);
+  const people = useApp((s) => s.people);
+  const mentions = useMemo<MentionOption[]>(
+    () => [
+      ...(leadOwns
+        ? team.map((r) => ({ value: r.name, label: r.label, description: r.isLead ? 'Keep it with the lead' : r.description, prefix: <RoleFace role={r.name} size="sm" decorative /> }))
+        : options.map((o) => ({ value: o.label.toLowerCase().replace(/\s+/g, '-'), label: o.label, prefix: <RoleFace role={o.role} size="sm" decorative /> }))),
+      // Team server: colleagues too. Tagging one makes the agent wait for them.
+      ...(me
+        ? people
+            .filter((p) => p.email !== me)
+            .map((p) => ({ value: p.name, label: p.name, description: p.email, prefix: <PersonFace email={p.email} size={20} /> }))
+        : []),
+    ],
+    [leadOwns, team, options, me, people],
+  );
 
   // Not on a phone: the keyboard would come up over the conversation you just opened.
   useEffect(() => {
@@ -826,39 +898,50 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
 
   const go = (sessionId: string) => navigate({ name: 'thread', threadId, sessionId: sessionId === rootId ? undefined : sessionId });
 
-  const me = useApp((s) => s.me);
-  const people = useApp((s) => s.people);
   // A DM before anyone called an agent: messages go to people only.
   // From the events, which arrive live (turns are only loaded with the thread).
   const dmQuiet = Boolean(data.thread.dm) && !data.events.some((e) => e.type === 'turn_started' && e.sessionId === rootId);
-  const picker = useMentionPicker(text, setText, ref, options, me ? people.filter((p) => p.email !== me) : []);
 
   const submit = async () => {
     let body = text.trim();
     if ((!body && !images.files.length) || busy) return;
-    // People tagged (@Juliette): with nobody else called on, the agent waits for them.
-    const mentions = me ? mentionedPeople(body, people, me) : [];
-    // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
     let target = session;
-    let toAgent = options.some((o) => new RegExp(`(^|[^\\w@])@${o.label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w])`, 'i').test(body));
-    if (body.startsWith('@')) {
+    // People tagged (@Juliette): with no agent called on as well, the agent waits for them.
+    const tagged = me ? mentionedPeople(body, people, me) : [];
+    // "@Juliette, …" or "@Paul Veen, …" starts with a colleague, not an agent.
+    const toPerson = Boolean(me && leadingPerson(body, people, me));
+    // Called on an agent as well (@GM, @developer): it answers, even with people tagged.
+    let toAgent =
+      mentionsSpecialist(body, roles) ||
+      mentionsAny(body, [...roles.filter((r) => r.isLead).flatMap((r) => [r.name, r.label]), ...options.map((o) => o.label)]);
+    if (body.startsWith('@') && !toPerson && leadOwns) {
+      // "@developer …" goes to the lead in the main thread, word for word; the lead calls the developer.
+      const named = mentionedRole(body, allNames);
+      if ('error' in named) {
+        setError(named.error);
+        return;
+      }
+      target = root;
+      toAgent = true;
+      if (roles.find((r) => r.name === named.role)?.isLead) body = named.rest;
+    } else if (leadOwns && session.id !== rootId && mentionsSpecialist(body, roles)) {
+      // "Please ask @developer …" from a stepped-in session also goes to the lead.
+      target = root;
+    } else if (body.startsWith('@') && !toPerson) {
+      // "@store-manager …" or "@Store manager …" sends to that agent's session in this thread.
       const resolved = resolveMention(body, options, session.id);
       if ('error' in resolved) {
-        // "@Juliette, …" or "@Paul Veen, …" starts with a person, not an agent: that is fine.
-        if (!leadingPerson(body, people, me)) {
-          setError(resolved.error);
-          return;
-        }
-      } else {
-        target = data.sessions[resolved.sessionId]!;
-        body = resolved.rest;
-        toAgent = true;
+        setError(resolved.error);
+        return;
       }
+      target = data.sessions[resolved.sessionId]!;
+      body = resolved.rest;
+      toAgent = true;
     }
     setBusy(true);
     setError('');
     try {
-      await sendMessage(threadId, body, target.depth === 0 ? undefined : target.id, undefined, images.files, { mentions, toAgent });
+      await sendMessage(threadId, body, target.depth === 0 ? undefined : target.id, undefined, images.files, { mentions: tagged, toAgent });
       setText('');
       images.clear();
       if (target.id !== session.id) go(target.id);
@@ -877,11 +960,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
       {session.depth === 0 && !dmQuiet ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
       {error || images.error ? <StatusLine tone="critical" icon="alert">{error || images.error}</StatusLine> : null}
       <AttachmentTray files={images.files} onRemove={images.remove} />
-      <div className="composer-anchor">
-      {picker.list}
       <Composer
         ref={ref}
-        onKeyDown={picker.onKeyDown}
         // On a phone Return adds a line and the send button sends, as in the ChatGPT and Claude apps.
         enterSends={!isPhoneTouch()}
         label={`Message ${label}`}
@@ -892,6 +972,7 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         }}
         onSubmit={() => void submit()}
         onPaste={images.onPaste}
+        mentions={mentions}
         leading={images.button}
         disabled={!online}
         placeholder={
@@ -914,96 +995,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
           </>
         }
       />
-      </div>
     </BlockStack>
   );
-}
-
-type Suggestion = { key: string; kind: 'agent' | 'person'; label: string; detail: string; role?: string; email?: string };
-
-/**
- * "@" in the composer: a list of the agents in this thread and the colleagues on the
- * server. Arrows move, Enter or Tab picks, Escape closes. Picking writes "@Name ".
- */
-function useMentionPicker(
-  text: string,
-  setText: (t: string) => void,
-  ref: { current: HTMLTextAreaElement | null },
-  options: SessionOption[],
-  people: { email: string; name: string }[],
-) {
-  const [index, setIndex] = useState(0);
-  const [closedAt, setClosedAt] = useState<string | null>(null);
-  const caret = ref.current && document.activeElement === ref.current ? ref.current.selectionStart : text.length;
-  const before = text.slice(0, caret);
-  const match = /(^|\s)@([\p{L}\p{N}._-]*)$/u.exec(before);
-  const query = match ? match[2]!.toLowerCase() : null;
-  const suggestions: Suggestion[] =
-    query === null || closedAt === before
-      ? []
-      : [
-          ...options.map((o): Suggestion => ({ key: o.value, kind: 'agent', label: o.label, detail: 'agent', role: o.role })),
-          ...people.map((p): Suggestion => ({ key: p.email, kind: 'person', label: p.name, detail: p.email, email: p.email })),
-        ]
-          .filter((s) => s.label.toLowerCase().startsWith(query) || s.email?.startsWith(query) || s.role?.startsWith(query))
-          .slice(0, 7);
-  const active = Math.min(index, Math.max(0, suggestions.length - 1));
-
-  useEffect(() => setIndex(0), [query]);
-
-  const pick = (s: Suggestion) => {
-    if (!match) return;
-    const start = match.index + match[1]!.length;
-    const next = `${text.slice(0, start)}@${s.label} ${text.slice(caret)}`;
-    setText(next);
-    const at = start + s.label.length + 2;
-    requestAnimationFrame(() => {
-      ref.current?.focus();
-      ref.current?.setSelectionRange(at, at);
-    });
-  };
-
-  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (!suggestions.length) return;
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      setIndex((active + (e.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length);
-    } else if ((e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) {
-      e.preventDefault();
-      pick(suggestions[active]!);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      setClosedAt(before);
-    }
-  };
-
-  const agents = suggestions.filter((s) => s.kind === 'agent');
-  const persons = suggestions.filter((s) => s.kind === 'person');
-  const row = (s: Suggestion) => (
-    <button
-      key={s.key}
-      type="button"
-      role="option"
-      aria-selected={s === suggestions[active]}
-      className="mention-option"
-      // Keep the focus in the text box.
-      onMouseDown={(e) => e.preventDefault()}
-      onClick={() => pick(s)}
-    >
-      {s.kind === 'agent' ? <RoleFace role={s.role!} size="xs" decorative /> : <PersonFace email={s.email!} size={18} />}
-      <span className="mention-option__label">{s.label}</span>
-      <span className="mention-option__detail">{s.detail}</span>
-    </button>
-  );
-  const list = suggestions.length ? (
-    <div className="mention-list" role="listbox" aria-label="Tag an agent or a colleague">
-      {agents.length ? <div className="mention-list__head">Agents</div> : null}
-      {agents.map(row)}
-      {persons.length ? <div className="mention-list__head">People</div> : null}
-      {persons.map(row)}
-    </div>
-  ) : null;
-  return { list, onKeyDown };
 }
 
 /** A colleague's face, with a green dot while they have this thread open. */

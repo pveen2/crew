@@ -130,11 +130,18 @@ export function instructionsMarkdown(opts: TranslateOptions): string {
   } else {
     parts.push('- Crew tools (MCP server `crew`):');
     for (const t of crewTools(crew, agent, canDelegate, opts.benched)) parts.push(`  - \`${t.name}\`: ${t.description}`);
+    if (canDelegate) {
+      parts.push(
+        '- When the owner names a specialist with @ (e.g. `@developer fix the header`), they want that specialist on it: ' +
+          'call its tool with a full brief straight away, without asking first, then report back here with what it did. ' +
+          'If that specialist is switched off for this thread, say so and do it yourself.',
+      );
+    }
     if (agent.isLead && !canDelegate) parts.push('  - You cannot call specialists in this thread. Do the work yourself or say what is missing.');
     const off = canDelegate ? (opts.benched ?? []).map((n) => crew.agents[n]).filter((a) => a && !a.isLead) : [];
     if (off.length) {
       parts.push(
-        `- Switched off by the owner for this thread: ${off.map((a) => `the ${a!.label}`).join(', ')}.` +
+        `- Switched off by the owner for this thread: ${off.map((a) => `the ${a!.label} (@${a!.name})`).join(', ')}.` +
           ' You cannot call them here, whatever your instructions say about them. Do their part yourself or with the specialists you have, and do not ask the owner to switch them back on.',
       );
     }

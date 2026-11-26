@@ -1984,59 +1984,6 @@ body,
   gap: var(--cr-space-100);
 }
 
-/* "@" in the composer: agents and colleagues to tag. */
-.composer-anchor {
-  position: relative;
-}
-.mention-list {
-  position: absolute;
-  left: var(--cr-space-300);
-  bottom: calc(100% + 6px);
-  z-index: 5;
-  width: min(300px, calc(100% - 24px));
-  padding: 4px;
-  border: 1px solid var(--cr-color-border-elevated);
-  border-radius: 10px;
-  background: var(--cr-color-bg-surface);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-}
-.mention-list__head {
-  padding: 4px 8px 2px;
-  font-size: 10px;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--cr-color-text-secondary);
-}
-.mention-option {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  font: inherit;
-  color: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.mention-option[aria-selected='true'],
-.mention-option:hover {
-  background: var(--cr-color-bg-fill-selected);
-}
-.mention-option__label {
-  font-weight: 500;
-}
-.mention-option__detail {
-  margin-left: auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  color: var(--cr-color-text-secondary);
-}
 .md mark {
   padding: 0 3px;
   border-radius: 4px;

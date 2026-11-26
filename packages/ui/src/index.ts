@@ -10,7 +10,7 @@ export { Face, FaceStack, faceKey, type FaceProps, type FaceSize, type FaceState
 export { Card, CardHeader, CardRow, CardRowButton, CardDetails, CardFooter, type CardProps } from './Card';
 export { Panel, PanelHeader, PanelBody, type PanelHeaderProps } from './Panel';
 export { Tabs, SegmentedControl, type TabItem } from './Tabs';
-export { TextField, Composer, ChipSelect, type TextFieldProps, type ComposerProps, type ChipSelectProps } from './fields';
+export { TextField, Composer, ChipSelect, type TextFieldProps, type ComposerProps, type MentionOption, type ChipSelectProps } from './fields';
 export { ListItem, NavItem, type ListItemProps, type NavItemProps } from './ListItem';
 export { Banner, Disclosure } from './misc';
 export { Switch } from './Switch';
