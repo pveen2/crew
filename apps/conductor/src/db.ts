@@ -1,9 +1,15 @@
 // SQLite storage via Node's built-in node:sqlite. Threads, sessions, turns,
 // events and inbox items.
 
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import type {
+  Attachment,
   CrewEvent,
+  Dm,
+  DmMessage,
   CrewEventBody,
   DocFormat,
   DocStatus,
@@ -148,6 +154,33 @@ CREATE TABLE IF NOT EXISTS shares (
   shared_at INTEGER NOT NULL,
   shared_by TEXT
 );
+
+-- Direct messages (team server): plain chats between people, apart from threads.
+-- No agent takes part. key is the sorted, comma-joined emails: one DM per group.
+CREATE TABLE IF NOT EXISTS dms (
+  id TEXT PRIMARY KEY,
+  key TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dm_people (
+  dm_id TEXT NOT NULL REFERENCES dms(id),
+  email TEXT NOT NULL,
+  PRIMARY KEY (dm_id, email)
+);
+CREATE INDEX IF NOT EXISTS dm_people_email ON dm_people(email);
+CREATE TABLE IF NOT EXISTS dm_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  dm_id TEXT NOT NULL REFERENCES dms(id),
+  by_email TEXT NOT NULL,
+  text TEXT NOT NULL,
+  attachments TEXT,
+  ts INTEGER NOT NULL,
+  -- Set by the app per message: a send that is retried after a lost answer lands once.
+  client_id TEXT
+);
+CREATE INDEX IF NOT EXISTS dm_messages_dm ON dm_messages(dm_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS dm_messages_client ON dm_messages(dm_id, by_email, client_id);
 `;
 
 type Row = Record<string, SQLInputValue>;
@@ -163,8 +196,29 @@ function toThread(r: Row): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     archived: Boolean(r.archived),
     benched: parseList(r.benched),
     createdBy: (r.created_by as string | null) ?? null,
-    ...(r.dm ? { dm: true } : {}),
   };
+}
+
+function toDmMessage(r: Row): DmMessage {
+  const attachments = r.attachments ? (JSON.parse(r.attachments as string) as Attachment[]) : [];
+  return {
+    id: Number(r.id),
+    dmId: r.dm_id as string,
+    by: r.by_email as string,
+    text: r.text as string,
+    ...(attachments.length ? { attachments } : {}),
+    ts: Number(r.ts),
+  };
+}
+
+/** An email as DMs take it: no spaces or commas (a DM's key joins emails with commas). */
+export function isEmail(e: string): boolean {
+  return /^[^@\s,]+@[^@\s,]+$/.test(e);
+}
+
+/** The key of a DM between these people: sorted, lower-case emails. */
+export function dmKey(emails: string[]): string {
+  return [...new Set(emails.map((e) => e.toLowerCase()))].sort().join(',');
 }
 
 function parseList(v: SQLInputValue | undefined): string[] {
@@ -280,7 +334,11 @@ export interface MemoryRow {
 export class Store {
   readonly db: DatabaseSync;
 
-  constructor(file: string) {
+  /** Where attached images live (one folder per thread or DM); for moving old DMs' images. */
+  private readonly attachmentsDir: string | undefined;
+
+  constructor(file: string, opts: { attachments?: string } = {}) {
+    this.attachmentsDir = opts.attachments;
     this.db = new DatabaseSync(file);
     this.db.exec(SCHEMA);
     // Small forward-only migrations for databases created by earlier builds.
@@ -317,6 +375,68 @@ export class Store {
     this.db.exec('CREATE INDEX IF NOT EXISTS artifacts_shown ON artifacts(thread_id, shown_at)');
     this.db.exec('CREATE TABLE IF NOT EXISTS migrations (name TEXT PRIMARY KEY, done_at INTEGER NOT NULL)');
     this.docsBackfilled = this.runOnce('docs-backfill', () => this.backfillShownDocs());
+    this.dmsReady = this.runOnce('dms-out-of-threads', () => this.moveDmThreads());
+  }
+
+  /** False while old DM threads have not moved to the DM tables: no new DMs until they have. */
+  readonly dmsReady: boolean;
+
+  /**
+   * DMs used to be threads with an agent waiting in them (threads.dm = 1). Their
+   * people's messages move to new DMs with ids of their own (old DM threads with the
+   * same people become one), their images are copied along, and the threads stay,
+   * hidden: nobody can open them or anything in them again.
+   */
+  private moveDmThreads(): void {
+    const groups = new Map<string, { people: string[]; createdAt: number; threads: string[] }>();
+    for (const t of this.all('SELECT id, created_at FROM threads WHERE dm = 1 ORDER BY created_at')) {
+      const people = this.peopleOfThread(t.id as string);
+      if (people.length < 2 || people.some((e) => !isEmail(e))) continue;
+      const key = dmKey(people);
+      const g = groups.get(key) ?? { people, createdAt: Number(t.created_at), threads: [] };
+      g.threads.push(t.id as string);
+      groups.set(key, g);
+    }
+    for (const [key, g] of groups) {
+      const dmId = `d_${randomBytes(6).toString('base64url')}`;
+      const messages: Array<Omit<DmMessage, 'id' | 'dmId'> & { from: string }> = [];
+      for (const threadId of g.threads) {
+        const removed = new Set<number>();
+        const edited = new Map<number, string>();
+        for (const e of this.all("SELECT * FROM events WHERE thread_id = ? AND type = 'message_delivery' ORDER BY id", threadId).map(toEvent)) {
+          if (e.type !== 'message_delivery') continue;
+          if (e.state === 'removed') removed.add(e.messageId);
+          if (e.state === 'edited' && e.text !== undefined) edited.set(e.messageId, e.text);
+        }
+        for (const e of this.all("SELECT * FROM events WHERE thread_id = ? AND type = 'message' ORDER BY id", threadId).map(toEvent)) {
+          // People only: whatever an agent said in an old DM stays out, and so do taken-back messages.
+          if (e.type !== 'message' || e.role !== 'user' || !e.by || removed.has(e.id)) continue;
+          messages.push({ from: threadId, by: e.by, text: edited.get(e.id) ?? e.text, ...(e.attachments?.length ? { attachments: e.attachments } : {}), ts: e.ts });
+        }
+      }
+      // Two old DMs merged: their messages in the order they were written.
+      messages.sort((a, b) => a.ts - b.ts);
+      const updatedAt = Math.max(g.createdAt, ...messages.map((m) => m.ts));
+      this.run('INSERT INTO dms (id, key, created_at, updated_at) VALUES (?,?,?,?)', dmId, key, g.createdAt, updatedAt);
+      for (const e of g.people) this.run('INSERT OR IGNORE INTO dm_people (dm_id, email) VALUES (?, ?)', dmId, e);
+      for (const m of messages) {
+        // Only the images of messages that moved are copied to the DM's folder.
+        const attachments = (m.attachments ?? []).filter((a) => this.copyAttachment(m.from, dmId, a.file));
+        this.run(
+          'INSERT INTO dm_messages (dm_id, by_email, text, attachments, ts) VALUES (?,?,?,?,?)',
+          dmId, m.by, m.text, attachments.length ? JSON.stringify(attachments) : null, m.ts,
+        );
+      }
+    }
+  }
+
+  private copyAttachment(fromId: string, toId: string, file: string): boolean {
+    if (!this.attachmentsDir || !/^[\w.-]+$/.test(file) || file.startsWith('.')) return false;
+    const from = join(this.attachmentsDir, fromId, file);
+    if (!existsSync(from)) return false;
+    mkdirSync(join(this.attachmentsDir, toId), { recursive: true, mode: 0o700 });
+    copyFileSync(from, join(this.attachmentsDir, toId, file));
+    return true;
   }
 
   /** False while the Docs backfill has not completed: legacy draft Inbox items must stay. */
@@ -453,43 +573,9 @@ export class Store {
   addThreadPerson(threadId: string, email: string): void {
     this.run('INSERT OR IGNORE INTO thread_people (thread_id, email) VALUES (?, ?)', threadId, email.toLowerCase());
   }
-  /** A DM's members; null for a thread everyone sees. */
-  dmMembers(threadId: string): string[] | null {
-    const r = this.get('SELECT dm FROM threads WHERE id = ?', threadId);
-    return r?.dm ? this.peopleOfThread(threadId) : null;
-  }
-  /** The DM between exactly these people, if there is one (closed ones too). */
-  dmBetween(emails: string[]): string | undefined {
-    const want = [...new Set(emails.map((e) => e.toLowerCase()))].sort().join(',');
-    const rows = this.all('SELECT id FROM threads WHERE dm = 1 ORDER BY archived, updated_at DESC');
-    return rows.map((r) => r.id as string).find((id) => [...this.peopleOfThread(id)].sort().join(',') === want);
-  }
-  /** The last message as people see it: edits applied, taken-back messages skipped. */
-  lastMessageOfThread(threadId: string): CrewEvent | undefined {
-    // Messages and their edits or removals are looked up apart: a big batch of
-    // other delivery events (Go ahead on many held messages) cannot crowd them out.
-    let before = Number.MAX_SAFE_INTEGER;
-    for (;;) {
-      const messages = this.all("SELECT * FROM events WHERE thread_id = ? AND type = 'message' AND id < ? ORDER BY id DESC LIMIT 50", threadId, before).map(toEvent);
-      if (!messages.length) return undefined;
-      const ids = messages.map((m) => m.id);
-      const changes = this.all(
-        `SELECT * FROM events WHERE thread_id = ? AND type = 'message_delivery'
-           AND json_extract(body, '$.messageId') IN (${ids.map(() => '?').join(',')})
-           AND json_extract(body, '$.state') IN ('removed', 'edited') ORDER BY id`,
-        threadId, ...ids,
-      ).map(toEvent);
-      const removed = new Set<number>();
-      const edited = new Map<number, string>();
-      for (const c of changes) {
-        if (c.type !== 'message_delivery') continue;
-        if (c.state === 'removed') removed.add(c.messageId);
-        if (c.state === 'edited' && c.text !== undefined) edited.set(c.messageId, c.text); // oldest first: the last wins
-      }
-      const hit = messages.find((m) => !removed.has(m.id));
-      if (hit) return edited.has(hit.id) ? ({ ...hit, text: edited.get(hit.id)! } as CrewEvent) : hit;
-      before = ids.at(-1)!;
-    }
+  /** An old DM thread (from before DMs were their own thing): hidden from everyone. */
+  isDmThread(threadId: string): boolean {
+    return Boolean(this.get('SELECT dm FROM threads WHERE id = ?', threadId)?.dm);
   }
   peopleOfThread(threadId: string): string[] {
     return this.all('SELECT email FROM thread_people WHERE thread_id = ? ORDER BY rowid', threadId).map((r) => r.email as string);
@@ -518,12 +604,66 @@ export class Store {
     return ids.length;
   }
 
+  // Direct messages ----------------------------------------------------------
+
+  /** The DM between exactly these people, made if there is none. */
+  dmFor(emails: string[], newId: () => string, now = Date.now()): Dm {
+    const key = dmKey(emails);
+    let id = this.get('SELECT id FROM dms WHERE key = ?', key)?.id as string | undefined;
+    if (!id) {
+      id = newId();
+      this.run('INSERT INTO dms (id, key, created_at, updated_at) VALUES (?,?,?,?)', id, key, now, now);
+      for (const e of new Set(emails.map((x) => x.toLowerCase()))) this.run('INSERT INTO dm_people (dm_id, email) VALUES (?, ?)', id, e);
+    }
+    return this.dm(id)!;
+  }
+  dm(id: string): Dm | undefined {
+    const r = this.get('SELECT * FROM dms WHERE id = ?', id);
+    if (!r) return undefined;
+    const last = this.get('SELECT * FROM dm_messages WHERE dm_id = ? ORDER BY id DESC LIMIT 1', id);
+    return {
+      id,
+      people: this.dmPeople(id),
+      createdAt: Number(r.created_at),
+      updatedAt: Number(r.updated_at),
+      ...(last ? { last: { by: last.by_email as string, text: last.text as string, ts: Number(last.ts) } } : {}),
+    };
+  }
+  dmPeople(id: string): string[] {
+    return this.all('SELECT email FROM dm_people WHERE dm_id = ? ORDER BY email', id).map((r) => r.email as string);
+  }
+  /** Someone's DMs, most recent first. Ones without a message yet are left out. */
+  dmsOf(email: string): Dm[] {
+    return this.all(
+      `SELECT d.id FROM dms d JOIN dm_people p ON p.dm_id = d.id
+        WHERE p.email = ? AND EXISTS (SELECT 1 FROM dm_messages m WHERE m.dm_id = d.id)
+        ORDER BY d.updated_at DESC`,
+      email.toLowerCase(),
+    ).map((r) => this.dm(r.id as string)!);
+  }
+  /** A DM's messages, oldest first: the latest `limit`, or the ones before message `before`. */
+  dmMessages(id: string, limit = 200, before = Number.MAX_SAFE_INTEGER): DmMessage[] {
+    return this.all('SELECT * FROM dm_messages WHERE dm_id = ? AND id < ? ORDER BY id DESC LIMIT ?', id, before, limit).map(toDmMessage).reverse();
+  }
+  /** The message this person already sent with this client id (a retried send). */
+  dmMessageByClientId(dmId: string, by: string, clientId: string): DmMessage | undefined {
+    const r = this.get('SELECT * FROM dm_messages WHERE dm_id = ? AND by_email = ? AND client_id = ?', dmId, by, clientId);
+    return r && toDmMessage(r);
+  }
+  insertDmMessage(m: Omit<DmMessage, 'id'>, clientId?: string): DmMessage {
+    const r = this.db
+      .prepare('INSERT INTO dm_messages (dm_id, by_email, text, attachments, ts, client_id) VALUES (?,?,?,?,?,?)')
+      .run(m.dmId, m.by, m.text, m.attachments?.length ? JSON.stringify(m.attachments) : null, m.ts, clientId ?? null);
+    this.run('UPDATE dms SET updated_at = MAX(updated_at, ?) WHERE id = ?', m.ts, m.dmId);
+    return { ...m, id: Number(r.lastInsertRowid) };
+  }
+
   // Threads ------------------------------------------------------------------
 
   insertThread(t: Omit<Thread, 'roles' | 'statusText' | 'usage'>): void {
     this.run(
-      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, created_by, dm) VALUES (?,?,?,?,?,?,?,?,?,?)',
-      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.createdBy ?? null, t.dm ? 1 : 0,
+      'INSERT INTO threads (id, title, status, root_session_id, created_at, updated_at, archived, benched, created_by) VALUES (?,?,?,?,?,?,?,?,?)',
+      t.id, t.title, t.status, t.rootSessionId, t.createdAt, t.updatedAt, t.archived ? 1 : 0, JSON.stringify(t.benched), t.createdBy ?? null,
     );
     if (t.createdBy) this.addThreadPerson(t.id, t.createdBy);
   }
@@ -532,7 +672,8 @@ export class Store {
     return r && toThread(r);
   }
   threads(): Omit<Thread, 'roles' | 'statusText' | 'usage'>[] {
-    return this.all('SELECT * FROM threads ORDER BY updated_at DESC').map(toThread);
+    // Old DM threads are left out: their messages moved to the DM tables.
+    return this.all('SELECT * FROM threads WHERE dm = 0 ORDER BY updated_at DESC').map(toThread);
   }
   setThreadTitle(id: string, title: string): Omit<Thread, 'roles' | 'statusText' | 'usage'> {
     const t = this.thread(id);

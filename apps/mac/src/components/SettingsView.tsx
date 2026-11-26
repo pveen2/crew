@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { BlockStack, Button, Card, Icon, InlineStack, Panel, SegmentedControl, Switch, Text } from '@crew/ui';
 import { MAC_INSTALL_COMMAND, MAC_RELEASES, latestMacDownloads, offerMacApp, type MacDownloads } from '../macApp';
-import { setShowSpend, setSidebarTheme, setTouchIcon, useApp, type SidebarTheme } from '../store';
+import { personName, setShowSpend, setSidebarTheme, setTouchIcon, useApp, type SidebarTheme } from '../store';
+import { PersonFace } from './common';
 import type { TouchIcon } from '../touchIcon';
 import { SpendOverview } from './SpendOverview';
 
@@ -27,6 +28,8 @@ export function SettingsView() {
               How Crew looks on this Mac.
             </Text>
           </BlockStack>
+
+          <AccountCard />
 
           {offerMacApp && <MacAppCard />}
 
@@ -88,6 +91,38 @@ export function SettingsView() {
         </BlockStack>
       </div>
     </Panel>
+  );
+}
+
+/** Team server: who is signed in, and Sign out. On a Mac's own conductor there is nobody to sign out. */
+function AccountCard() {
+  const me = useApp((s) => s.me);
+  const name = useApp((s) => (s.me ? personName(s.me, s.people) : ''));
+  const [busy, setBusy] = useState(false);
+  if (!me) return null;
+  const signOut = () => {
+    setBusy(true);
+    // The app: forget the login and start a new sign-in. The browser: Cloudflare Access's logout page.
+    if (window.crewHost?.signOut) void window.crewHost.signOut();
+    else location.href = '/cdn-cgi/access/logout';
+  };
+  return (
+    <Card>
+      <InlineStack gap="400" className="settings-row">
+        <PersonFace email={me} size={32} />
+        <BlockStack className="settings-row__text">
+          <Text variant="bodyLg" weight="medium">
+            {name}
+          </Text>
+          <Text variant="bodySm" tone="secondary">
+            Signed in as {me}
+          </Text>
+        </BlockStack>
+        <Button size="slim" icon="arrowUpRight" disabled={busy} onClick={signOut}>
+          {busy ? 'Signing out…' : 'Sign out'}
+        </Button>
+      </InlineStack>
+    </Card>
   );
 }
 

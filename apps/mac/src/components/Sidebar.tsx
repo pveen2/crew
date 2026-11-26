@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ConnectionStatus, Thread } from '@crew/protocol';
 import { Button, IconButton, Icon, ListItem, NavItem, Spinner, Text, cx } from '@crew/ui';
-import { createDm, dmTitle, forMe, inScope, isNewDoc, navigate, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
+import { dmName, dmUnread, forMe, inScope, isNewDoc, navigate, personName, startConductor, signInConnection, useApp, type UpdateInfo } from '../store';
 import { offerMacApp } from '../macApp';
-import { PersonFace, RoleFaces, ScopeToggle, age, usageLabel, usageTitle, useNow } from './common';
+import { OnlineFace, PersonFace, RoleFaces, ScopeToggle, age, usageLabel, usageTitle, useNow } from './common';
 
 export function Sidebar() {
   const view = useApp((s) => s.view);
@@ -22,10 +22,11 @@ export function Sidebar() {
   const starting = useApp((s) => s.conductorStarting);
   const canStart = connection === 'offline' && Boolean(window.crewHost?.startConductor);
   const collapsed = useApp((s) => s.sidebarCollapsed);
+  const unreadDms = useApp((s) => Object.values(s.dms).filter((d) => dmUnread(d, s.dmSeen, s.me) && !(s.view.name === 'dm' && s.view.dmId === d.id)).length);
   const now = useNow(1000);
 
   const sorted = useMemo(
-    () => Object.values(threads).filter((t) => !t.dm && inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
+    () => Object.values(threads).filter((t) => inScope(t, { me, scope })).sort((a, b) => b.updatedAt - a.updatedAt),
     [threads, me, scope],
   );
   // The Inbox count follows Mine / All too. An item whose thread is not loaded counts.
@@ -55,6 +56,12 @@ export function Sidebar() {
         </span>
         <IconButton tone="dark" size="md" icon="document" label="Docs" pressed={view.name === 'docs'} onClick={() => navigate({ name: 'docs' })} />
         <IconButton tone="dark" size="md" icon="agents" label="Agents" pressed={view.name === 'agents'} onClick={() => navigate({ name: 'agents' })} />
+        {me ? (
+          <span className="sidebar-rail-item">
+            <IconButton tone="dark" size="md" icon="chats" label="New message" pressed={view.name === 'message' || view.name === 'dm'} onClick={() => navigate({ name: 'message' })} />
+            {unreadDms > 0 && <span className="cr-dot cr-dot--notification" aria-hidden />}
+          </span>
+        ) : null}
         <span className="cr-spacer" />
         <IconButton tone="dark" size="md" icon="checkCircle" label="Done" pressed={view.name === 'done'} onClick={() => navigate({ name: 'done' })} />
         <IconButton tone="dark" size="md" icon="settings" label="Settings" pressed={view.name === 'settings'} onClick={() => navigate({ name: 'settings' })} />
@@ -293,71 +300,45 @@ function Connections() {
   );
 }
 
-/** Direct messages (team server): only the people in them see them. ＋ starts one. */
+/** Direct messages (team server), like Slack's: one row per conversation, bold while unread. */
 function Messages() {
   const view = useApp((s) => s.view);
-  const threads = useApp((s) => s.threads);
+  const dms = useApp((s) => s.dms);
   const me = useApp((s) => s.me);
   const people = useApp((s) => s.people);
   const seen = useApp((s) => s.dmSeen);
-  const [picking, setPicking] = useState(false);
-  const [error, setError] = useState('');
   const now = useNow(30_000);
-  const dms = useMemo(() => Object.values(threads).filter((t) => t.dm).sort((a, b) => b.updatedAt - a.updatedAt), [threads]);
-  const others = people.filter((p) => p.email !== me);
-
-  const start = async (email: string) => {
-    setPicking(false);
-    setError('');
-    try {
-      await createDm([email]);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
+  const list = useMemo(() => Object.values(dms).sort((a, b) => b.updatedAt - a.updatedAt), [dms]);
 
   return (
     <>
       <div className="sidebar-section">
         <span>Messages</span>
-        <IconButton tone="dark" size="sm" icon="plus" label="New message" pressed={picking} onClick={() => setPicking(!picking)} />
+        <IconButton tone="dark" size="sm" icon="edit" label="New message" pressed={view.name === 'message'} onClick={() => navigate({ name: 'message' })} />
       </div>
-      {picking && (
-        <div className="sidebar-people" role="menu" aria-label="Message someone">
-          {others.length === 0 ? (
-            <Text variant="caption" tone="sidebarSecondary" className="sidebar-empty">
-              Nobody else has signed in yet.
-            </Text>
-          ) : (
-            others.map((p) => (
-              <button key={p.email} type="button" role="menuitem" className="sidebar-person" onClick={() => void start(p.email)}>
-                <PersonFace email={p.email} size={18} />
-                <span className="sidebar-person__name">{p.name}</span>
-                <span className="sidebar-person__email">{p.email}</span>
-              </button>
-            ))
-          )}
-        </div>
-      )}
-      {error && (
-        <Text variant="caption" tone="sidebarSecondary" className="sidebar-empty">
-          {error}
-        </Text>
-      )}
-      {dms.map((t) => {
-        const other = (t.people ?? []).find((p) => p !== me);
-        const unread = t.updatedAt > (seen[t.id] ?? 0) && !(view.name === 'thread' && view.threadId === t.id);
+      {list.map((d) => {
+        const others = d.people.filter((p) => p !== me);
+        const open = view.name === 'dm' && view.dmId === d.id;
+        // "You: …" for mine; a name only in a group, where it is not obvious who wrote.
+        const who = d.last?.by === me ? 'You: ' : others.length > 1 && d.last ? `${personName(d.last.by, people)}: ` : '';
+        const last = d.last ? `${who}${d.last.text || 'Image'}` : '';
         return (
           <ListItem
-            key={t.id}
+            key={d.id}
             surface="dark"
-            title={dmTitle(t, me, people)}
-            unread={unread}
-            selected={view.name === 'thread' && view.threadId === t.id}
-            onClick={() => navigate({ name: 'thread', threadId: t.id })}
-            meta={age(t.updatedAt, now)}
-            subtitle={t.statusText || 'No messages yet'}
-            trailing={other ? <PersonFace email={other} size={14} /> : undefined}
+            title={dmName(d, me, people)}
+            unread={!open && dmUnread(d, seen, me)}
+            selected={open}
+            onClick={() => navigate({ name: 'dm', dmId: d.id })}
+            meta={age(d.updatedAt, now)}
+            subtitle={last}
+            trailing={
+              <span className="list-trailing">
+                {others.slice(0, 3).map((p) => (
+                  <OnlineFace key={p} email={p} size={14} />
+                ))}
+              </span>
+            }
           />
         );
       })}

@@ -12,6 +12,8 @@ import type {
   DocSummary,
   ConnectionStatus,
   CrewEvent,
+  Dm,
+  DmMessage,
   InboxItem,
   RoleSummary,
   ServerMessage,
@@ -71,6 +73,8 @@ declare global {
       /** Installs it (restart, or the download page); resolves with an error message if that failed. */
       updateApply: () => Promise<string | null>;
       whereInfo?: () => Promise<WhereInfo>;
+      /** Signs out of the server (Cloudflare Access); the window then reloads into a new sign-in. */
+      signOut?: () => Promise<void>;
       /** Switches between this Mac and a server; resolves with an error message, or null (the window then reloads). */
       whereSet?: (next: { mode: 'local' | 'server'; url?: string }) => Promise<string | null>;
       teamInfo?: () => Promise<TeamInfo>;
@@ -105,7 +109,11 @@ export type View =
   | { name: 'agents' }
   | { name: 'team' }
   | { name: 'settings' }
-  | { name: 'thread'; threadId: string; sessionId?: string };
+  | { name: 'thread'; threadId: string; sessionId?: string }
+  /** A direct message: a plain chat with colleagues. */
+  | { name: 'dm'; dmId: string }
+  /** New message: pick who it goes to, then write. */
+  | { name: 'message' };
 
 /** To review: drafts not archived. One row per thread in each. */
 export type DocsFilter = 'review' | 'approved' | 'archived';
@@ -154,8 +162,16 @@ export interface AppState {
   people: Person[];
   /** Threads and Inbox: only mine, or the whole team's. */
   scope: Scope;
+  /** Team server: my direct messages, by id. */
+  dms: Record<string, Dm>;
+  /** Messages of the DMs opened so far, oldest first. */
+  dmMessages: Record<string, DmMessage[]>;
+  /** DMs with older messages than the ones loaded. */
+  dmHasMore: Record<string, boolean>;
   /** DMs: when each was last looked at on this device. */
   dmSeen: Record<string, number>;
+  /** Team server: who has Crew open right now. */
+  online: string[];
   /** Team server: who has each thread open right now, and who is typing in it. */
   presence: Record<string, { viewing: string[]; typing: string[] }>;
   details: Record<string, ThreadData>;
@@ -214,6 +230,8 @@ function viewFromHash(): View {
   };
   const [name, a, b] = location.hash.replace(/^#\/?/, '').split('/').map((x) => (x ? decode(x) : x));
   if (name === 'thread' && a) return { name: 'thread', threadId: a, sessionId: b || undefined };
+  if (name === 'dm' && a) return { name: 'dm', dmId: a };
+  if (name === 'message') return { name };
   if (name === 'inbox') return { name, itemId: a || undefined };
   if (name === 'docs') return { name, docId: a || undefined };
   if (name === 'threads' || name === 'agents' || name === 'done' || name === 'team' || name === 'settings') return { name };
@@ -224,6 +242,8 @@ function hashOf(view: View): string {
   switch (view.name) {
     case 'thread':
       return `#thread/${view.threadId}${view.sessionId ? `/${view.sessionId}` : ''}`;
+    case 'dm':
+      return `#dm/${encodeURIComponent(view.dmId)}`;
     case 'inbox':
       return view.itemId ? `#inbox/${encodeURIComponent(view.itemId)}` : '#inbox';
     case 'docs':
@@ -408,7 +428,11 @@ let state: AppState = {
   me: null,
   people: [],
   scope: loadScope(),
+  dms: {},
+  dmMessages: {},
+  dmHasMore: {},
   dmSeen: loadDmSeen(),
+  online: [],
   presence: {},
   details: {},
   view: viewFromHash(),
@@ -503,6 +527,12 @@ async function refreshState(): Promise<void> {
     me: s.me ?? null,
     people: s.people ?? [],
   });
+  // A snapshot taken before a DM's latest message must not undo it: the newer one stays.
+  set((st) => {
+    const dms = { ...st.dms };
+    for (const d of s.dms ?? []) dms[d.id] = newerDm(dms[d.id], d);
+    return { dms };
+  });
 }
 
 function onMessage(msg: ServerMessage): void {
@@ -548,6 +578,20 @@ function onMessage(msg: ServerMessage): void {
     case 'presence':
       set((s) => ({ presence: { ...s.presence, [msg.threadId]: { viewing: msg.viewing, typing: msg.typing } } }));
       break;
+    case 'dm':
+      set((s) => ({ dms: { ...s.dms, [msg.dm.id]: newerDm(s.dms[msg.dm.id], msg.dm) } }));
+      break;
+    case 'online':
+      set({ online: msg.people });
+      break;
+    case 'dm_message': {
+      const m = msg.message;
+      const list = state.dmMessages[m.dmId];
+      // Not loaded yet (or loading): kept for when it is, so a message never falls in between.
+      if (!list) dmEarly.set(m.dmId, mergeMessages(dmEarly.get(m.dmId) ?? [], [m]).slice(-200));
+      else set((s) => ({ dmMessages: { ...s.dmMessages, [m.dmId]: mergeMessages(s.dmMessages[m.dmId] ?? [], [m]) } }));
+      break;
+    }
     case 'doc':
       // While a Docs snapshot is loading, keep updates to replay on top of it.
       docUpdatesDuringLoad?.push(msg.doc);
@@ -653,11 +697,14 @@ export async function connect(): Promise<void> {
   try {
     // Keep only the thread on screen; everything else reloads when it is opened again.
     const current = state.view.name === 'thread' ? state.view.threadId : undefined;
-    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {} }));
+    const currentDm = state.view.name === 'dm' ? state.view.dmId : undefined;
+    // DM messages reload when opened again: what came while offline is not lost.
+    set((s) => ({ details: current && s.details[current] ? { [current]: s.details[current]! } : {}, dmMessages: {}, dmHasMore: {} }));
     await refreshState();
     // Docs: the sidebar counts new drafts.
     void loadDocs().catch(() => undefined);
     if (current) await loadThread(current);
+    if (currentDm) await loadDm(currentDm);
   } catch {
     pending = null;
     socket.close();
@@ -727,6 +774,7 @@ export function navigate(view: View): void {
     // Looking at a thread counts as reading its Inbox items.
     markRead(Object.values(state.inbox).filter((i) => i.threadId === view.threadId).map((i) => i.id));
   }
+  if (view.name === 'dm' && !state.dmMessages[view.dmId]) void loadDm(view.dmId);
   if (view.name === 'docs' && view.docId) markDocSeen(view.docId);
   if (view.name === 'inbox' && view.itemId) {
     markRead([view.itemId]);
@@ -998,24 +1046,101 @@ export async function sendMessage(
   await api('POST', `/api/threads/${threadId}/messages`, { text, sessionId, replyTo, attachments: await toUploads(files), ...people });
 }
 
-/** Starts (or reopens) a direct message with these people, and opens it. */
-export async function createDm(withEmails: string[], text?: string): Promise<void> {
-  const thread = await api<Thread>('POST', '/api/dms', { with: withEmails, text });
-  set((s) => ({ threads: { ...s.threads, [thread.id]: thread } }));
-  navigate({ name: 'thread', threadId: thread.id });
+// ---------------------------------------------------------------------------
+// Direct messages (team server): plain chats between people. No agent is in them.
+
+const DM_PAGE = 200;
+/** Socket messages for DMs whose history was not loaded yet. */
+const dmEarly = new Map<string, DmMessage[]>();
+
+/** Two lists of a DM's messages as one, each message once, in the order they were sent. */
+function mergeMessages(a: DmMessage[], b: DmMessage[]): DmMessage[] {
+  const byId = new Map<number, DmMessage>();
+  for (const m of [...a, ...b]) byId.set(m.id, m);
+  return [...byId.values()].sort((x, y) => x.id - y.id);
+}
+
+/** Of two copies of a DM, the more recent one (a late answer never undoes a newer message). */
+function newerDm(a: Dm | undefined, b: Dm): Dm {
+  return a && a.updatedAt > b.updatedAt ? a : b;
+}
+
+export async function loadDm(dmId: string): Promise<void> {
+  try {
+    const list = await api<DmMessage[]>('GET', `/api/dms/${encodeURIComponent(dmId)}/messages`);
+    const early = dmEarly.get(dmId) ?? [];
+    dmEarly.delete(dmId);
+    set((s) => {
+      const { [dmId]: _gone, ...loadErrors } = s.loadErrors;
+      return {
+        loadErrors,
+        // What the socket delivered before or while this loaded stays.
+        dmMessages: { ...s.dmMessages, [dmId]: mergeMessages(mergeMessages(s.dmMessages[dmId] ?? [], early), list) },
+        dmHasMore: { ...s.dmHasMore, [dmId]: list.length >= DM_PAGE },
+      };
+    });
+  } catch (err) {
+    set((s) => ({ loadErrors: { ...s.loadErrors, [dmId]: (err as Error).message } }));
+  }
+}
+
+/** The page of messages before the oldest one loaded. */
+export async function loadOlderDm(dmId: string): Promise<void> {
+  const first = state.dmMessages[dmId]?.[0];
+  if (!first) return;
+  const older = await api<DmMessage[]>('GET', `/api/dms/${encodeURIComponent(dmId)}/messages?before=${first.id}`);
+  set((s) => ({
+    dmMessages: { ...s.dmMessages, [dmId]: mergeMessages(older, s.dmMessages[dmId] ?? []) },
+    dmHasMore: { ...s.dmHasMore, [dmId]: older.length >= DM_PAGE },
+  }));
+}
+
+/** Puts a sent message in place right away; the socket's copy of it is then skipped. */
+function gotDm(r: { dm: Dm; message: DmMessage }): void {
+  set((s) => {
+    const list = s.dmMessages[r.dm.id];
+    return {
+      dms: { ...s.dms, [r.dm.id]: newerDm(s.dms[r.dm.id], r.dm) },
+      dmMessages: list ? { ...s.dmMessages, [r.dm.id]: mergeMessages(list, [r.message]) } : s.dmMessages,
+    };
+  });
+}
+
+/** `clientId`: one per message written; sending it again (after a lost answer) posts it once. */
+export async function sendDm(dmId: string, text: string, files: File[] | undefined, clientId: string): Promise<void> {
+  gotDm(await api('POST', `/api/dms/${encodeURIComponent(dmId)}/messages`, { text, attachments: await toUploads(files), clientId }));
+}
+
+/** New message: sends to these people, in their DM (made on the first message), and opens it. */
+export async function sendDmTo(emails: string[], text: string, files: File[] | undefined, clientId: string): Promise<void> {
+  const r = await api<{ dm: Dm; message: DmMessage }>('POST', '/api/dms', { with: emails, text, attachments: await toUploads(files), clientId });
+  if (!state.dmMessages[r.dm.id]) await loadDm(r.dm.id);
+  gotDm(r);
+  navigate({ name: 'dm', dmId: r.dm.id });
+}
+
+/** The DM I already have with exactly these people (me added), if any. */
+export function dmWith(emails: string[], dms: Record<string, Dm> = state.dms, me: string | null = state.me): Dm | undefined {
+  const key = [...new Set([...emails, ...(me ? [me] : [])].map((e) => e.toLowerCase()))].sort().join(',');
+  return Object.values(dms).find((d) => [...d.people].sort().join(',') === key);
 }
 
 /** A DM's name for whoever looks at it: the other people in it. */
-export function dmTitle(thread: Thread, me: string | null = state.me, people: Person[] = state.people): string {
-  const others = (thread.people ?? []).filter((p) => p !== me);
-  return others.length ? others.map((e) => personName(e, people)).join(', ') : thread.title;
+export function dmName(dm: Dm, me: string | null = state.me, people: Person[] = state.people): string {
+  const others = dm.people.filter((p) => p !== me);
+  return others.length ? others.map((e) => personName(e, people)).join(', ') : personName(me ?? '', people);
 }
 
-/** A DM was looked at: its unread dot goes. */
-export function markDmSeen(threadId: string): void {
-  const at = Math.max(Date.now(), state.threads[threadId]?.updatedAt ?? 0);
-  if ((state.dmSeen[threadId] ?? 0) >= at) return;
-  const dmSeen = { ...state.dmSeen, [threadId]: at };
+/** Unread: the last message is someone else's and came after I last looked. */
+export function dmUnread(dm: Dm, seen: Record<string, number> = state.dmSeen, me: string | null = state.me): boolean {
+  return Boolean(dm.last && dm.last.by !== me && dm.last.ts > (seen[dm.id] ?? 0));
+}
+
+/** A DM was looked at: its unread dot goes. Counted in the server's time, as the messages are. */
+export function markDmSeen(dmId: string): void {
+  const at = state.dms[dmId]?.updatedAt ?? 0;
+  if ((state.dmSeen[dmId] ?? 0) >= at) return;
+  const dmSeen = { ...state.dmSeen, [dmId]: at };
   set({ dmSeen });
   try {
     localStorage.setItem(DM_SEEN_KEY, JSON.stringify(dmSeen));
@@ -1024,13 +1149,23 @@ export function markDmSeen(threadId: string): void {
   }
 }
 
-/** Tells the conductor which thread I have open (none while the app is in the background). Team server only. */
+/** Tells the conductor which thread or DM I have open (none while the app is in the background). Team server only. */
 function sendPresence(typing = false): void {
   if (!state.me || !ws || ws.readyState !== WebSocket.OPEN) return;
-  const threadId = state.view.name === 'thread' && document.visibilityState === 'visible' ? state.view.threadId : null;
+  const v = state.view;
+  const open = v.name === 'thread' ? v.threadId : v.name === 'dm' ? v.dmId : v.name === 'message' ? previewDm : null;
+  const threadId = document.visibilityState === 'visible' ? open : null;
   ws.send(JSON.stringify({ kind: 'presence', threadId, ...(typing ? { typing: true } : {}) } satisfies ClientMessage));
 }
 if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => sendPresence());
+
+let previewDm: string | null = null;
+/** New message shows a DM I already have with the people picked: typing there counts in it. */
+export function setPreviewDm(dmId: string | null): void {
+  if (previewDm === dmId) return;
+  previewDm = dmId;
+  sendPresence();
+}
 
 let lastTyping = 0;
 /** I am typing in the open thread: said at most every 2 seconds; it stops on its own. */

@@ -15,7 +15,7 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
-const { ensureAccess, accessToken } = require('./access.cjs');
+const { ensureAccess, accessToken, signOut } = require('./access.cjs');
 const { createServer } = require('node:http');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
@@ -566,6 +566,17 @@ ipcMain.handle('crew:info', async (event) => {
   // A conductor on a server sits behind Cloudflare Access: sign in first.
   if (info && !(await ensureAccess(info.url, CREW_HOME))) return null;
   return info;
+});
+
+// Sign out of the server: the login is forgotten, and the window starts over with a new sign-in.
+ipcMain.handle('crew:sign-out', async (event) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url)) return;
+  const info = conductorInfo();
+  if (!info) return;
+  await signOut(info.url, CREW_HOME);
+  // Give the browser a moment to end the Access session before the new sign-in opens.
+  setTimeout(() => BrowserWindow.fromWebContents(event.sender)?.webContents.reload(), 2000);
 });
 
 ipcMain.handle('crew:start-conductor', async (event) => {

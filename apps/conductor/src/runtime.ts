@@ -13,6 +13,8 @@ import type {
   AttachmentUpload,
   CrewEvent,
   CrewEventBody,
+  Dm,
+  DmMessage,
   DocFormat,
   DocResponse,
   DocStatus,
@@ -38,7 +40,7 @@ import { namePeople, parseConceptBoard } from '@crew/protocol';
 import { parseModel } from '@crew/sdk/define';
 import { TEAM_ROOT, loadCrew, subagentToolName, type LoadedAgent, type LoadedCrew, type LoadedTool } from '@crew/sdk/load';
 import { REAL_HOME, denyPaths, nodeChildEnv, paths, port, steeringEnabled } from './config.ts';
-import type { ArtifactRow, SessionRow, Store } from './db.ts';
+import { isEmail, type ArtifactRow, type SessionRow, type Store } from './db.ts';
 import { addUsage, engines, type EngineEvent, type McpServerSpec, type Steer } from './engines/index.ts';
 import { translateAgent, type MemoryRecall } from './translate.ts';
 import { REVIEW_PROMPT, branchDiff, codeSettings, ensureCheckout, mergePullRequest, openPullRequest, snapshot, themePreview } from './code.ts';
@@ -399,8 +401,6 @@ export class Runtime {
       if (last?.type === 'subagent_started') statusText = `Waiting for ${last.role}`;
       else if (last?.type === 'tool_call') statusText = `Using ${last.name.replace(/^mcp__\w+?__/, '')}`;
       else statusText = 'Working';
-    } else if (t.dm) {
-      statusText = '';
     } else {
       const waiting = this.waitingFor(t.id, t.rootSessionId);
       statusText = waiting.length
@@ -409,17 +409,7 @@ export class Runtime {
           ? 'Draft to review'
           : 'Done';
     }
-    const meta: Thread = { ...t, roles, statusText, usage: this.store.usageOfThread(t.id), people: this.store.peopleOfThread(t.id) };
-    if (t.dm) {
-      const last = this.store.lastMessageOfThread(t.id);
-      if (last?.type === 'message') {
-        const who = last.role === 'assistant' ? (this.store.session(last.sessionId)?.role ?? 'Agent') : last.by ? this.nameOf(last.by) : '';
-        meta.lastMessage = snippet(`${who ? `${who}: ` : ''}${last.text}`, 120);
-      }
-      if (t.status === 'running') meta.statusText = statusText;
-      else meta.statusText = meta.lastMessage ?? '';
-    }
-    return meta;
+    return { ...t, roles, statusText, usage: this.store.usageOfThread(t.id), people: this.store.peopleOfThread(t.id) };
   }
 
   // -------------------------------------------------------------------------
@@ -464,10 +454,6 @@ export class Runtime {
   /** The messages the agent held off on, for its next prompt. */
   private heldSummary(held: CrewEvent[]): string {
     const lines = held.map((e) => (e.type === 'message' ? `- ${e.by ? this.nameOf(e.by) : 'Someone'}: ${e.text}` : '')).filter(Boolean);
-    const thread = held[0] && this.store.thread(held[0].threadId);
-    if (thread?.dm && this.agentAbsent(thread.id, thread.rootSessionId)) {
-      return `This is a direct message between ${this.store.peopleOfThread(thread.id).map((e) => this.nameOf(e)).join(' and ')}. They have just called you in. What they wrote before:\n${lines.join('\n')}`;
-    }
     return `While you waited, people in this thread talked to each other (you held off because they tagged a person, not you):\n${lines.join('\n')}`;
   }
 
@@ -529,16 +515,19 @@ export class Runtime {
     });
   }
 
-  /** Whether someone may see a thread: every thread, except DMs they are not in. Without people (a Mac), everything. */
-  canSee(threadId: string, email: string | null): boolean {
-    if (!email) return true;
-    const members = this.store.dmMembers(threadId);
-    return !members || members.includes(email.toLowerCase());
+  /**
+   * Whether someone may see a thread or DM (by id): every thread, a DM only when they
+   * are in it, and an old DM thread never. Without people (a Mac), every thread.
+   */
+  canSee(id: string, email: string | null): boolean {
+    const people = this.store.dmPeople(id);
+    if (people.length) return Boolean(email && people.includes(email.toLowerCase()));
+    return !this.store.isDmThread(id);
   }
 
   /**
-   * The thread a resource belongs to, to check DM membership before anyone reads or
-   * changes it: a message (event id), session, Inbox item or doc. Undefined: no such thing.
+   * The thread a resource belongs to, to check access before anyone reads or changes
+   * it: a message (event id), session, Inbox item or doc. Undefined: no such thing.
    */
   threadOf(kind: 'message' | 'session' | 'inbox' | 'doc', id: string): string | undefined {
     if (kind === 'message') return Number.isInteger(Number(id)) ? this.store.event(Number(id))?.threadId : undefined;
@@ -547,53 +536,72 @@ export class Runtime {
     return this.doc(id)?.threadId;
   }
 
-  /** The state for one person: DMs they are not in are left out. */
+  /** The state for one person: their own DMs, and nothing from old DM threads. */
   async stateFor(email: string | null): Promise<StateResponse> {
     const s = await this.state();
-    if (!email) return s;
     const ok = (threadId: string) => this.canSee(threadId, email);
     return {
       ...s,
-      threads: s.threads.filter((t) => ok(t.id)),
-      done: s.done.filter((t) => ok(t.id)),
       inbox: s.inbox.filter((i) => ok(i.threadId)),
       activity: s.activity.filter((a) => ok(a.threadId)),
+      dms: email ? this.store.dmsOf(email) : [],
     };
   }
 
-  /**
-   * A direct message between people (team server). No turn runs: the lead is in
-   * the thread but stays out until someone calls it with @. The same people get
-   * their existing DM back.
-   */
-  async createDm(by: string, others: string[], text?: string): Promise<Thread> {
-    by = by.toLowerCase();
-    const members = [...new Set([by, ...others.map((o) => String(o).toLowerCase().trim())])].filter((e) => /^[^@\s]+@[^@\s]+$/.test(e));
-    if (members.length < 2) throw new Error('Pick someone to message.');
-    // Load first: from the check to the insert nothing awaits, so two requests
-    // for the same people cannot both make a DM.
-    const crew = await loadCrew();
-    let threadId = this.store.dmBetween(members);
-    // A closed DM with the same people opens again, with its history.
-    if (threadId && this.store.thread(threadId)?.archived) this.store.updateThread(threadId, { archived: false });
-    if (!threadId) {
-      const now = Date.now();
-      threadId = newId('t');
-      const title = members.filter((m) => m !== by).map((e) => this.nameOf(e)).join(', ');
-      this.store.insertThread({ id: threadId, title, status: 'idle', rootSessionId: 'pending', createdAt: now, updatedAt: now, archived: false, benched: [], createdBy: by, dm: true });
-      for (const m of members) this.store.addThreadPerson(threadId, m);
-      const root = this.createSession(crew, threadId, crew.lead, null);
-      this.store.db.prepare('UPDATE threads SET root_session_id = ? WHERE id = ?').run(root.id, threadId);
-    }
-    if (text?.trim()) this.sendMessage(threadId, text, undefined, undefined, undefined, by);
-    const saved = this.withMeta(this.store.thread(threadId)!);
-    this.broadcast({ kind: 'thread', thread: saved });
-    return saved;
+  // -------------------------------------------------------------------------
+  // Direct messages (team server): people chatting, like Slack. No agent is in them.
+
+  /** Who is in a DM with someone: the sender and the people they picked, all known emails. */
+  private dmPeople(by: string, others: string[]): string[] {
+    const people = [...new Set([by, ...others].map((e) => String(e).toLowerCase().trim()))];
+    if (people.some((e) => !isEmail(e))) throw new Error('That is not an email address.');
+    if (people.length < 2) throw new Error('Pick someone to message.');
+    if (people.length > 9) throw new Error('A message can go to at most 8 people.');
+    return people;
   }
 
-  /** A DM's agent has not been called yet: no turn ran in it. */
-  private agentAbsent(threadId: string, rootSessionId: string): boolean {
-    return !this.store.turnsOfThread(threadId).some((t) => t.sessionId === rootSessionId);
+  /** Old DM threads must have moved first: a new DM made before that would get their history merged in later. */
+  private dmsReadyOrThrow(): void {
+    if (!this.store.dmsReady) throw new Error('Messages are not available until the server has restarted.');
+  }
+
+  isDm(id: string): boolean {
+    return this.store.dmPeople(id).length > 0;
+  }
+
+  /** Whether someone is in this DM (false: no such DM). */
+  inDm(dmId: string, email: string): boolean {
+    return this.store.dmPeople(dmId).includes(email.toLowerCase());
+  }
+
+  /** A DM's messages, for someone in it. */
+  dmMessages(dmId: string, before?: number): DmMessage[] {
+    return this.store.dmMessages(dmId, 200, before);
+  }
+
+  /** Sends a message to these people, in their DM (made with the first message). */
+  sendDmTo(by: string, others: string[], text: string, uploads?: AttachmentUpload[], clientId?: string): { dm: Dm; message: DmMessage } {
+    this.dmsReadyOrThrow();
+    const dm = this.store.dmFor(this.dmPeople(by, others), () => newId('d'));
+    return this.sendDm(dm.id, by, text, uploads, clientId);
+  }
+
+  /** A message in a DM, from someone in it. A retried send (same clientId) lands once. */
+  sendDm(dmId: string, by: string, text: string, uploads?: AttachmentUpload[], clientId?: string): { dm: Dm; message: DmMessage } {
+    this.dmsReadyOrThrow();
+    by = by.toLowerCase();
+    if (!this.inDm(dmId, by)) throw new Error('No such conversation');
+    const id = typeof clientId === 'string' && /^[\w-]{8,64}$/.test(clientId) ? clientId : undefined;
+    const sent = id && this.store.dmMessageByClientId(dmId, by, id);
+    if (sent) return { dm: this.store.dm(dmId)!, message: sent };
+    const body = text.trim();
+    if (!body && !uploads?.length) throw new Error('Write a message first.');
+    const attachments = saveAttachments(dmId, uploads);
+    const message = this.store.insertDmMessage({ dmId, by, text: body, ...(attachments.length ? { attachments } : {}), ts: Date.now() }, id);
+    const dm = this.store.dm(dmId)!;
+    this.broadcast({ kind: 'dm', dm });
+    this.broadcast({ kind: 'dm_message', message });
+    return { dm, message };
   }
 
   async state(): Promise<StateResponse> {
@@ -840,10 +848,8 @@ export class Runtime {
 
     by = by?.toLowerCase() ?? null;
     // People tagged in the message (team server). Tagging adds them to the thread.
-    // In a DM only its members can be tagged: tagging never lets someone into it.
-    const members = this.store.dmMembers(threadId);
     const mentions = [...new Set((opts.mentions ?? []).map((m) => String(m).toLowerCase().trim()))].filter(
-      (m) => /^[^@\s]+@[^@\s]+$/.test(m) && m !== by && (!members || members.includes(m)),
+      (m) => /^[^@\s]+@[^@\s]+$/.test(m) && m !== by,
     );
     if (by) {
       const before = this.store.peopleOfThread(threadId).length;
@@ -856,9 +862,7 @@ export class Runtime {
 
     // A message to people only (@Juliette, is this OK?): the agent holds off until
     // someone answers, talks to it, or says Go ahead. Not for an answer to its question.
-    // A DM before anyone called an agent: every message is between people.
-    const dmQuiet = Boolean(thread.dm) && !opts.toAgent && this.agentAbsent(threadId, thread.rootSessionId);
-    if ((by && mentions.length && !opts.toAgent && !replyTo && session.depth === 0) || dmQuiet) {
+    if (by && mentions.length && !opts.toAgent && !replyTo && session.depth === 0) {
       const attachmentsHeld = saveAttachments(threadId, uploads);
       const heldText = text.trim() || (attachmentsHeld.length ? 'See the attached image.' : text);
       this.emit(session, null, {
@@ -1453,8 +1457,8 @@ export class Runtime {
     if (mem) {
       const memory = agent.memories.find((m) => m.name === mem[1]);
       if (!memory) throw new Error(`You have no memory called ${mem[1]}`);
-      // Memories are shared with the whole team: nothing from a private DM goes in.
-      if (mem[2] === 'save' && this.store.thread(session.threadId)?.dm) {
+      // Memories are shared with the whole team: nothing from a private (old) DM thread goes in.
+      if (mem[2] === 'save' && this.store.isDmThread(session.threadId)) {
         throw new Error('This is a private direct message: nothing from it is saved to memory, which the whole team shares.');
       }
       return mem[2] === 'save'

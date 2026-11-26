@@ -34,13 +34,31 @@ export interface Thread {
   createdBy?: string | null;
   /** Team server: everyone in the thread (started it, wrote in it, or was tagged), by email. */
   people?: string[];
-  /**
-   * A direct message between people: only they see it. No agent reads it until
-   * someone calls one with @; from then on it is a thread with that agent.
-   */
-  dm?: boolean;
-  /** DMs: the last message, as "Juliette: see you at 3". */
-  lastMessage?: string;
+}
+
+/**
+ * A direct message (team server): a plain chat between people, like Slack. No agent
+ * is in it or reads it, and only its people see it. The same people always get the
+ * same DM.
+ */
+export interface Dm {
+  id: string;
+  /** Everyone in it, me included, by email. */
+  people: string[];
+  createdAt: number;
+  /** When the last message was sent. */
+  updatedAt: number;
+  last?: { by: string; text: string; ts: number };
+}
+
+export interface DmMessage {
+  id: number;
+  dmId: string;
+  /** Who wrote it (email). */
+  by: string;
+  text: string;
+  attachments?: Attachment[];
+  ts: number;
 }
 
 /** Someone on the team server, known from their sign-in. */
@@ -281,6 +299,17 @@ export interface StateResponse {
   me?: string | null;
   /** Team server: everyone who has signed in, for names and faces. */
   people?: Person[];
+  /** Team server: my direct messages, most recent first. */
+  dms?: Dm[];
+}
+
+/** POST /api/dms: send to these people, in their DM (made on the first message). */
+export interface SendDmRequest {
+  with: string[];
+  text: string;
+  attachments?: AttachmentUpload[];
+  /** Made by the app per message: sending it again (after a lost answer) does not post it twice. */
+  clientId?: string;
 }
 
 /** One day of work, in the owner's time zone. Cost is at API prices (see Usage). */
@@ -395,11 +424,16 @@ export type ServerMessage =
   | { kind: 'inbox'; item: InboxItem }
   | { kind: 'doc'; doc: DocSummary }
   /** Team server: who has a thread open right now, and who is typing in it (emails). */
-  | { kind: 'presence'; threadId: string; viewing: string[]; typing: string[] };
+  | { kind: 'presence'; threadId: string; viewing: string[]; typing: string[] }
+  /** A DM changed (made, or a new message): only to its people. */
+  | { kind: 'dm'; dm: Dm }
+  | { kind: 'dm_message'; message: DmMessage }
+  /** Team server: who has Crew open right now (emails). Sent on connect and whenever it changes. */
+  | { kind: 'online'; people: string[] };
 
 /** From the app to the conductor over the socket (team server). */
 export type ClientMessage =
-  /** The thread I have open (null: none, or the app is in the background); typing: I am typing in it. */
+  /** The thread or DM I have open (null: none, or the app is in the background); typing: I am typing in it. */
   { kind: 'presence'; threadId: string | null; typing?: boolean };
 
 // ---------------------------------------------------------------------------

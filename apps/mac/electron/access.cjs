@@ -140,4 +140,24 @@ async function ensureAccess(conductorUrl, home) {
 /** The current Access login, for requests the main process makes itself. */
 const accessToken = () => token;
 
-module.exports = { ensureAccess, accessToken };
+/**
+ * Signs out of a server: forgets the login here and ends the Access session in
+ * the browser (Cloudflare's logout page), so the next sign-in asks who you are.
+ */
+async function signOut(conductorUrl, home) {
+  if (!isRemote(conductorUrl)) return;
+  crewHome = home;
+  const origin = new URL(conductorUrl).origin;
+  const host = new URL(origin).host;
+  token = null;
+  try {
+    if (existsSync(storeFile())) {
+      const all = JSON.parse(readFileSync(storeFile(), 'utf8'));
+      delete all[host];
+      writeFileSync(storeFile(), JSON.stringify(all, null, 2) + '\n', { mode: 0o600 });
+    }
+  } catch {}
+  await shell.openExternal(`${origin}/cdn-cgi/access/logout`).catch((err) => console.error('[access] could not open the browser:', err.message));
+}
+
+module.exports = { ensureAccess, accessToken, signOut };

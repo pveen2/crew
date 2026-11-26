@@ -29,9 +29,7 @@ import {
   archiveThread,
   editQueuedMessage,
   isPhone,
-  dmTitle,
   leadingPerson,
-  markDmSeen,
   mentionedPeople,
   navigate,
   openAsPreview,
@@ -899,10 +897,6 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
 
   const go = (sessionId: string) => navigate({ name: 'thread', threadId, sessionId: sessionId === rootId ? undefined : sessionId });
 
-  // A DM before anyone called an agent: messages go to people only.
-  // From the events, which arrive live (turns are only loaded with the thread).
-  const dmQuiet = Boolean(data.thread.dm) && !data.events.some((e) => e.type === 'turn_started' && e.sessionId === rootId);
-
   const submit = async () => {
     let body = text.trim();
     if ((!body && !images.files.length) || busy) return;
@@ -958,7 +952,7 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
       <TypingLine threadId={threadId} />
       <WaitingMessages data={data} session={session} />
       <SessionStatus session={session} />
-      {session.depth === 0 && !dmQuiet ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
+      {session.depth === 0 ? <HeldLine threadId={threadId} data={data} session={session} label={label} /> : null}
       {error || images.error ? <StatusLine tone="critical" icon="alert">{error || images.error}</StatusLine> : null}
       <AttachmentTray files={images.files} onRemove={images.remove} />
       <Composer
@@ -979,11 +973,9 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
         placeholder={
           session.depth > 0
             ? `Message ${label} directly, or @ an agent`
-            : dmQuiet
-              ? `Message, or @${label} to bring in an agent`
-              : me && people.length > 1
-                ? 'Reply, or @ an agent or a colleague'
-                : 'Reply, or @ an agent'
+            : me && people.length > 1
+              ? 'Reply, or @ an agent or a colleague'
+              : 'Reply, or @ an agent'
         }
         trailing={
           <>
@@ -1000,8 +992,8 @@ function ThreadComposer({ threadId, session, data, rootId }: { threadId: string;
   );
 }
 
-/** A colleague's face, with a green dot while they have this thread open. */
-function LiveFace({ threadId, email, size }: { threadId: string; email: string; size: number }) {
+/** A colleague's face, with a green dot while they have this thread (or DM) open. */
+export function LiveFace({ threadId, email, size }: { threadId: string; email: string; size: number }) {
   const me = useApp((s) => s.me);
   const live = useApp((s) => email !== me && Boolean(s.presence[threadId]?.viewing.includes(email)));
   const name = usePersonName(email);
@@ -1013,7 +1005,7 @@ function LiveFace({ threadId, email, size }: { threadId: string; email: string; 
 }
 
 /** "Juliette is typing…" above the composer. */
-function TypingLine({ threadId }: { threadId: string }) {
+export function TypingLine({ threadId }: { threadId: string }) {
   const me = useApp((s) => s.me);
   const typing = useApp((s) => s.presence[threadId]?.typing);
   const people = useApp((s) => s.people);
@@ -1116,12 +1108,6 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
   const labels = useRoleLabels();
   const me = useApp((s) => s.me);
   const starter = usePersonName(me && thread?.createdBy && thread.createdBy !== me ? thread.createdBy : null);
-  const people = useApp((s) => s.people);
-  const updatedAt = thread?.updatedAt;
-  // Looking at a DM reads it, including what arrives while it is open.
-  useEffect(() => {
-    if (thread?.dm) markDmSeen(threadId);
-  }, [thread?.dm, threadId, updatedAt]);
 
   const rootId = thread?.rootSessionId ?? '';
   const session = data?.sessions[sessionId ?? rootId];
@@ -1185,24 +1171,6 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
                 </Text>
               </BlockStack>
             </InlineStack>
-          ) : thread.dm ? (
-            <InlineStack gap="200" blockAlign="center" className="thread-title">
-              {(thread.people ?? [])
-                .filter((p) => p !== me)
-                .slice(0, 3)
-                .map((p) => (
-                  <LiveFace key={p} threadId={threadId} email={p} size={24} />
-                ))}
-              <BlockStack className="thread-title__text">
-                <Text variant="headingMd" as="h1" leading="tight" truncate>
-                  {dmTitle(thread, me, people)}
-                </Text>
-                <Text variant="caption" tone="secondary" leading="tight" truncate>
-                  Direct message · @ an agent to bring one in
-                </Text>
-              </BlockStack>
-              <span className="dm-private">🔒 Only {(thread.people?.length ?? 2) > 2 ? 'you' : 'you two'}</span>
-            </InlineStack>
           ) : (
             <BlockStack className="thread-title thread-title__text">
               <ThreadTitle threadId={threadId} title={thread.title} />
@@ -1221,7 +1189,7 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
           )}
           <span className="cr-spacer" />
           <span className="header-faces phone-hide">
-            {me && !thread.dm && (thread.people?.length ?? 0) > 1 ? (
+            {me && (thread.people?.length ?? 0) > 1 ? (
               <span className="list-trailing" aria-label="People in this thread">
                 {thread.people!.map((p) => (
                   <LiveFace key={p} threadId={threadId} email={p} size={20} />
@@ -1230,12 +1198,12 @@ export function ThreadView({ threadId, sessionId }: { threadId: string; sessionI
             ) : null}
             <RoleFaces roles={thread.roles} size="md" />
           </span>
-          {session.depth === 0 && !thread.dm && (
+          {session.depth === 0 && (
             <Button size="slim" icon="reload" className="phone-hide" title="Ask the same question in a new thread, with specialists switched on or off" onClick={() => runAgain(threadId)}>
               Run again
             </Button>
           )}
-          {session.depth === 0 && !thread.dm && <ShareButton threadId={threadId} />}
+          {session.depth === 0 && <ShareButton threadId={threadId} />}
           <Button size="slim" icon="checkCircle" className="header-close phone-hide" onClick={() => void archiveThread(threadId)}>
             Close thread
           </Button>
