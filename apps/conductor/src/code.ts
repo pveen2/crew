@@ -17,7 +17,7 @@
 // (mergePullRequest). Protect the base branch on GitHub to require reviews or checks.
 
 import { execFile } from 'node:child_process';
-import { createHash, createSign } from 'node:crypto';
+import { createSign } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -449,41 +449,6 @@ export async function openPullRequest(
 
 // ---------------------------------------------------------------------------
 // code_review
-
-/** Identifies exactly which changes a review saw: open_pull_request only goes ahead when the current diff has the same hash. */
-export function diffHash(diff: string): string {
-  return createHash('sha256').update(diff).digest('hex');
-}
-
-export interface ReviewRound {
-  model: string;
-  hash: string;
-  text: string;
-  at: number;
-}
-
-/** Posts the reviewer's own words on the pull request, so the owner reads the review itself, not the developer's summary of it. */
-export async function postReviews(s: CodeSettings, number: number, rounds: ReviewRound[], total: number): Promise<void> {
-  if (!rounds.length) return;
-  const latest = rounds[rounds.length - 1]!;
-  const earlier = rounds.slice(0, -1);
-  const first = total - rounds.length + 1;
-  const quote = (t: string) => t.trim().slice(0, 20_000);
-  const parts = [
-    `## Code review by ${latest.model} (round ${total})`,
-    `Reviewed the exact changes in this pull request (diff \`${latest.hash.slice(0, 12)}\`).`,
-    '',
-    quote(latest.text),
-    ...earlier.map((r, i) =>
-      ['', `<details><summary>Round ${first + i} by ${r.model} (earlier version of the changes)</summary>`, '', quote(r.text), '', '</details>'].join('\n'),
-    ),
-    '',
-    '---',
-    'Posted by Crew from the `code_review` tool, unedited.',
-  ];
-  const auth = `Bearer ${await githubToken(s)}`;
-  await api('POST', `/repos/${s.owner}/${s.name}/issues/${number}/comments`, auth, { body: parts.join('\n') });
-}
 
 export const REVIEW_PROMPT = (diff: string, stat: string, focus: string | undefined, rules: string) => `You review a change another agent made in this repository (your working folder). You are read-only: do not change files.
 
