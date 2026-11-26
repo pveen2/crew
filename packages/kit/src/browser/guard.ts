@@ -240,6 +240,21 @@ function saveKept(prefix: string, ext: string, data: Buffer): string {
   return name;
 }
 
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+
+/** Why a download URL is refused, or undefined when it may be fetched. */
+function refuseHost(url: URL): string | undefined {
+  if (url.protocol !== 'https:') return 'Not kept: only https URLs.';
+  const host = url.hostname.toLowerCase();
+  if (host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')) {
+    return 'Not kept: use the file\'s web address, not a local or numeric one.';
+  }
+  if (ALLOWED_DOMAINS.length && !ALLOWED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
+    return `Not kept: ${host} is outside this browser's allowed domains.`;
+  }
+  return undefined;
+}
+
 /** Download an image or video by URL into the thread's image folder. Returns the note for the agent. */
 async function keepMedia(raw: unknown): Promise<string> {
   if (!IMAGES_DIR) return 'Not kept: this browser is not running inside a Crew thread.';
@@ -249,15 +264,20 @@ async function keepMedia(raw: unknown): Promise<string> {
   } catch {
     return 'Not kept: pass the full https URL of the image or video file.';
   }
-  if (url.protocol !== 'https:') return 'Not kept: only https URLs.';
-  const host = url.hostname.toLowerCase();
-  if (host === 'localhost' || /^[\d.]+$/.test(host) || host.includes(':') || host.startsWith('[')) {
-    return 'Not kept: use the file\'s web address, not a local or numeric one.';
+  // Every hop is checked, redirects included: an allowed site must not bounce the download to another host or a local service.
+  // One deadline for all hops and the download together.
+  const signal = AbortSignal.timeout(60_000);
+  let res: Response | undefined;
+  for (let hop = 0; ; hop++) {
+    const refused = refuseHost(url);
+    if (refused) return refused;
+    res = await fetch(url, { redirect: 'manual', signal });
+    const next = REDIRECTS.has(res.status) ? res.headers.get('location') : null;
+    if (!next) break;
+    await res.body?.cancel();
+    if (hop >= 5) return 'Not kept: too many redirects.';
+    url = new URL(next, url);
   }
-  if (ALLOWED_DOMAINS.length && !ALLOWED_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))) {
-    return `Not kept: ${host} is outside this browser's allowed domains.`;
-  }
-  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000) });
   if (!res.ok) return `Not kept: the server answered ${res.status}. Page links expire: read the src again and keep it right away.`;
   const type = (res.headers.get('content-type') ?? '').split(';')[0]!.trim().toLowerCase();
   const ext = MEDIA_TYPES[type];

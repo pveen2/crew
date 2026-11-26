@@ -301,7 +301,7 @@ const isWebUrl = (url) => /^https?:\/\//i.test(url);
 // Sites where the owner signs in go to their own browser, which has their password manager
 // and passkeys; Google also refuses sign-in in embedded browsers. Everything else opens in
 // the browser tab.
-const SIGN_IN_HOSTS = ['twombly.app', 'accounts.google.com'];
+const SIGN_IN_HOSTS = ['accounts.google.com'];
 function needsOwnBrowser(url) {
   try {
     const { hostname } = new URL(url);
