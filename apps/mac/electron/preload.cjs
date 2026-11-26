@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('crewHost', {
     startConductor: () => ipcRenderer.invoke('crew:start-conductor'),
   }),
   conductorInfo: () => ipcRenderer.invoke('crew:info'),
+  reauth: () => ipcRenderer.invoke('crew:reauth'),
   updateCheck: () => ipcRenderer.invoke('crew:update-check'),
   updateApply: () => ipcRenderer.invoke('crew:update-apply'),
   whereInfo: () => ipcRenderer.invoke('crew:where-info'),

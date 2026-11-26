@@ -15,7 +15,7 @@ const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { createTeams } = require('./team.cjs');
 const { installRelease } = require('./self-update.cjs');
-const { ensureAccess, accessToken, signOut } = require('./access.cjs');
+const { ensureAccess, accessToken, forgetAccess, signOut } = require('./access.cjs');
 const { createServer } = require('node:http');
 
 const CREW_HOME = process.env.CREW_HOME || join(homedir(), '.crew');
@@ -566,6 +566,17 @@ ipcMain.handle('crew:info', async (event) => {
   // A conductor on a server sits behind Cloudflare Access: sign in first.
   if (info && !(await ensureAccess(info.url, CREW_HOME))) return null;
   return info;
+});
+
+// The server turned the Access login away (it ran out, or the session was ended):
+// forget it and sign in again in the browser.
+ipcMain.handle('crew:reauth', async (event) => {
+  const frame = event.senderFrame;
+  if (!frame || frame.parent || !isAppUrl(frame.url)) return null;
+  const info = conductorInfo();
+  if (!info) return null;
+  forgetAccess(info.url, CREW_HOME);
+  return (await ensureAccess(info.url, CREW_HOME)) ? info : null;
 });
 
 // Sign out of the server: the login is forgotten, and the window starts over with a new sign-in.

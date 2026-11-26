@@ -19,6 +19,7 @@ let token = null;
 let hookedHost = null;
 let signingIn = null;
 let declinedUntil = 0;
+let lastSignIn = { jwt: null, at: 0 };
 
 function storeFile() {
   return join(crewHome, 'access.json');
@@ -128,6 +129,7 @@ async function ensureAccess(conductorUrl, home) {
   try {
     signingIn ??= signIn(origin).finally(() => (signingIn = null));
     token = await signingIn;
+    lastSignIn = { jwt: token, at: Date.now() };
     writeStored(host, token);
     return true;
   } catch (err) {
@@ -135,6 +137,28 @@ async function ensureAccess(conductorUrl, home) {
     declinedUntil = Date.now() + 30_000;
     return false;
   }
+}
+
+/**
+ * Forgets the login without ending the browser's Access session: the server
+ * turned it away, so the next ensureAccess signs in again. A sign-in already
+ * running is kept; a login it brought back in the last minute is too, so
+ * requests that failed together do not each start a new one.
+ */
+function forgetAccess(conductorUrl, home) {
+  if (!isRemote(conductorUrl) || signingIn) return;
+  if (token && token === lastSignIn.jwt && Date.now() - lastSignIn.at < 60_000) return;
+  crewHome = home;
+  const host = new URL(conductorUrl).host;
+  token = null;
+  declinedUntil = 0;
+  try {
+    if (existsSync(storeFile())) {
+      const all = JSON.parse(readFileSync(storeFile(), 'utf8'));
+      delete all[host];
+      writeFileSync(storeFile(), JSON.stringify(all, null, 2) + '\n', { mode: 0o600 });
+    }
+  } catch {}
 }
 
 /** The current Access login, for requests the main process makes itself. */
@@ -160,4 +184,4 @@ async function signOut(conductorUrl, home) {
   await shell.openExternal(`${origin}/cdn-cgi/access/logout`).catch((err) => console.error('[access] could not open the browser:', err.message));
 }
 
-module.exports = { ensureAccess, accessToken, signOut };
+module.exports = { ensureAccess, accessToken, forgetAccess, signOut };
